@@ -41,7 +41,7 @@ function makeStarTexture() {
     return new THREE.CanvasTexture(c);
 }
 
-const STAR_COUNT = 1500;
+const STAR_COUNT = 1000;
 const starPos = new Float32Array(STAR_COUNT * 3);
 const starCol = new Float32Array(STAR_COUNT * 3);
 for (let i = 0; i < STAR_COUNT * 3; i++) starPos[i] = (Math.random() - 0.5) * 200;
@@ -350,9 +350,10 @@ const particleMat = new THREE.ShaderMaterial({
 scene.add(new THREE.Points(particleGeo, particleMat));
 
 // ─── Lighting ────────────────────────────────────────────────────────────────
-scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+const ambientLight = new THREE.AmbientLight(0xffffff, 2.8);
+scene.add(ambientLight);
 
-const dirLight = new THREE.DirectionalLight(0xfff5e0, 2.0);
+const dirLight = new THREE.DirectionalLight(0xfff5e0, 3.5);
 dirLight.position.set(-5, 8, 3);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.set(2048, 2048);
@@ -366,9 +367,14 @@ scene.add(dirLight);
 
 // ─── Cylinder (placeholder object on floor) ──────────────────────────────────
 const cylinderHeight = 1.2;
+const cylinderMat = new THREE.MeshStandardMaterial({
+    color:    0x8b7355,
+    roughness: 0.7,
+    emissive: new THREE.Color(0x000000), // animated in loop
+});
 const cylinder = new THREE.Mesh(
     new THREE.CylinderGeometry(0.3, 0.3, cylinderHeight, 32),
-    new THREE.MeshStandardMaterial({ color: 0x8b7355, roughness: 0.7 })
+    cylinderMat
 );
 // Floor is at y = -3.5; sit cylinder on it
 const CYLINDER_FLOOR_Y = -3.5 + cylinderHeight / 2; // resting position
@@ -397,18 +403,40 @@ const ROOM_LIMITS = {
     maxPolar:    1.65,
 };
 
+// Camera is "at the starting point" when within this distance of the target.
+// Original orbit radius ≈ 6.1; add a small margin so the switch feels natural.
+const ROOM_RETURN_DIST = 7.0;
+
+// Armed once the user zooms out past ROOM_RETURN_DIST after entering space.
+// Prevents the room from immediately re-appearing when the room first dissolves
+// (camera starts at ~6.1, already inside the threshold).
+let hasZoomedOut = false;
+
 function applyControlMode() {
     const inSpace = uProgress.value >= 0.95;
-    controls.minAzimuthAngle = inSpace ? -Infinity         : ROOM_LIMITS.minAzimuth;
-    controls.maxAzimuthAngle = inSpace ?  Infinity         : ROOM_LIMITS.maxAzimuth;
-    controls.minPolarAngle   = inSpace ?  0                : ROOM_LIMITS.minPolar;
-    controls.maxPolarAngle   = inSpace ?  Math.PI          : ROOM_LIMITS.maxPolar;
+    controls.minAzimuthAngle = inSpace ? -Infinity : ROOM_LIMITS.minAzimuth;
+    controls.maxAzimuthAngle = inSpace ?  Infinity : ROOM_LIMITS.maxAzimuth;
+    controls.minPolarAngle   = inSpace ?  0        : ROOM_LIMITS.minPolar;
+    controls.maxPolarAngle   = inSpace ?  Math.PI  : ROOM_LIMITS.maxPolar;
+    controls.minDistance = 2;
+    controls.maxDistance = 200;
+    // enableZoom managed every frame in animate loop
 }
 applyControlMode();
 
 // ─── Scroll ──────────────────────────────────────────────────────────────────
+// uProgress < 1              → scroll dissolves / restores room
+// uProgress = 1, not yet zoomed out OR still far → OrbitControls zooms
+// uProgress = 1, zoomed out AND back to start    → scroll restores room
 window.addEventListener('wheel', (e) => {
+    if (uProgress.value >= 1.0) {
+        const dist = camera.position.distanceTo(controls.target);
+        // Only hand control back to room-restore once the user has zoomed out first
+        if (!hasZoomedOut || dist > ROOM_RETURN_DIST) return;
+        // hasZoomedOut=true AND close to start: fall through to restore room
+    }
     uProgress.value = Math.min(1.0, Math.max(0.0, uProgress.value + e.deltaY * 0.001));
+    if (uProgress.value < 0.95) hasZoomedOut = false; // reset when back in room
     applyControlMode();
 });
 
@@ -429,15 +457,49 @@ function animate() {
     const p    = uProgress.value;           // 0 = full room, 1 = full space
     uParticleTime.value = t;
 
+    // ── Zoom toggle ──────────────────────────────────────────────────────────
+    // Zoom is ON whenever fully in space AND (not yet zoomed out OR still far).
+    // Turns OFF only after the user zoomed out past ROOM_RETURN_DIST and has
+    // now zoomed back in — at that point scroll restores the room instead.
+    if (uProgress.value >= 1.0) {
+        const dist = camera.position.distanceTo(controls.target);
+        if (dist > ROOM_RETURN_DIST) hasZoomedOut = true;
+        controls.enableZoom = !hasZoomedOut || dist > ROOM_RETURN_DIST;
+    } else {
+        controls.enableZoom = false;
+    }
+
+    // ── Lighting transition: warm room → cold cosmos ─────────────────────────
+    // Ambient: bright warm white (room) → faint deep blue (space)
+    ambientLight.color.setRGB(
+        THREE.MathUtils.lerp(1.00, 0.05, p),   // R
+        THREE.MathUtils.lerp(1.00, 0.08, p),   // G
+        THREE.MathUtils.lerp(1.00, 0.22, p)    // B
+    );
+    ambientLight.intensity = THREE.MathUtils.lerp(2.8, 0.0, p);
+
+    // Directional: warm sunlight (0xfff5e0) → pure white harsh sunlight in space
+    dirLight.color.setRGB(
+        THREE.MathUtils.lerp(1.00, 1.00, p),
+        THREE.MathUtils.lerp(0.96, 1.00, p),
+        THREE.MathUtils.lerp(0.88, 1.00, p)
+    );
+    dirLight.intensity = THREE.MathUtils.lerp(3.5, 8.0, p);
+
+    // No emissive — shadow side should be pitch black in space
+    cylinderMat.emissive.setRGB(0, 0, 0);
+
     // ── Cylinder floating ────────────────────────────────────────────────────
-    // Rise from floor toward room centre as room dissolves
-    const rise   = p * 3.5;                            // lifts 3.5 units at full progress
-    const bob    = Math.sin(t * 1.2) * 0.12 * p;      // gentle bobbing, only when floating
-    const drift  = Math.sin(t * 0.6) * 0.08 * p;      // subtle horizontal sway
+    // Rise to room centre, then drift weightlessly in a slow orbital pattern
+    const rise   = p * 2.0;                                    // lifts to near centre (y ≈ -0.9)
+    const bob    = Math.sin(t * 0.8) * 0.25 * p;              // slow vertical bob
+    const driftX = Math.sin(t * 0.5) * 0.35 * p;              // slow left-right sway
+    const driftZ = Math.cos(t * 0.4) * 0.25 * p;              // slow front-back drift
     cylinder.position.y = CYLINDER_FLOOR_Y + rise + bob;
-    cylinder.position.x = drift;
-    cylinder.rotation.y += 0.004 * p;                  // slow spin, only when floating
-    cylinder.rotation.z  = Math.sin(t * 0.5) * 0.06 * p; // slight tilt
+    cylinder.position.x = driftX;
+    cylinder.position.z = -1 + driftZ;
+    cylinder.rotation.y += 0.003 * p;                          // slow lazy spin
+    cylinder.rotation.z  = Math.sin(t * 0.45) * 0.08 * p;    // gentle tilt
 
     controls.update();
     renderer.render(scene, camera);
