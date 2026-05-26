@@ -60,12 +60,9 @@ if (noise < edgeEnd) {
 - `uEdge = 0.25`: width of the soft glow band at dissolve boundary
 - `uEdgeColor`: colour of the edge (currently black)
 
-### dissolve particles
-- 5000 `Points` placed on all 6 room surfaces at startup
-- Custom `ShaderMaterial` — shares same `NOISE_GLSL`, `uProgress`, `uFreq`, `uEdge`
-  uniforms as room material → particles appear exactly at the dissolve edge
-- Particles drift away from walls over time (`uTime`) with sine-wave wiggle
-- `AdditiveBlending` — brighten against dark backgrounds
+### dissolve particles (room)
+- Currently implemented but **will be removed** — room dissolve uses shader only, no particles
+- Decision: cleaner visual without particles; particles reserved for object disappearance
 
 ### noise implementation
 3D Simplex Noise — Ashima Arts / Stefan Gustavson (2011) GLSL implementation.
@@ -91,8 +88,25 @@ particle shader. No JS noise library used — noise must run on the GPU per-frag
 ### planned
 - 4 GLB models via `GLTFLoader`: tulip/vase, teddy bear, doll, water glass
 - Same floating animation per object with per-object phase offsets
-- Disappearance effect (Phase 4): noise dissolve per object + particle burst,
-  triggered by timer (not scroll — death is uncontrollable)
+
+### object disappearance (Phase 4)
+Two-layer effect — same noise dissolve technique as room, but **with particles**:
+
+**Layer 1 — dissolve shader on object material**
+- Same `onBeforeCompile` injection as room, but each object has its own `uObjectProgress`
+  uniform (0→1), independent of `uProgress` (room dissolve)
+- Triggered by a sequential timer — each object disappears with a delay after the
+  previous one (death is not scroll-controllable, intentional artistic decision)
+
+**Layer 2 — particle burst per object**
+- `Points` geometry placed on object surfaces (sampled from GLB geometry at load time)
+- Particles drift outward + upward when object dissolves, fade by opacity over lifetime
+- Same `NOISE_GLSL` + `uObjectProgress` uniform shared with object shader → edge-aligned
+- `AdditiveBlending` — particles glow against dark space background
+
+**Why particles on objects but not on room:**
+- Room dissolve → quiet, gradual, environmental — no particles keeps it calm
+- Object disappearance → significant event (life ending) — particles emphasize the moment
 
 ---
 
