@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
@@ -20,7 +20,7 @@ const texLoader = new THREE.TextureLoader();
 const skybox = new THREE.Mesh(
     new THREE.BoxGeometry(1000, 1000, 1000),
     ['right','left','top','bot','front','back'].map(face =>
-        new THREE.MeshBasicMaterial({
+        new THREE.MeshBasicMaterial({   // the universe/space should not
             map: texLoader.load(`asset/skybox_blue/bkg1_${face}.png`),
             side: THREE.BackSide,
         })
@@ -30,25 +30,30 @@ scene.add(skybox);
 
 // ─── Stars ───────────────────────────────────────────────────────────────────
 function makeStarTexture() {
+    // Create a tiny invisible canvas (like a small blank drawing board)
     const c = document.createElement('canvas');
-    c.width = c.height = 64;
-    const ctx = c.getContext('2d');
+    c.width = c.height = 64;// 64x64 pixels, very small
+    const ctx = c.getContext('2d'); // This gives the 2D drawing API
+
+    // 32, 32, 0 = inner circle: center at (32,32), radius 0 (a single point)
+    // 32, 32, 32 = outer circle: center at (32,32), radius 32 (reaches the edges)
+    // gradient that starts from the exact center and expands outward to the edge.
     const g = ctx.createRadialGradient(32,32,0,32,32,32);
-    g.addColorStop(0,'rgba(255,255,255,1)');
-    g.addColorStop(1,'rgba(255,255,255,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0,0,64,64);
+    g.addColorStop(0,'rgba(255,255,255,1)'); // center: solid white
+    g.addColorStop(1,'rgba(255,255,255,0)'); // edge: fully transparent
+    ctx.fillStyle = g; // loading the gradient definition
+    ctx.fillRect(0,0,64,64); // drawing from top-left corner (0,0) to bottom-right corner (64,64) using whatever fillStyle is currently loaded.
     return new THREE.CanvasTexture(c);
 }
 
 const STAR_COUNT = 1000;
 const starPos = new Float32Array(STAR_COUNT * 3);
-const starCol = new Float32Array(STAR_COUNT * 3);
+const starColor = new Float32Array(STAR_COUNT * 3);
 for (let i = 0; i < STAR_COUNT * 3; i++) starPos[i] = (Math.random() - 0.5) * 200;
-for (let i = 0; i < STAR_COUNT * 3; i += 3) { starCol[i] = 1; starCol[i+1] = 0.9; starCol[i+2] = 0.8; }
+for (let i = 0; i < STAR_COUNT * 3; i += 3) { starColor[i] = 1; starColor[i+1] = 0.9; starColor[i+2] = 0.8; }
 const starGeo = new THREE.BufferGeometry();
 starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-starGeo.setAttribute('color',    new THREE.BufferAttribute(starCol, 3));
+starGeo.setAttribute('color',    new THREE.BufferAttribute(starColor, 3));
 scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({
     size: 1, sizeAttenuation: true, map: makeStarTexture(),
     transparent: true, depthWrite: false,
@@ -138,10 +143,10 @@ function makeRoomMaterial(hex) {
 
     mat.onBeforeCompile = (shader) => {
         // Share dissolve uniforms
-        shader.uniforms.uProgress  = uProgress;
-        shader.uniforms.uEdge      = uEdge;
-        shader.uniforms.uFreq      = uFreq;
-        shader.uniforms.uEdgeColor = uEdgeColor;
+        shader.uniforms.uProgress  = uProgress;     // how dissolved (0→1)
+        shader.uniforms.uEdge      = uEdge;         // thickness of the glow edge band
+        shader.uniforms.uFreq      = uFreq;         // noise scale (smaller = bigger blobs)
+        shader.uniforms.uEdgeColor = uEdgeColor;    // colour of the dissolve edge
 
         // Pass world position from vertex shader
         shader.vertexShader =
@@ -149,7 +154,7 @@ function makeRoomMaterial(hex) {
             shader.vertexShader.replace(
                 '#include <begin_vertex>',
                 `#include <begin_vertex>
-                vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+                vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;` // converts local position to world space position
             );
 
         // Inject dissolve uniforms + noise at top of fragment shader
@@ -350,10 +355,10 @@ const particleMat = new THREE.ShaderMaterial({
 scene.add(new THREE.Points(particleGeo, particleMat));
 
 // ─── Lighting ────────────────────────────────────────────────────────────────
-const ambientLight = new THREE.AmbientLight(0xffffff, 2.8);
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
 scene.add(ambientLight);
 
-const dirLight = new THREE.DirectionalLight(0xfff5e0, 3.5);
+const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.05);
 dirLight.position.set(-5, 8, 3);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.set(2048, 2048);
@@ -476,7 +481,7 @@ function animate() {
         THREE.MathUtils.lerp(1.00, 0.08, p),   // G
         THREE.MathUtils.lerp(1.00, 0.22, p)    // B
     );
-    ambientLight.intensity = THREE.MathUtils.lerp(2.8, 0.0, p);
+    ambientLight.intensity = THREE.MathUtils.lerp(0.7, 0.0, p);
 
     // Directional: warm sunlight (0xfff5e0) → pure white harsh sunlight in space
     dirLight.color.setRGB(
@@ -484,7 +489,7 @@ function animate() {
         THREE.MathUtils.lerp(0.96, 1.00, p),
         THREE.MathUtils.lerp(0.88, 1.00, p)
     );
-    dirLight.intensity = THREE.MathUtils.lerp(3.5, 8.0, p);
+    dirLight.intensity = THREE.MathUtils.lerp(1.05, 3.5, p);
 
     // No emissive — shadow side should be pitch black in space
     cylinderMat.emissive.setRGB(0, 0, 0);
