@@ -216,143 +216,7 @@ roomParts.forEach(({ w, h, pos, rx, ry, color }) => {
     scene.add(mesh);
 });
 
-// ─── Dissolve Particles ──────────────────────────────────────────────────────
-// Particles sit on the 6 inner faces of the room box.
-// Only those near the dissolve edge become visible and drift inward + upward.
-
-const PARTICLE_COUNT = 5000;
-const pPositions  = new Float32Array(PARTICLE_COUNT * 3); // current (init)
-const pVelocities = new Float32Array(PARTICLE_COUNT * 3); // drift direction
-
-const BOX = { x: 6.9, y: 3.4, z: 6.9 }; // slightly inset so particles are visible
-
-for (let i = 0; i < PARTICLE_COUNT; i++) {
-    const i3   = i * 3;
-    const face = Math.floor(Math.random() * 6);
-    let px, py, pz, vx, vy, vz;
-
-    const ru = () => Math.random();
-    const rs = () => (Math.random() - 0.5);
-
-    switch (face) {
-        case 0: // right wall  x = +BOX.x
-            px =  BOX.x; py = rs() * BOX.y * 2; pz = rs() * BOX.z * 2;
-            vx = -ru() * 1.5; vy = ru() * 1.5 + 0.5; vz = rs() * 0.5;
-            break;
-        case 1: // left wall   x = -BOX.x
-            px = -BOX.x; py = rs() * BOX.y * 2; pz = rs() * BOX.z * 2;
-            vx =  ru() * 1.5; vy = ru() * 1.5 + 0.5; vz = rs() * 0.5;
-            break;
-        case 2: // ceiling      y = +BOX.y
-            px = rs() * BOX.x * 2; py =  BOX.y; pz = rs() * BOX.z * 2;
-            vx = rs() * 0.5; vy = ru() * 0.5 + 0.3; vz = rs() * 0.5;
-            break;
-        case 3: // floor        y = -BOX.y
-            px = rs() * BOX.x * 2; py = -BOX.y; pz = rs() * BOX.z * 2;
-            vx = rs() * 0.5; vy = ru() * 2.0 + 1.0; vz = rs() * 0.5;
-            break;
-        case 4: // front wall   z = +BOX.z
-            px = rs() * BOX.x * 2; py = rs() * BOX.y * 2; pz =  BOX.z;
-            vx = rs() * 0.5; vy = ru() * 1.5 + 0.5; vz = -ru() * 1.5;
-            break;
-        default: // back wall   z = -BOX.z
-            px = rs() * BOX.x * 2; py = rs() * BOX.y * 2; pz = -BOX.z;
-            vx = rs() * 0.5; vy = ru() * 1.5 + 0.5; vz =  ru() * 1.5;
-    }
-
-    pPositions[i3]   = px; pPositions[i3+1]   = py; pPositions[i3+2]   = pz;
-    pVelocities[i3]  = vx; pVelocities[i3+1]  = vy; pVelocities[i3+2]  = vz;
-}
-
-const particleGeo = new THREE.BufferGeometry();
-particleGeo.setAttribute('position',   new THREE.BufferAttribute(pPositions,  3));
-particleGeo.setAttribute('aVelocity',  new THREE.BufferAttribute(pVelocities, 3));
-
-// Shared uniform references for particles
-const uParticleProgress  = uProgress;   // same reference as room — stay in sync
-const uParticleTime      = { value: 0.0 };
-
-const particleVertexShader = /* glsl */`
-    attribute vec3 aVelocity;
-
-    uniform float uProgress;
-    uniform float uEdge;
-    uniform float uFreq;
-    uniform float uTime;
-
-    varying float vAlpha;
-    varying float vEdgeFactor;
-
-    ${NOISE_GLSL}
-
-    void main(){
-        float threshold = mix(-1.2, 1.2, uProgress);
-        float noise     = snoise3(position * uFreq);
-
-        float distFromEdge = noise - threshold; // >0 = not yet dissolved
-        float driftBand    = uEdge * 1.5;       // how far past the edge particles travel
-
-        // Only show particles in [−driftBand, uEdge] range around threshold
-        if(distFromEdge > uEdge || distFromEdge < -driftBand){
-            gl_Position  = vec4(9999., 9999., 9999., 1.); // clip off screen
-            gl_PointSize = 0.;
-            vAlpha       = 0.;
-            return;
-        }
-
-        // t: 0 = particle just at the dissolve edge, 1 = fully drifted away
-        float t = clamp(-distFromEdge / driftBand, 0., 1.);
-
-        vec3 pos = position + aVelocity * t;
-
-        // Subtle wave wiggle (Codrops sine-wave motion)
-        pos.x += sin(position.y * 2.0 + uTime * 2.0) * 0.08 * t;
-        pos.z += cos(position.x * 2.5 + uTime * 1.7) * 0.08 * t;
-
-        vAlpha      = 1. - t;
-        vEdgeFactor = clamp(distFromEdge / uEdge, 0., 1.); // 0=at edge,1=intact
-
-        vec4 mvPos   = modelViewMatrix * vec4(pos, 1.);
-        gl_PointSize = max(2., 80. / -mvPos.z);
-        gl_Position  = projectionMatrix * mvPos;
-    }
-`;
-
-const particleFragmentShader = /* glsl */`
-    uniform vec3 uEdgeColor;
-
-    varying float vAlpha;
-    varying float vEdgeFactor;
-
-    void main(){
-        if(vAlpha < 0.01) discard;
-
-        // Circular soft point
-        vec2  uv = gl_PointCoord - .5;
-        float d  = length(uv);
-        if(d > .5) discard;
-
-        float alpha = vAlpha * (1. - d * 2.);
-        gl_FragColor = vec4(uEdgeColor, alpha);
-    }
-`;
-
-const particleMat = new THREE.ShaderMaterial({
-    uniforms: {
-        uProgress:  uParticleProgress,
-        uEdge,
-        uFreq,
-        uEdgeColor,
-        uTime:      uParticleTime,
-    },
-    vertexShader:   particleVertexShader,
-    fragmentShader: particleFragmentShader,
-    transparent:    true,
-    depthWrite:     false,
-    blending:       THREE.AdditiveBlending,
-});
-
-scene.add(new THREE.Points(particleGeo, particleMat));
+// Room dissolve uses shader only — no particles on room walls.
 
 // ─── Lighting ────────────────────────────────────────────────────────────────
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
@@ -370,23 +234,175 @@ dirLight.shadow.camera.top  = 8;
 dirLight.shadow.camera.bottom = -8;
 scene.add(dirLight);
 
-// ─── Cylinder (placeholder object on floor) ──────────────────────────────────
+// ─── Cylinder (placeholder object) ───────────────────────────────────────────
 const cylinderHeight = 1.2;
+const CYL_RADIUS     = 0.3;
+
+// Individual progress uniform — driven by uProgress for testing.
+// Later: replaced by a timer-based value in the object-dissolve phase.
+const uCylinderProgress = { value: 0.0 };
+const uCylinderTime     = { value: 0.0 };
+
+// Dissolve shader injected into cylinder PBR material (same technique as room,
+// but uses LOCAL position for noise so pattern stays fixed on the object as it floats)
 const cylinderMat = new THREE.MeshStandardMaterial({
-    color:    0x8b7355,
-    roughness: 0.7,
-    emissive: new THREE.Color(0x000000), // animated in loop
+    color: 0x8b7355, roughness: 0.7, transparent: true,
 });
+cylinderMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uCylinderProgress = uCylinderProgress;
+    shader.uniforms.uEdge             = uEdge;
+    shader.uniforms.uFreq             = uFreq;
+    shader.uniforms.uEdgeColor        = uEdgeColor;
+
+    shader.vertexShader =
+        'varying vec3 vLocalPos;\n' +
+        shader.vertexShader.replace(
+            '#include <begin_vertex>',
+            `#include <begin_vertex>
+            vLocalPos = position;`
+        );
+
+    shader.fragmentShader =
+        `uniform float uCylinderProgress;
+         uniform float uEdge;
+         uniform float uFreq;
+         uniform vec3  uEdgeColor;
+         varying vec3  vLocalPos;
+         ${NOISE_GLSL}` +
+        shader.fragmentShader;
+
+    shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        `#include <dithering_fragment>
+        if(uCylinderProgress > 0.01){
+            float threshold = mix(-1.2, 1.2, uCylinderProgress);
+            float noise     = snoise3(vLocalPos * uFreq * 4.0);
+            if(noise < threshold) discard;
+            float edgeEnd = threshold + uEdge;
+            if(noise < edgeEnd){
+                float t = (noise - threshold) / uEdge;
+                gl_FragColor = vec4(mix(uEdgeColor, gl_FragColor.rgb, t), mix(0.5, 1.0, t));
+            }
+        }`
+    );
+};
+
 const cylinder = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.3, 0.3, cylinderHeight, 32),
+    new THREE.CylinderGeometry(CYL_RADIUS, CYL_RADIUS, cylinderHeight, 32),
     cylinderMat
 );
-// Floor is at y = -3.5; sit cylinder on it
-const CYLINDER_FLOOR_Y = -3.5 + cylinderHeight / 2; // resting position
+const CYLINDER_FLOOR_Y = -3.5 + cylinderHeight / 2;
 cylinder.position.set(0, CYLINDER_FLOOR_Y, -1);
 cylinder.castShadow    = true;
 cylinder.receiveShadow = true;
 scene.add(cylinder);
+
+// ─── Cylinder particles ───────────────────────────────────────────────────────
+// Sampled on cylinder surface in local space — attached as child so they
+// automatically follow the cylinder as it floats.
+const CYL_P_COUNT = 1500;
+const cylPosArr   = new Float32Array(CYL_P_COUNT * 3);
+const cylVelArr   = new Float32Array(CYL_P_COUNT * 3);
+
+for (let i = 0; i < CYL_P_COUNT; i++) {
+    const i3    = i * 3;
+    const theta = Math.random() * Math.PI * 2;
+    const type  = Math.random();
+
+    if (type < 0.8) {
+        // side surface — drift radially outward + upward
+        const y = (Math.random() - 0.5) * cylinderHeight;
+        cylPosArr[i3]   = Math.cos(theta) * CYL_RADIUS;
+        cylPosArr[i3+1] = y;
+        cylPosArr[i3+2] = Math.sin(theta) * CYL_RADIUS;
+        cylVelArr[i3]   = Math.cos(theta) * (Math.random() * 1.0 + 0.5);
+        cylVelArr[i3+1] = Math.random() * 1.5 + 0.3;
+        cylVelArr[i3+2] = Math.sin(theta) * (Math.random() * 1.0 + 0.5);
+    } else {
+        // top / bottom caps — drift upward + sideways
+        const rad   = Math.random() * CYL_RADIUS;
+        const isTop = type > 0.9;
+        cylPosArr[i3]   = Math.cos(theta) * rad;
+        cylPosArr[i3+1] = isTop ? cylinderHeight / 2 : -cylinderHeight / 2;
+        cylPosArr[i3+2] = Math.sin(theta) * rad;
+        cylVelArr[i3]   = (Math.random() - 0.5) * 1.0;
+        cylVelArr[i3+1] = Math.random() * 2.0 + 0.5;
+        cylVelArr[i3+2] = (Math.random() - 0.5) * 1.0;
+    }
+}
+
+const cylParticleGeo = new THREE.BufferGeometry();
+cylParticleGeo.setAttribute('position',  new THREE.BufferAttribute(cylPosArr, 3));
+cylParticleGeo.setAttribute('aVelocity', new THREE.BufferAttribute(cylVelArr, 3));
+
+const cylParticleVertShader = /* glsl */`
+    attribute vec3  aVelocity;
+    uniform float   uCylinderProgress;
+    uniform float   uEdge;
+    uniform float   uFreq;
+    uniform float   uTime;
+    varying float   vAlpha;
+    ${NOISE_GLSL}
+
+    void main(){
+        float threshold    = mix(-1.2, 1.2, uCylinderProgress);
+        float noise        = snoise3(position * uFreq * 4.0);
+        float distFromEdge = noise - threshold;
+        float driftBand    = uEdge * 1.5;
+
+        if(distFromEdge > uEdge || distFromEdge < -driftBand){
+            gl_Position  = vec4(9999., 9999., 9999., 1.);
+            gl_PointSize = 0.;
+            vAlpha       = 0.;
+            return;
+        }
+
+        float t   = clamp(-distFromEdge / driftBand, 0., 1.);
+        vec3  pos = position + aVelocity * t;
+
+        // Sine-wave wiggle (Codrops)
+        pos.x += sin(position.y * 3.0 + uTime * 2.0) * 0.05 * t;
+        pos.z += cos(position.x * 3.0 + uTime * 1.7) * 0.05 * t;
+
+        vAlpha = 1. - t;
+
+        vec4 mvPos   = modelViewMatrix * vec4(pos, 1.);
+        gl_PointSize = max(2., 60. / -mvPos.z);
+        gl_Position  = projectionMatrix * mvPos;
+    }
+`;
+
+const uCylParticleColor = { value: new THREE.Color(0xffffff) }; // bright white
+
+const cylParticleFragShader = /* glsl */`
+    uniform vec3  uCylParticleColor;
+    varying float vAlpha;
+
+    void main(){
+        if(vAlpha < 0.01) discard;
+        vec2  uv = gl_PointCoord - .5;
+        if(length(uv) > .5) discard;
+        float alpha = vAlpha * (1. - length(uv) * 2.);
+        gl_FragColor = vec4(uCylParticleColor, alpha);
+    }
+`;
+
+const cylParticleMat = new THREE.ShaderMaterial({
+    uniforms: {
+        uCylinderProgress,
+        uEdge, uFreq,
+        uCylParticleColor,
+        uTime: uCylinderTime,
+    },
+    vertexShader:   cylParticleVertShader,
+    fragmentShader: cylParticleFragShader,
+    transparent:    true,
+    depthWrite:     false,
+    blending:       THREE.AdditiveBlending,
+});
+
+// Attach particles as child — they follow cylinder position/rotation automatically
+cylinder.add(new THREE.Points(cylParticleGeo, cylParticleMat));
 
 // ─── Orbit Controls ──────────────────────────────────────────────────────────
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -417,6 +433,15 @@ const ROOM_RETURN_DIST = 7.0;
 // (camera starts at ~6.1, already inside the threshold).
 let hasZoomedOut = false;
 
+// ─── Phase state machine ──────────────────────────────────────────────────────
+// 'room'       — room visible, scroll controls uProgress
+// 'space'      — room gone, zoom active, 5s timer counting
+// 'dissolving' — objects dissolving automatically, scroll blocked
+// 'done'       — all objects gone, scroll re-enabled to restore room
+let phase         = 'room';
+let phaseStart    = 0;   // clock time when current phase began
+let scrollBlocked = false;
+
 function applyControlMode() {
     const inSpace = uProgress.value >= 0.95;
     controls.minAzimuthAngle = inSpace ? -Infinity : ROOM_LIMITS.minAzimuth;
@@ -434,14 +459,20 @@ applyControlMode();
 // uProgress = 1, not yet zoomed out OR still far → OrbitControls zooms
 // uProgress = 1, zoomed out AND back to start    → scroll restores room
 window.addEventListener('wheel', (e) => {
+    // Block scroll entirely during object dissolve phase
+    if (scrollBlocked) return;
+
     if (uProgress.value >= 1.0) {
         const dist = camera.position.distanceTo(controls.target);
-        // Only hand control back to room-restore once the user has zoomed out first
         if (!hasZoomedOut || dist > ROOM_RETURN_DIST) return;
-        // hasZoomedOut=true AND close to start: fall through to restore room
     }
     uProgress.value = Math.min(1.0, Math.max(0.0, uProgress.value + e.deltaY * 0.001));
-    if (uProgress.value < 0.95) hasZoomedOut = false; // reset when back in room
+    if (uProgress.value < 0.95) {
+        hasZoomedOut = false;
+        // reset phase if user scrolls back to room
+        phase = 'room';
+        uCylinderProgress.value = 0;
+    }
     applyControlMode();
 });
 
@@ -458,9 +489,33 @@ const clock = new THREE.Clock();
 
 function animate() {
     requestAnimationFrame(animate);
-    const t    = clock.getElapsedTime();
-    const p    = uProgress.value;           // 0 = full room, 1 = full space
-    uParticleTime.value = t;
+    const t = clock.getElapsedTime();
+    const p = uProgress.value;           // 0 = full room, 1 = full space
+
+    uCylinderTime.value = t;
+
+    // ── Phase state machine ──────────────────────────────────────────────────
+    // room → (uProgress=1) → space → (5s timer) → dissolving → done
+    if (phase === 'room' && p >= 1.0) {
+        phase      = 'space';
+        phaseStart = t;
+        scrollBlocked = false;
+    }
+
+    if (phase === 'space' && t - phaseStart >= 5.0) {
+        phase      = 'dissolving';
+        phaseStart = t;
+        scrollBlocked = true;
+    }
+
+    if (phase === 'dissolving') {
+        // Cylinder dissolves over 3 seconds
+        uCylinderProgress.value = Math.min(1.0, (t - phaseStart) / 3.0);
+        if (uCylinderProgress.value >= 1.0) {
+            phase         = 'done';
+            scrollBlocked = false; // re-enable scroll to restore room
+        }
+    }
 
     // ── Zoom toggle ──────────────────────────────────────────────────────────
     // Zoom is ON whenever fully in space AND (not yet zoomed out OR still far).
@@ -490,9 +545,6 @@ function animate() {
         THREE.MathUtils.lerp(0.88, 1.00, p)
     );
     dirLight.intensity = THREE.MathUtils.lerp(1.05, 3.5, p);
-
-    // No emissive — shadow side should be pitch black in space
-    cylinderMat.emissive.setRGB(0, 0, 0);
 
     // ── Cylinder floating ────────────────────────────────────────────────────
     // Rise to room centre, then drift weightlessly in a slow orbital pattern

@@ -77,43 +77,59 @@ if (noise < edgeEnd) {
 
 ### noise implementation
 3D Simplex Noise — Ashima Arts / Stefan Gustavson (2011) GLSL implementation.
-Stored as a JS string constant `NOISE_GLSL`, injected into both room shader and
-particle shader. No JS noise library used — noise must run on the GPU per-fragment.
+Stored as a JS string constant `NOISE_GLSL`, injected into room shader and object
+dissolve shaders. No JS noise library used — noise must run on the GPU per-fragment.
 
 ---
 
 ## objects
 
 ### current (placeholder)
-- **Cylinder:** `CylinderGeometry(0.3, 0.3, 1.2)` with `MeshStandardMaterial`
-- Floating animation driven by `uProgress` and elapsed time `t`:
-  ```javascript
-  position.y = CYLINDER_FLOOR_Y + p * 2.0 + sin(t * 0.8) * 0.25 * p  // rise + bob
-  position.x = sin(t * 0.5) * 0.35 * p                                 // lateral drift
-  position.z = -1 + cos(t * 0.4) * 0.25 * p                           // depth drift
-  rotation.y += 0.003 * p                                               // lazy spin
-  rotation.z  = sin(t * 0.45) * 0.08 * p                               // gentle tilt
-  ```
-- Emissive: black (no glow added — shadow side goes pitch black in space)
+- **Cylinder:** `CylinderGeometry(0.3, 0.3, 1.2)` with dissolve shader + particle system
+- Dissolve shader injected via `onBeforeCompile` using LOCAL position for noise — pattern
+  stays fixed on the object as it floats (unlike room which uses world position)
+- Own `uCylinderProgress` uniform, driven by phase timer (not scroll)
 
-### planned
-- 4 GLB models via `GLTFLoader`: tulip/vase, teddy bear, doll, water glass
-- Same floating animation per object with per-object phase offsets
+### floating animation
+Floating motion described by:
 
-### object disappearance (Phase 4)
-Two-layer effect — same noise dissolve technique as room, but **with particles**:
+$$P(t) = P_\text{initial} + p \cdot (H + A \odot \sin(\omega\, t))$$
+
+where `t` = elapsed time (scalar), `p` = scroll progress, and `H`, `A`, `ω ∈ ℝ³`:
+- `H` — upward rise vector (how high object lifts at p=1), varies per object
+- `A` — per-axis amplitude (how wide the swing), varies per object
+- `ω` — per-axis angular frequency (how fast the swing), varies per object
+
+Per-object variation in `H`, `A`, and `ω` ensures each object rises to a different
+height and drifts independently. Rotation is also driven by `sin(t) * p` per axis.
+
+### object disappearance (Phase 4) — implemented on cylinder
+Two-layer effect triggered by a **phase timer** (not scroll — death is uncontrollable):
+
+**Phase state machine:**
+```
+'room'       → uProgress 0→1 via scroll
+'space'      → uProgress=1, zoom enabled, 5s timer starts
+'dissolving' → scroll blocked, uCylinderProgress 0→1 over 3s (timer-driven)
+'done'       → scroll re-enabled to restore room
+```
 
 **Layer 1 — dissolve shader on object material**
-- Same `onBeforeCompile` injection as room, but each object has its own `uObjectProgress`
-  uniform (0→1), independent of `uProgress` (room dissolve)
-- Triggered by a sequential timer — each object disappears with a delay after the
-  previous one (death is not scroll-controllable, intentional artistic decision)
+- `onBeforeCompile` injects Simplex noise into `MeshStandardMaterial`
+- Uses LOCAL position so noise pattern is stable as object floats
+- `uCylinderProgress` (0→1) drives threshold: `mix(-1.2, 1.2, uCylinderProgress)`
+- Fragments below threshold are discarded → organic dissolve shape
 
-**Layer 2 — particle burst per object**
-- `Points` geometry placed on object surfaces (sampled from GLB geometry at load time)
-- Particles drift outward + upward when object dissolves, fade by opacity over lifetime
-- Same `NOISE_GLSL` + `uObjectProgress` uniform shared with object shader → edge-aligned
-- `AdditiveBlending` — particles glow against dark space background
+**Layer 2 — particle system**
+- 1500 `Points` sampled on cylinder surface (side + top/bottom caps) in local space
+- Attached as **child of cylinder mesh** → automatically follows object as it floats
+- Each particle's vertex shader evaluates the same Simplex noise at local position
+- Particles visible only within a narrow band around the dissolve threshold
+- Velocity attribute (`aVelocity`) displaces each particle outward — side particles
+  scatter radially, cap particles burst upward
+- Sine-wave wiggle applied on top: `pos.x += sin(localPos.y * 3.0 + t * 2.0) * 0.05`
+- Particle color: **white** (`0xffffff`) with `AdditiveBlending` — bright against dark space
+- Separate `uCylParticleColor` uniform (decoupled from room edge color)
 
 **Why particles on objects but not on room:**
 - Room dissolve → quiet, gradual, environmental — no particles keeps it calm
