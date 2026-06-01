@@ -13,6 +13,13 @@ The viewer interacts by scrolling (room ↔ space transition) and orbiting/zoomi
 ### room
 - **Geometry:** 6 individual `PlaneGeometry` meshes (floor, ceiling, 4 walls), each rotated
   so normals point inward → required for correct PBR lighting from inside
+- **Why not `BoxGeometry`:** `BoxGeometry` with `BackSide` rendering cannot be correctly lit
+  from inside using Three.js standard lighting. `BackSide` flips which face is rendered but
+  does NOT flip the normals used for lighting calculations — normals still point outward.
+  `DirectionalLight` computes `dot(normal, lightDir)` which becomes negative (light hits the
+  outside of the box), so the room appears black regardless of light position.
+  Six individual `PlaneGeometry` meshes with manually rotated inward-facing normals solve
+  this — `dot(normal, lightDir)` is positive and the room is correctly illuminated.
 - **Material:** `MeshStandardMaterial` with dissolve shader injected via `onBeforeCompile`
 - **Lighting:**
   - `AmbientLight` (warm white, intensity 2.8 in room → 0.0 in space)
@@ -23,6 +30,10 @@ The viewer interacts by scrolling (room ↔ space transition) and orbiting/zoomi
 ### space
 - **Skybox:** `BoxGeometry(1000,1000,1000)` with 6 `MeshBasicMaterial` faces using
   cube map textures (`asset/skybox_blue/bkg1_*.png`), rendered `BackSide`
+- **Why `BoxGeometry` + `BackSide` works here:** `MeshBasicMaterial` ignores lighting
+  entirely — no normal vectors, no dot product calculations. It simply displays the texture
+  color directly. So the outward-pointing normals of `BoxGeometry` cause no problem —
+  there is no lighting math to get wrong.
 - **Stars:** 1000 `Points` with additive blending, canvas-generated radial gradient texture,
   warm tint (`r=1, g=0.9, b=0.8`), randomly distributed in a 200-unit cube
 - **Lighting:** zero ambient, pure white directional at 8.0 intensity — simulates
