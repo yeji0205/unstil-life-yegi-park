@@ -47,7 +47,7 @@ Everything is in `main.js`. Sections in order:
 2. Skybox (space environment)
 3. Stars
 4. `NOISE_GLSL` constant (shared by all shaders)
-5. Shared dissolve uniforms (`uProgress`, `uEdge`, `uFreq`, `uEdgeColor`)
+5. Shared dissolve uniforms (`uProgress`, `uDissolveEdge`, `uNoiseFreq`, `uDissolveEdgeColor`)
 6. `makeRoomMaterial(hex)` — dissolve shader factory
 7. Room planes (6× PlaneGeometry)
 8. Lighting
@@ -180,13 +180,23 @@ completes (camera starts inside ROOM_RETURN_DIST threshold).
 
 ## Naming Conventions
 
-| Pattern | Example |
-|---|---|
-| Shared uniforms | `uProgress`, `uEdge`, `uFreq`, `uEdgeColor` |
-| Per-object uniforms | `uCylinderProgress`, `uCylinderTime` |
-| Per-object particle color | `uCylParticleColor` |
-| Geometry constants | `CYL_RADIUS`, `CYL_P_COUNT` |
-| Phase timing | `phaseStart` (clock seconds), `phase` (string) |
+Follow Clean Code principles — names must be descriptive and unambiguous.
+
+| Pattern | Rule | Example |
+|---|---|---|
+| Uniforms | always prefix `u`, full descriptive name | `uProgress`, `uDissolveEdge`, `uNoiseFreq`, `uDissolveEdgeColor` |
+| Per-object uniforms | `u` + ObjectName + Property | `uCylinderProgress`, `uCylinderTime` |
+| Particle color | `uParticleColor` (shared name across objects) | `uParticleColor` |
+| Constants | SCREAMING_SNAKE_CASE, fully spelled out | `CYLINDER_RADIUS`, `CYLINDER_PARTICLE_COUNT`, `ROOM_RETURN_DIST` |
+| Geometry | descriptive + `Geometry` suffix | `cylinderParticleGeometry`, `starGeometry` |
+| Materials | descriptive + `Material` suffix | `cylinderMat`, `cylinderParticleMaterial` |
+| Shaders | descriptive + `VertexShader` / `FragmentShader` | `cylinderParticleVertexShader` |
+| Three.js instances | full descriptive name, no abbreviation | `directionalLight`, `textureLoader` |
+| Phase timing | `phaseStart` (clock seconds), `phase` (string) | — |
+
+**GLSL uniform names** (inside shader strings) must match the key in `shader.uniforms`:
+- JS variable `uDissolveEdge` → `shader.uniforms.uEdge = uDissolveEdge` (key stays `uEdge`)
+- Only rename the GLSL uniform name itself if it exists in a custom `ShaderMaterial` (not `onBeforeCompile`)
 
 ---
 
@@ -198,9 +208,15 @@ completes (camera starts inside ROOM_RETURN_DIST threshold).
 - Phase 5: room reforms, new objects appear (reverse dissolve)
 - Web Audio API: café ambient fade with `uProgress`, per-object disappearance sounds
 
+## Debug GUI (lil-gui)
+
+A `lil-gui` debug panel is always present. Comment out the `gui` block before final release.
+Controls: `uProgress`, `uDissolveEdge`, `uNoiseFreq`, edge color RGB, ambient/directional intensity.
+
 ## What NOT to implement without discussion
 
-- Do not restructure into multiple files without confirming
+- Do not restructure into multiple files without confirming (single file is preferred for AI context)
 - Do not add physics engine — floating is purely mathematical (sinusoidal)
 - Do not use CSS or HTML elements for UI — canvas only
 - Do not add post-processing (bloom, FXAA) without confirming
+- Do not add `DRACOLoader` unless GLB files were explicitly exported with Draco compression

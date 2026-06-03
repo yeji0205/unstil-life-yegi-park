@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import GUI from 'lil-gui';
 
 // ─── Renderer ────────────────────────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -16,12 +17,12 @@ const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerH
 camera.position.set(0, 1.0, 4);
 
 // ─── Skybox ──────────────────────────────────────────────────────────────────
-const texLoader = new THREE.TextureLoader();
+const textureLoader = new THREE.TextureLoader();
 const skybox = new THREE.Mesh(
     new THREE.BoxGeometry(1000, 1000, 1000),
     ['right','left','top','bot','front','back'].map(face =>
         new THREE.MeshBasicMaterial({   // the universe/space should not
-            map: texLoader.load(`asset/skybox_blue/bkg1_${face}.png`),
+            map: textureLoader.load(`asset/skybox_blue/bkg1_${face}.png`),
             side: THREE.BackSide,
         })
     )
@@ -47,14 +48,14 @@ function makeStarTexture() {
 }
 
 const STAR_COUNT = 1000;
-const starPos = new Float32Array(STAR_COUNT * 3);
+const starPositions = new Float32Array(STAR_COUNT * 3);
 const starColor = new Float32Array(STAR_COUNT * 3);
-for (let i = 0; i < STAR_COUNT * 3; i++) starPos[i] = (Math.random() - 0.5) * 200;
+for (let i = 0; i < STAR_COUNT * 3; i++) starPositions[i] = (Math.random() - 0.5) * 200;
 for (let i = 0; i < STAR_COUNT * 3; i += 3) { starColor[i] = 1; starColor[i+1] = 0.9; starColor[i+2] = 0.8; }
-const starGeo = new THREE.BufferGeometry();
-starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-starGeo.setAttribute('color',    new THREE.BufferAttribute(starColor, 3));
-scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({
+const starGeometry = new THREE.BufferGeometry();
+starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+starGeometry.setAttribute('color',    new THREE.BufferAttribute(starColor, 3));
+scene.add(new THREE.Points(starGeometry, new THREE.PointsMaterial({
     size: 1, sizeAttenuation: true, map: makeStarTexture(),
     transparent: true, depthWrite: false,
     blending: THREE.AdditiveBlending, vertexColors: true,
@@ -116,10 +117,10 @@ const NOISE_GLSL = /* glsl */`
 // MeshStandardMaterial — Three.js lights work normally.
 // Dissolve is injected via onBeforeCompile so we keep the noise-based transition.
 
-const uProgress  = { value: 0.0 };
-const uEdge      = { value: 0.25 };
-const uFreq      = { value: 0.35 };
-const uEdgeColor = { value: new THREE.Color(0x000000) };
+const uProgress          = { value: 0.0 };
+const uDissolveEdge      = { value: 0.25 };
+const uNoiseFreq         = { value: 0.35 };
+const uDissolveEdgeColor = { value: new THREE.Color(0x000000) };
 
 // Dissolve snippet injected into every face material
 const DISSOLVE_FRAG_INJECT = /* glsl */`
@@ -143,10 +144,10 @@ function makeRoomMaterial(hex) {
 
     mat.onBeforeCompile = (shader) => {
         // Share dissolve uniforms
-        shader.uniforms.uProgress  = uProgress;     // how dissolved (0→1)
-        shader.uniforms.uEdge      = uEdge;         // thickness of the glow edge band
-        shader.uniforms.uFreq      = uFreq;         // noise scale (smaller = bigger blobs)
-        shader.uniforms.uEdgeColor = uEdgeColor;    // colour of the dissolve edge
+        shader.uniforms.uProgress  = uProgress;           // how dissolved (0→1)
+        shader.uniforms.uEdge      = uDissolveEdge;       // thickness of the glow edge band
+        shader.uniforms.uFreq      = uNoiseFreq;          // noise scale (smaller = bigger blobs)
+        shader.uniforms.uEdgeColor = uDissolveEdgeColor;  // colour of the dissolve edge
 
         // Pass world position from vertex shader
         shader.vertexShader =
@@ -222,21 +223,21 @@ roomParts.forEach(({ w, h, pos, rx, ry, color }) => {
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
 scene.add(ambientLight);
 
-const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.05);
-dirLight.position.set(-5, 8, 3);
-dirLight.castShadow = true;
-dirLight.shadow.mapSize.set(2048, 2048);
-dirLight.shadow.camera.near = 0.5;
-dirLight.shadow.camera.far  = 30;
-dirLight.shadow.camera.left = -8;
-dirLight.shadow.camera.right = 8;
-dirLight.shadow.camera.top  = 8;
-dirLight.shadow.camera.bottom = -8;
-scene.add(dirLight);
+const directionalLight = new THREE.DirectionalLight(0xfff5e0, 1.05);
+directionalLight.position.set(-5, 8, 3);
+directionalLight.castShadow = true;
+directionalLight.shadow.mapSize.set(2048, 2048);
+directionalLight.shadow.camera.near = 0.5;
+directionalLight.shadow.camera.far  = 30;
+directionalLight.shadow.camera.left = -8;
+directionalLight.shadow.camera.right = 8;
+directionalLight.shadow.camera.top  = 8;
+directionalLight.shadow.camera.bottom = -8;
+scene.add(directionalLight);
 
 // ─── Cylinder (placeholder object) ───────────────────────────────────────────
 const cylinderHeight = 1.2;
-const CYL_RADIUS     = 0.3;
+const CYLINDER_RADIUS     = 0.3;
 
 // Individual progress uniform — driven by uProgress for testing.
 // Later: replaced by a timer-based value in the object-dissolve phase.
@@ -250,9 +251,9 @@ const cylinderMat = new THREE.MeshStandardMaterial({
 });
 cylinderMat.onBeforeCompile = (shader) => {
     shader.uniforms.uCylinderProgress = uCylinderProgress;
-    shader.uniforms.uEdge             = uEdge;
-    shader.uniforms.uFreq             = uFreq;
-    shader.uniforms.uEdgeColor        = uEdgeColor;
+    shader.uniforms.uEdge             = uDissolveEdge;
+    shader.uniforms.uFreq             = uNoiseFreq;
+    shader.uniforms.uEdgeColor        = uDissolveEdgeColor;
 
     shader.vertexShader =
         'varying vec3 vLocalPos;\n' +
@@ -288,7 +289,7 @@ cylinderMat.onBeforeCompile = (shader) => {
 };
 
 const cylinder = new THREE.Mesh(
-    new THREE.CylinderGeometry(CYL_RADIUS, CYL_RADIUS, cylinderHeight, 32),
+    new THREE.CylinderGeometry(CYLINDER_RADIUS, CYLINDER_RADIUS, cylinderHeight, 32),
     cylinderMat
 );
 const CYLINDER_FLOOR_Y = -3.5 + cylinderHeight / 2;
@@ -300,11 +301,11 @@ scene.add(cylinder);
 // ─── Cylinder particles ───────────────────────────────────────────────────────
 // Sampled on cylinder surface in local space — attached as child so they
 // automatically follow the cylinder as it floats.
-const CYL_P_COUNT = 1500;
-const cylPosArr   = new Float32Array(CYL_P_COUNT * 3);
-const cylVelArr   = new Float32Array(CYL_P_COUNT * 3);
+const CYLINDER_PARTICLE_COUNT = 1500;
+const cylinderParticlePositions   = new Float32Array(CYLINDER_PARTICLE_COUNT * 3);
+const cylinderParticleVelocities   = new Float32Array(CYLINDER_PARTICLE_COUNT * 3);
 
-for (let i = 0; i < CYL_P_COUNT; i++) {
+for (let i = 0; i < CYLINDER_PARTICLE_COUNT; i++) {
     const i3    = i * 3;
     const theta = Math.random() * Math.PI * 2;
     const type  = Math.random();
@@ -312,30 +313,30 @@ for (let i = 0; i < CYL_P_COUNT; i++) {
     if (type < 0.8) {
         // side surface — drift radially outward + upward
         const y = (Math.random() - 0.5) * cylinderHeight;
-        cylPosArr[i3]   = Math.cos(theta) * CYL_RADIUS;
-        cylPosArr[i3+1] = y;
-        cylPosArr[i3+2] = Math.sin(theta) * CYL_RADIUS;
-        cylVelArr[i3]   = Math.cos(theta) * (Math.random() * 1.0 + 0.5);
-        cylVelArr[i3+1] = Math.random() * 1.5 + 0.3;
-        cylVelArr[i3+2] = Math.sin(theta) * (Math.random() * 1.0 + 0.5);
+        cylinderParticlePositions[i3]   = Math.cos(theta) * CYLINDER_RADIUS;
+        cylinderParticlePositions[i3+1] = y;
+        cylinderParticlePositions[i3+2] = Math.sin(theta) * CYLINDER_RADIUS;
+        cylinderParticleVelocities[i3]   = Math.cos(theta) * (Math.random() * 1.0 + 0.5);
+        cylinderParticleVelocities[i3+1] = Math.random() * 1.5 + 0.3;
+        cylinderParticleVelocities[i3+2] = Math.sin(theta) * (Math.random() * 1.0 + 0.5);
     } else {
         // top / bottom caps — drift upward + sideways
-        const rad   = Math.random() * CYL_RADIUS;
+        const rad   = Math.random() * CYLINDER_RADIUS;
         const isTop = type > 0.9;
-        cylPosArr[i3]   = Math.cos(theta) * rad;
-        cylPosArr[i3+1] = isTop ? cylinderHeight / 2 : -cylinderHeight / 2;
-        cylPosArr[i3+2] = Math.sin(theta) * rad;
-        cylVelArr[i3]   = (Math.random() - 0.5) * 1.0;
-        cylVelArr[i3+1] = Math.random() * 2.0 + 0.5;
-        cylVelArr[i3+2] = (Math.random() - 0.5) * 1.0;
+        cylinderParticlePositions[i3]   = Math.cos(theta) * rad;
+        cylinderParticlePositions[i3+1] = isTop ? cylinderHeight / 2 : -cylinderHeight / 2;
+        cylinderParticlePositions[i3+2] = Math.sin(theta) * rad;
+        cylinderParticleVelocities[i3]   = (Math.random() - 0.5) * 1.0;
+        cylinderParticleVelocities[i3+1] = Math.random() * 2.0 + 0.5;
+        cylinderParticleVelocities[i3+2] = (Math.random() - 0.5) * 1.0;
     }
 }
 
-const cylParticleGeo = new THREE.BufferGeometry();
-cylParticleGeo.setAttribute('position',  new THREE.BufferAttribute(cylPosArr, 3));
-cylParticleGeo.setAttribute('aVelocity', new THREE.BufferAttribute(cylVelArr, 3));
+const cylinderParticleGeometry = new THREE.BufferGeometry();
+cylinderParticleGeometry.setAttribute('position',  new THREE.BufferAttribute(cylinderParticlePositions, 3));
+cylinderParticleGeometry.setAttribute('aVelocity', new THREE.BufferAttribute(cylinderParticleVelocities, 3));
 
-const cylParticleVertShader = /* glsl */`
+const cylinderParticleVertexShader = /* glsl */`
     attribute vec3  aVelocity;
     uniform float   uCylinderProgress;
     uniform float   uEdge;
@@ -372,10 +373,10 @@ const cylParticleVertShader = /* glsl */`
     }
 `;
 
-const uCylParticleColor = { value: new THREE.Color(0xffffff) }; // bright white
+const uParticleColor = { value: new THREE.Color(0xffffff) }; // bright white
 
-const cylParticleFragShader = /* glsl */`
-    uniform vec3  uCylParticleColor;
+const cylinderParticleFragmentShader = /* glsl */`
+    uniform vec3  uParticleColor;
     varying float vAlpha;
 
     void main(){
@@ -383,26 +384,26 @@ const cylParticleFragShader = /* glsl */`
         vec2  uv = gl_PointCoord - .5;
         if(length(uv) > .5) discard;
         float alpha = vAlpha * (1. - length(uv) * 2.);
-        gl_FragColor = vec4(uCylParticleColor, alpha);
+        gl_FragColor = vec4(uParticleColor, alpha);
     }
 `;
 
-const cylParticleMat = new THREE.ShaderMaterial({
+const cylinderParticleMaterial = new THREE.ShaderMaterial({
     uniforms: {
         uCylinderProgress,
-        uEdge, uFreq,
-        uCylParticleColor,
+        uEdge: uDissolveEdge, uFreq: uNoiseFreq,
+        uParticleColor,
         uTime: uCylinderTime,
     },
-    vertexShader:   cylParticleVertShader,
-    fragmentShader: cylParticleFragShader,
+    vertexShader:   cylinderParticleVertexShader,
+    fragmentShader: cylinderParticleFragmentShader,
     transparent:    true,
     depthWrite:     false,
     blending:       THREE.AdditiveBlending,
 });
 
 // Attach particles as child — they follow cylinder position/rotation automatically
-cylinder.add(new THREE.Points(cylParticleGeo, cylParticleMat));
+cylinder.add(new THREE.Points(cylinderParticleGeometry, cylinderParticleMaterial));
 
 // ─── Orbit Controls ──────────────────────────────────────────────────────────
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -476,6 +477,19 @@ window.addEventListener('wheel', (e) => {
     applyControlMode();
 });
 
+// ─── Debug GUI ───────────────────────────────────────────────────────────────
+// Comment out the gui block before final release
+const gui = new GUI({ title: 'Unstil Life Debug' });
+gui.add(uProgress,      'value', 0, 1, 0.01).name('Progress (p)').listen();
+gui.add(uDissolveEdge,  'value', 0, 0.8, 0.01).name('Dissolve Edge');
+gui.add(uNoiseFreq,     'value', 0.1, 1.5, 0.01).name('Noise Frequency');
+gui.add(uDissolveEdgeColor.value, 'r', 0, 1, 0.01).name('Edge R');
+gui.add(uDissolveEdgeColor.value, 'g', 0, 1, 0.01).name('Edge G');
+gui.add(uDissolveEdgeColor.value, 'b', 0, 1, 0.01).name('Edge B');
+const lightFolder = gui.addFolder('Lighting');
+lightFolder.add(ambientLight, 'intensity', 0, 3, 0.05).name('Ambient');
+lightFolder.add(directionalLight, 'intensity', 0, 10, 0.1).name('Directional');
+
 // ─── Resize ──────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -530,21 +544,24 @@ function animate() {
     }
 
     // ── Lighting transition: warm room → cold cosmos ─────────────────────────
-    // Ambient: bright warm white (room) → faint deep blue (space)
-    ambientLight.color.setRGB(
-        THREE.MathUtils.lerp(1.00, 0.05, p),   // R
-        THREE.MathUtils.lerp(1.00, 0.08, p),   // G
-        THREE.MathUtils.lerp(1.00, 0.22, p)    // B
-    );
-    ambientLight.intensity = THREE.MathUtils.lerp(0.7, 0.0, p);
+    // Only update lighting during transition — skip when fully settled at p=0 or p=1
+    if (p > 0.001 && p < 0.999) {
+        // Ambient: bright warm white (room) → faint deep blue (space)
+        ambientLight.color.setRGB(
+            THREE.MathUtils.lerp(1.00, 0.05, p),   // R
+            THREE.MathUtils.lerp(1.00, 0.08, p),   // G
+            THREE.MathUtils.lerp(1.00, 0.22, p)    // B
+        );
+        ambientLight.intensity = THREE.MathUtils.lerp(0.7, 0.0, p);
 
-    // Directional: warm sunlight (0xfff5e0) → pure white harsh sunlight in space
-    dirLight.color.setRGB(
-        THREE.MathUtils.lerp(1.00, 1.00, p),
-        THREE.MathUtils.lerp(0.96, 1.00, p),
-        THREE.MathUtils.lerp(0.88, 1.00, p)
-    );
-    dirLight.intensity = THREE.MathUtils.lerp(1.05, 3.5, p);
+        // Directional: warm sunlight (0xfff5e0) → pure white harsh sunlight in space
+        directionalLight.color.setRGB(
+            THREE.MathUtils.lerp(1.00, 1.00, p),
+            THREE.MathUtils.lerp(0.96, 1.00, p),
+            THREE.MathUtils.lerp(0.88, 1.00, p)
+        );
+        directionalLight.intensity = THREE.MathUtils.lerp(1.05, 3.5, p);
+    }
 
     // ── Cylinder floating ────────────────────────────────────────────────────
     // Rise to room centre, then drift weightlessly in a slow orbital pattern
