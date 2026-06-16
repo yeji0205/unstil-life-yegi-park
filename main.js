@@ -12,10 +12,156 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
+// ─── Loading Screen ──────────────────────────────────────────────────────────
+// State machine:  'showing' → (GLBs ready + 1.2 s min hold) → 'dissolving' → 'done'
+//
+// 'showing'   — particles are static at their home positions; "Unstil Life" is readable.
+// 'dissolving'— each particle drifts from home to its scatter position with a staggered
+//               left-to-right delay so each letter dissolves in sequence.
+// 'done'      — overlay fades out and is removed, revealing the Three.js scene.
+const loadingOverlay = document.createElement('div');
+Object.assign(loadingOverlay.style, {
+    position: 'fixed', inset: '0', background: '#fff',
+    zIndex: '100', transition: 'opacity 1.2s ease',
+});
+
+const loadingCanvas = document.createElement('canvas');
+loadingCanvas.width  = window.innerWidth;
+loadingCanvas.height = window.innerHeight;
+Object.assign(loadingCanvas.style, { position: 'absolute', inset: '0' });
+loadingOverlay.appendChild(loadingCanvas);
+document.body.appendChild(loadingOverlay);
+
+const lCtx          = loadingCanvas.getContext('2d');
+let loadingParticles = [];
+let loadingAnimId    = null;
+
+let loadingState    = 'showing';   // 'showing' | 'dissolving' | 'done'
+let dissolveStartMs = 0;           // rAF timestamp captured on first dissolving frame
+let textReady       = false;
+let allGLBsReady    = false;
+let showStartMs     = 0;           // performance.now() when text first became visible
+const MIN_SHOW_MS   = 1200;        // always display text for at least this long
+
+function maybeStartDissolve() {
+    if (!textReady || !allGLBsReady || loadingState !== 'showing') return;
+    const waited = performance.now() - showStartMs;
+    const delay  = Math.max(0, MIN_SHOW_MS - waited);
+    setTimeout(() => { if (loadingState === 'showing') loadingState = 'dissolving'; }, delay);
+}
+
+// Sample "Unstil Life" glyph pixels after the Google Font is guaranteed loaded.
+document.fonts.ready.then(() => {
+    const W = loadingCanvas.width;
+    const H = loadingCanvas.height;
+
+    const off    = document.createElement('canvas');
+    off.width = W; off.height = H;
+    const offCtx = off.getContext('2d');
+
+    const fontSize = Math.min(W * 0.08, 86);
+    offCtx.font          = `300 ${fontSize}px 'Cormorant Garamond', Garamond, serif`;
+    offCtx.textAlign     = 'center';
+    offCtx.textBaseline  = 'middle';
+    offCtx.letterSpacing = `${fontSize * 0.12}px`;
+    offCtx.fillStyle     = '#000';
+    offCtx.fillText('Unstil Life', W / 2, H / 2);
+
+    const imgData    = offCtx.getImageData(0, 0, W, H).data;
+    const textPixels = [];
+    const STEP = 3;
+    for (let y = 0; y < H; y += STEP)
+        for (let x = 0; x < W; x += STEP)
+            if (imgData[(y * W + x) * 4 + 3] > 120) textPixels.push([x, y]);
+
+    // Shuffle so the 900-particle cap samples evenly across all letters
+    for (let i = textPixels.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [textPixels[i], textPixels[j]] = [textPixels[j], textPixels[i]];
+    }
+
+    loadingParticles = textPixels.slice(0, 900).map(([hx, hy]) => {
+        const angle = Math.random() * Math.PI * 2;
+        const dist  = Math.random() * 90 + 30;
+        return {
+            homeX:        hx,
+            homeY:        hy,
+            scatterX:     hx + Math.cos(angle) * dist,
+            scatterY:     hy + Math.sin(angle) * dist - Math.random() * 25, // slight upward drift
+            // dissolveDelay: left letters start first, staggered over 0.55 s + per-particle noise
+            dissolveDelay: (hx / W) * 0.55 + Math.random() * 0.08,
+            r:            Math.random() * 1.0 + 0.6,
+        };
+    });
+
+    showStartMs = performance.now();
+    textReady   = true;
+    maybeStartDissolve();
+});
+
+function animateLoadingScreen(time) {
+    loadingAnimId = requestAnimationFrame(animateLoadingScreen);
+    lCtx.clearRect(0, 0, loadingCanvas.width, loadingCanvas.height);
+
+    if (loadingState === 'showing') {
+        // Static: every particle sits exactly at its home position
+        for (const p of loadingParticles) {
+            lCtx.beginPath();
+            lCtx.arc(p.homeX, p.homeY, p.r, 0, Math.PI * 2);
+            lCtx.fillStyle = 'rgba(0,0,0,0.88)';
+            lCtx.fill();
+        }
+        return;
+    }
+
+    if (loadingState === 'dissolving') {
+        if (dissolveStartMs === 0) dissolveStartMs = time; // latch on first dissolving frame
+        const elapsed = (time - dissolveStartMs) * 0.001; // seconds since dissolve began
+
+        let allSettled = true;
+        for (const p of loadingParticles) {
+            // Each particle waits for its dissolveDelay, then moves over 1.1 s
+            const localT = Math.min(Math.max((elapsed - p.dissolveDelay) / 1.1, 0), 1);
+            if (localT < 1) allSettled = false;
+
+            const x     = p.homeX + (p.scatterX - p.homeX) * localT;
+            const y     = p.homeY + (p.scatterY - p.homeY) * localT;
+            const alpha = Math.pow(1 - localT, 1.8) * 0.88 + 0.02;
+
+            lCtx.beginPath();
+            lCtx.arc(x, y, p.r, 0, Math.PI * 2);
+            lCtx.fillStyle = `rgba(0,0,0,${alpha})`;
+            lCtx.fill();
+        }
+
+        if (allSettled) {
+            loadingState = 'done';
+            gui.show(); // reveal debug panel only after loading screen is gone
+            loadingOverlay.style.opacity = '0';
+            setTimeout(() => {
+                loadingOverlay.remove();
+                cancelAnimationFrame(loadingAnimId);
+            }, 1200);
+        }
+    }
+}
+loadingAnimId = requestAnimationFrame(animateLoadingScreen);
+
+// Called once per GLB that finishes loading.
+const LOADING_TOTAL = 4; // table + tulip + dummy + teddy
+let loadedCount = 0;
+function onGLBLoaded() {
+    loadedCount++;
+    if (loadedCount >= LOADING_TOTAL) {
+        allGLBsReady = true;
+        maybeStartDissolve();
+    }
+}
+
 // ─── Scene & Camera ──────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 2000);
-camera.position.set(0, 2.0, 6.0); // elevated for still-life angle (~30° down at table)
+camera.position.set(0, 0.5, 5.8); // near-table-height for still-life "across the table" angle (~22° down)
 
 // ─── Skybox ──────────────────────────────────────────────────────────────────
 const textureLoader = new THREE.TextureLoader();
@@ -194,18 +340,18 @@ function makeRoomMaterial(hex) {
 
 // Individual planes — FrontSide with inward-pointing normals so DirectionalLight works
 const roomParts = [
-    // floor   — normal points up   (+y)
-    { w: 14, h: 14, pos: [0, -3.5,  0], rx: -Math.PI / 2, ry: 0,            color: 0x9e7450 },
-    // ceiling — normal points down (-y)
-    { w: 14, h: 14, pos: [0,  3.5,  0], rx:  Math.PI / 2, ry: 0,            color: 0xf0e6d2 },
-    // back wall  — normal points +z (toward camera)
-    { w: 14, h:  7, pos: [0,  0,   -7], rx: 0,            ry: 0,            color: 0x777541 },
-    // front wall — normal points -z (toward back wall)
-    { w: 14, h:  7, pos: [0,  0,    7], rx: 0,            ry: Math.PI,      color: 0x777541 },
-    // left wall  — normal points +x
-    { w: 14, h:  7, pos: [-7, 0,    0], rx: 0,            ry:  Math.PI / 2, color: 0x777541 },
-    // right wall — normal points -x
-    { w: 14, h:  7, pos: [ 7, 0,    0], rx: 0,            ry: -Math.PI / 2, color: 0x777541 },
+    // floor   — dark worn wood
+    { w: 14, h: 14, pos: [0, -3.5,  0], rx: -Math.PI / 2, ry: 0,            color: 0x2e1c0e },
+    // ceiling — dark, mostly invisible above the key light
+    { w: 14, h: 14, pos: [0,  3.5,  0], rx:  Math.PI / 2, ry: 0,            color: 0x1e1810 },
+    // back wall  — dark olive-brown, enough surface to catch edge light and shadows
+    { w: 14, h:  7, pos: [0,  0,   -7], rx: 0,            ry: 0,            color: 0x3d3520 },
+    // front wall
+    { w: 14, h:  7, pos: [0,  0,    7], rx: 0,            ry: Math.PI,      color: 0x3d3520 },
+    // left wall
+    { w: 14, h:  7, pos: [-7, 0,    0], rx: 0,            ry:  Math.PI / 2, color: 0x3d3520 },
+    // right wall
+    { w: 14, h:  7, pos: [ 7, 0,    0], rx: 0,            ry: -Math.PI / 2, color: 0x3d3520 },
 ];
 
 roomParts.forEach(({ w, h, pos, rx, ry, color }) => {
@@ -223,13 +369,15 @@ roomParts.forEach(({ w, h, pos, rx, ry, color }) => {
 // Room dissolve uses shader only — no particles on room walls.
 
 // ─── Lighting ────────────────────────────────────────────────────────────────
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+// Low-intensity warm ambient — just enough to lift the deepest shadows off pure black
+const ambientLight = new THREE.AmbientLight(0x3d2010, 0.15);
 scene.add(ambientLight);
 
-const directionalLight = new THREE.DirectionalLight(0xfff5e0, 1.05);
-directionalLight.position.set(-5, 8, 3);
+// Single key light from upper-left-front — matches the photo's Rembrandt-style raking light
+const directionalLight = new THREE.DirectionalLight(0xffe8b0, 2.2);
+directionalLight.position.set(-6, 7, 5);
 directionalLight.castShadow = true;
-directionalLight.shadow.mapSize.set(2048, 2048);
+directionalLight.shadow.mapSize.set(1024, 1024);
 directionalLight.shadow.camera.near = 0.5;
 directionalLight.shadow.camera.far  = 30;
 directionalLight.shadow.camera.left = -8;
@@ -238,12 +386,80 @@ directionalLight.shadow.camera.top  = 8;
 directionalLight.shadow.camera.bottom = -8;
 scene.add(directionalLight);
 
+// ─── Fake volumetric light beam ──────────────────────────────────────────────
+// Single cone with a custom gradient shader: full brightness at the tip (light
+// source) fading to fully transparent at the base (floor). The cone stretches
+// all the way down to the floor plane so there is no abrupt cut-off.
+//
+// ConeGeometry: apex at local +Y, base at local -Y.
+// We rotate so +Y points toward the light source (upper-left, near ceiling)
+// and -Y reaches the floor.
+const BEAM_TIP  = new THREE.Vector3(-4.5,  2.8,  2.0); // upper-left, light entry
+const BEAM_BASE = new THREE.Vector3( 0.8, -3.4, -2.3); // floor intersection
+
+const _beamAxis    = new THREE.Vector3().subVectors(BEAM_TIP, BEAM_BASE).normalize();
+const _beamLen     = BEAM_TIP.distanceTo(BEAM_BASE);          // ~9.2 units
+const _beamHalfLen = _beamLen * 0.5;
+const _beamCenter  = new THREE.Vector3().addVectors(BEAM_TIP, BEAM_BASE).multiplyScalar(0.5);
+const _beamQuat    = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), _beamAxis);
+
+// uBeamFade driven each frame in the animate loop to dissolve with the room
+const uBeamFade = { value: 1.0 };
+
+const beamMat = new THREE.ShaderMaterial({
+    uniforms: { uBeamFade },
+    vertexShader: /* glsl */`
+        varying float vTipness;
+        varying float vEdgeFade;
+        void main() {
+            // Axis fade: 0 at floor base, 1 at light-source tip
+            vTipness = clamp(position.y / ${_beamHalfLen.toFixed(4)} * 0.5 + 0.5, 0.0, 1.0);
+
+            // Edge fade: how much the surface faces the camera.
+            // normalMatrix transforms model normals → view space.
+            // In view space the camera looks down -Z, so the Z component of the
+            // view-space normal equals cos(angle between normal and view direction).
+            // At the silhouette edge the normal is perpendicular to view → Z≈0 → fade to 0.
+            // Facing the camera directly → Z≈1 → full contribution.
+            vec3 viewNormal = normalize(normalMatrix * normal);
+            vEdgeFade = abs(viewNormal.z); // abs handles DoubleSide back-faces
+
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: /* glsl */`
+        uniform float uBeamFade;
+        varying float vTipness;
+        varying float vEdgeFade;
+        void main() {
+            // Tip-to-base fall-off (quadratic) × soft silhouette edge × room fade
+            float edge  = smoothstep(0.0, 0.5, vEdgeFade); // transparent at edge, solid toward centre
+            float alpha = vTipness * vTipness * 0.18 * edge * uBeamFade;
+            gl_FragColor = vec4(1.0, 0.91, 0.65, alpha);
+        }
+    `,
+    transparent: true,
+    depthWrite:  false,
+    blending:    THREE.AdditiveBlending,
+    side:        THREE.DoubleSide,
+});
+
+const beamMesh = new THREE.Mesh(
+    new THREE.ConeGeometry(2.2, _beamLen, 48, 1, true), // 48 segments → smooth circle
+    beamMat
+);
+beamMesh.position.copy(_beamCenter);
+beamMesh.quaternion.copy(_beamQuat);
+beamMesh.renderOrder = 1;
+scene.add(beamMesh);
+
 // ─── Table (GLB model) ───────────────────────────────────────────────────────
 const TABLE_PARTICLE_COUNT = 2000;
 const uTableProgress       = { value: 0.0 };
 const uTableTime           = { value: 0.0 };
 let tableObject   = null; // set once GLB loads
-let TABLE_FLOOR_Y = -3.5; // resting Y of the table mesh root; updated after GLB positions itself
+let TABLE_FLOOR_Y = -3.5; // resting Y, updated after GLB loads
+let TABLE_FLOOR_Z =  0.0; // resting Z, updated after GLB loads (table is moved back into the cone)
 
 const gltfLoader = new GLTFLoader();
 
@@ -321,7 +537,9 @@ gltfLoader.load('asset/table.glb', (gltf) => {
 
     const tableBox = new THREE.Box3().setFromObject(tableObject);
     tableObject.position.y = -3.5 - tableBox.min.y;
-    TABLE_FLOOR_Y = tableObject.position.y; // save resting Y for floating animation
+    tableObject.position.z = -1.2; // move table back so it sits under the light cone
+    TABLE_FLOOR_Y = tableObject.position.y;
+    TABLE_FLOOR_Z = tableObject.position.z;
 
     console.log('Table size (units):', tableBox.getSize(new THREE.Vector3()));
 
@@ -395,20 +613,23 @@ gltfLoader.load('asset/table.glb', (gltf) => {
 
     // Attach as child so particles inherit the table's position/rotation automatically.
     tableObject.add(new THREE.Points(tableParticleGeometry, tableParticleMaterial));
+    onGLBLoaded(); // table is ready
 });
 
 // ─── Stage Objects (GLB models placed on the table) ──────────────────────────
 // Each entry defines one still-life object: its file, visual scale, table position,
 // floating motion params, and when it starts dissolving after the button is clicked.
-const OBJECT_PARTICLE_COUNT = 1500;
+const OBJECT_PARTICLE_COUNT = 750;
 
 const OBJECT_DEFS = [
     // offsetX/Z are relative to the table centre (world 0,0).
     // dissolveStart: seconds after button click when this object begins dissolving.
     // phaseOffset: shifts the sin/cos waves so every object drifts independently in space.
-    { file: 'asset/the_lonely_tulip.glb', label: 'tulip', targetHeight: 0.8,  offsetX: -0.5, offsetZ: -0.5, H: 2.5, phaseOffset: 0.0, dissolveStart:  0 },
-    { file: 'asset/Wooden_dummy.glb',      label: 'dummy', targetHeight: 0.55, offsetX:  0.0, offsetZ:  0.1, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
-    { file: 'asset/teddy_bear.glb',        label: 'teddy', targetHeight: 0.45, offsetX:  0.5, offsetZ: -0.4, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
+    // Photo reference: tulip vase left-back, dummy center, teddy right.
+    // Z offsets shifted back to sit under the light cone (table is at z = -1.2)
+    { file: 'asset/the_lonely_tulip.glb', label: 'tulip', targetHeight: 1.70, offsetX: -0.55, offsetZ: -1.55, H: 2.5, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/Wooden_dummy.glb',      label: 'dummy', targetHeight: 1.04, offsetX:  0.08, offsetZ: -1.05, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
+    { file: 'asset/teddy_bear.glb',        label: 'teddy', targetHeight: 0.84, offsetX:  0.58, offsetZ: -1.15, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
 ];
 
 // Filled as each GLB loads. Each entry: mesh, uProgress, uTime, restY, restX, restZ,
@@ -566,14 +787,20 @@ function loadStageObject(def, surfaceY) {
         const particleVelocities = new Float32Array(OBJECT_PARTICLE_COUNT * 3);
         const vertexCount = rawPositions.length / 3;
 
+        // velocityCompensation undoes the GLB's scaleFactor shrink.
+        // The vertex shader applies modelViewMatrix (which includes scale), so a velocity
+        // of 1.0 local = scaleFactor world. Multiplying by 1/scale restores world-space spread.
+        const velocityCompensation = 1.0 / scaleFactor;
         for (let i = 0; i < OBJECT_PARTICLE_COUNT; i++) {
             const src = Math.floor(Math.random() * vertexCount) * 3;
             const px = rawPositions[src], py = rawPositions[src+1], pz = rawPositions[src+2];
             particlePositions[i*3] = px; particlePositions[i*3+1] = py; particlePositions[i*3+2] = pz;
-            const r = Math.sqrt(px*px + pz*pz) || 1;
-            particleVelocities[i*3]   = (px/r) * (Math.random() * 1.2 + 0.4);
-            particleVelocities[i*3+1] = Math.random() * 2.0 + 0.3;
-            particleVelocities[i*3+2] = (pz/r) * (Math.random() * 1.2 + 0.4);
+            // Random spread angle instead of radial — avoids thin objects (tulip stem) clustering
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 1.5 + 0.5;
+            particleVelocities[i*3]   = Math.cos(angle) * speed * velocityCompensation;
+            particleVelocities[i*3+1] = (Math.random() * 2.5 + 0.5) * velocityCompensation;
+            particleVelocities[i*3+2] = Math.sin(angle) * speed * velocityCompensation;
         }
 
         const particleGeom = new THREE.BufferGeometry();
@@ -594,7 +821,7 @@ function loadStageObject(def, surfaceY) {
 
         mesh.add(new THREE.Points(particleGeom, particleMat));
 
-        stageObjects.push({
+        const entry = {
             mesh,
             uProgress:    uObjProgress,
             uTime:        uObjTime,
@@ -605,7 +832,26 @@ function loadStageObject(def, surfaceY) {
             phaseOffset:  def.phaseOffset,
             dissolveStart: def.dissolveStart,
             shadowsKilled: false,
-        });
+            spinY:        0,       // cumulative auto-rotation (driven by animate loop)
+            rotYOffset:   0,       // user-controlled rotation offset from GUI
+        };
+        stageObjects.push(entry);
+
+        onGLBLoaded(); // this object is ready
+
+        // ── Per-object debug folder ───────────────────────────────────────────
+        // gui is module-level; it is defined synchronously before GLBs can load,
+        // so it is always available here inside the async callback.
+        const objFolder = gui.addFolder(def.label);
+        const scaleProxy = { scale: scaleFactor };
+        objFolder.add(scaleProxy, 'scale', 0.05, 5.0, 0.01).name('Scale')
+            .onChange(v => mesh.scale.setScalar(v));
+        objFolder.add(entry, 'restX', -3, 3, 0.01).name('Pos X').listen();
+        objFolder.add(entry, 'restY', -5, 8, 0.01).name('Pos Y').listen();
+        objFolder.add(entry, 'restZ', -3, 3, 0.01).name('Pos Z').listen();
+        objFolder.add(entry, 'rotYOffset', -Math.PI, Math.PI, 0.01).name('Rot Y offset');
+        objFolder.close();
+        entry.guiFolder = objFolder; // saved so we can hide it after permanent dissolve
     });
 }
 
@@ -616,7 +862,7 @@ controls.dampingFactor    = 0.08;
 controls.enablePan        = false;
 controls.enableZoom       = false;
 controls.rotateSpeed      = 1.0;
-controls.target.set(0, -2.0, -1); // aimed at table surface for still-life view
+controls.target.set(0, -1.5, -0.5); // aimed at table-surface center for still-life view
 
 // Room-mode limits (applied initially, relaxed when in space)
 // Limits calculated from orbital radius (r≈6.1) and room bounds
@@ -631,7 +877,7 @@ const ROOM_LIMITS = {
 
 // Camera is "at the starting point" when within this distance of the target.
 // Original orbit radius ≈ 6.1; add a small margin so the switch feels natural.
-const ROOM_RETURN_DIST = 9.5; // new camera radius ≈ 8.1 units; 9.5 gives comfortable margin
+const ROOM_RETURN_DIST = 8.5; // orbit radius from new camera (~7.1 units); 8.5 gives comfortable margin
 
 // Armed once the user zooms out past ROOM_RETURN_DIST after entering space.
 // Prevents the room from immediately re-appearing when the room first dissolves
@@ -695,6 +941,7 @@ window.addEventListener('wheel', (e) => {
 // ─── Debug GUI ───────────────────────────────────────────────────────────────
 // Comment out the gui block before final release
 const gui = new GUI({ title: 'Unstil Life Debug' });
+gui.hide(); // hidden during loading screen; shown in animateLoadingScreen when dissolve completes
 gui.add(uProgress,      'value', 0, 1, 0.01).name('Progress (p)').listen();
 gui.add(uDissolveEdge,  'value', 0, 0.8, 0.01).name('Dissolve Edge');
 gui.add(uNoiseFreq,     'value', 0.1, 1.5, 0.01).name('Noise Frequency');
@@ -704,6 +951,15 @@ gui.add(uDissolveEdgeColor.value, 'b', 0, 1, 0.01).name('Edge B');
 const lightFolder = gui.addFolder('Lighting');
 lightFolder.add(ambientLight, 'intensity', 0, 3, 0.05).name('Ambient');
 lightFolder.add(directionalLight, 'intensity', 0, 10, 0.1).name('Directional');
+lightFolder.close();
+
+// Camera position display — read-only, updated every frame in the animate loop.
+// Only meaningful when inside the room (p < 0.95); numbers freeze in space mode.
+const cameraDebug = { x: 0, y: 0, z: 0 };
+const cameraFolder = gui.addFolder('Camera position (room)');
+cameraFolder.add(cameraDebug, 'x').name('Cam X').listen().disable();
+cameraFolder.add(cameraDebug, 'y').name('Cam Y').listen().disable();
+cameraFolder.add(cameraDebug, 'z').name('Cam Z').listen().disable();
 
 // Button lives in the GUI panel. Disabled until phase === 'space'.
 const dissolveActions = {
@@ -765,6 +1021,12 @@ function animate() {
         if (elapsed >= 18.0) {
             phase         = 'done';
             scrollBlocked = false;
+            // Permanently remove the 3 stage objects — only table returns on room restore
+            for (const obj of stageObjects) {
+                scene.remove(obj.mesh);
+                if (obj.guiFolder) obj.guiFolder.hide();
+            }
+            stageObjects.length = 0; // clear array so animate loop and scroll handler skip them
         }
     }
 
@@ -780,24 +1042,29 @@ function animate() {
         controls.enableZoom = false;
     }
 
+    // ── Beam fade — disappears as room dissolves ─────────────────────────────
+    // Fade quickly in the first 40 % of the scroll so the beam is gone well
+    // before the room walls fully dissolve.
+    uBeamFade.value = Math.max(0, 1 - p / 0.4);
+
     // ── Lighting transition: warm room → cold cosmos ─────────────────────────
     // Only update lighting during transition — skip when fully settled at p=0 or p=1
     if (p > 0.001 && p < 0.999) {
-        // Ambient: bright warm white (room) → faint deep blue (space)
+        // Ambient: dark warm brown (room) → faint deep blue (space)
         ambientLight.color.setRGB(
-            THREE.MathUtils.lerp(1.00, 0.05, p),   // R
-            THREE.MathUtils.lerp(1.00, 0.08, p),   // G
-            THREE.MathUtils.lerp(1.00, 0.22, p)    // B
+            THREE.MathUtils.lerp(0.24, 0.05, p),   // R  (0x3d = 61 → 0.24)
+            THREE.MathUtils.lerp(0.13, 0.08, p),   // G  (0x20 = 32 → 0.13)
+            THREE.MathUtils.lerp(0.06, 0.22, p)    // B  (0x10 = 16 → 0.06)
         );
-        ambientLight.intensity = THREE.MathUtils.lerp(0.7, 0.0, p);
+        ambientLight.intensity = THREE.MathUtils.lerp(0.15, 0.0, p);
 
-        // Directional: warm sunlight (0xfff5e0) → pure white harsh sunlight in space
+        // Directional: warm amber key (0xffe8b0) → pure white harsh sunlight in space
         directionalLight.color.setRGB(
             THREE.MathUtils.lerp(1.00, 1.00, p),
-            THREE.MathUtils.lerp(0.96, 1.00, p),
-            THREE.MathUtils.lerp(0.88, 1.00, p)
+            THREE.MathUtils.lerp(0.91, 1.00, p),   // 0xe8 = 232 → 0.91
+            THREE.MathUtils.lerp(0.69, 1.00, p)    // 0xb0 = 176 → 0.69
         );
-        directionalLight.intensity = THREE.MathUtils.lerp(1.05, 3.5, p);
+        directionalLight.intensity = THREE.MathUtils.lerp(2.2, 3.5, p);
     }
 
     // ── Stage objects floating ────────────────────────────────────────────────
@@ -813,7 +1080,8 @@ function animate() {
         obj.mesh.position.y = obj.restY + rise + bob;
         obj.mesh.position.x = obj.restX + driftX;
         obj.mesh.position.z = obj.restZ + driftZ;
-        obj.mesh.rotation.y += 0.002 * p;
+        obj.spinY += 0.002 * p;
+        obj.mesh.rotation.y = obj.spinY + obj.rotYOffset;
         obj.mesh.rotation.z  = Math.sin(t * 0.42 + phi) * 0.06 * p;
     }
 
@@ -827,10 +1095,15 @@ function animate() {
         const tableDriftZ = Math.cos(t * 0.29 + 1.5) * 0.40 * p;
         tableObject.position.y = TABLE_FLOOR_Y + tableRise + tableBob;
         tableObject.position.x = tableDriftX;
-        tableObject.position.z = tableDriftZ;
+        tableObject.position.z = TABLE_FLOOR_Z + tableDriftZ;
         tableObject.rotation.y += 0.0015 * p;
         tableObject.rotation.z  = Math.sin(t * 0.38) * 0.04 * p;
     }
+
+    // Update camera debug display (capped to 2 decimal places for readability)
+    cameraDebug.x = +camera.position.x.toFixed(2);
+    cameraDebug.y = +camera.position.y.toFixed(2);
+    cameraDebug.z = +camera.position.z.toFixed(2);
 
     controls.update();
     renderer.render(scene, camera);
