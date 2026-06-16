@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader }   from 'three/addons/loaders/GLTFLoader.js';
 import GUI from 'lil-gui';
 
 // ─── Renderer ────────────────────────────────────────────────────────────────
@@ -14,7 +15,7 @@ document.body.appendChild(renderer.domElement);
 // ─── Scene & Camera ──────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 2000);
-camera.position.set(0, 1.0, 4);
+camera.position.set(0, 2.0, 6.0); // elevated for still-life angle (~30° down at table)
 
 // ─── Skybox ──────────────────────────────────────────────────────────────────
 const textureLoader = new THREE.TextureLoader();
@@ -116,6 +117,8 @@ const NOISE_GLSL = /* glsl */`
 // ─── Room ────────────────────────────────────────────────────────────────────
 // MeshStandardMaterial — Three.js lights work normally.
 // Dissolve is injected via onBeforeCompile so we keep the noise-based transition.
+// onBeforeCompile is for modifying Three.js's built-in materials (MeshStandardMaterial, etc.)
+// materials where you want to keep the lighting but add something.
 
 const uProgress          = { value: 0.0 };
 const uDissolveEdge      = { value: 0.25 };
@@ -235,110 +238,189 @@ directionalLight.shadow.camera.top  = 8;
 directionalLight.shadow.camera.bottom = -8;
 scene.add(directionalLight);
 
-// ─── Cylinder (placeholder object) ───────────────────────────────────────────
-const cylinderHeight = 1.2;
-const CYLINDER_RADIUS     = 0.3;
+// ─── Table (GLB model) ───────────────────────────────────────────────────────
+const TABLE_PARTICLE_COUNT = 2000;
+const uTableProgress       = { value: 0.0 };
+const uTableTime           = { value: 0.0 };
+let tableObject   = null; // set once GLB loads
+let TABLE_FLOOR_Y = -3.5; // resting Y of the table mesh root; updated after GLB positions itself
 
-// Individual progress uniform — driven by uProgress for testing.
-// Later: replaced by a timer-based value in the object-dissolve phase.
-const uCylinderProgress = { value: 0.0 };
-const uCylinderTime     = { value: 0.0 };
+const gltfLoader = new GLTFLoader();
 
-// Dissolve shader injected into cylinder PBR material (same technique as room,
-// but uses LOCAL position for noise so pattern stays fixed on the object as it floats)
-const cylinderMat = new THREE.MeshStandardMaterial({
-    color: 0x8b7355, roughness: 0.7, transparent: true,
-});
-cylinderMat.onBeforeCompile = (shader) => {
-    shader.uniforms.uCylinderProgress = uCylinderProgress;
-    shader.uniforms.uEdge             = uDissolveEdge;
-    shader.uniforms.uFreq             = uNoiseFreq;
-    shader.uniforms.uEdgeColor        = uDissolveEdgeColor;
+gltfLoader.load('asset/table.glb', (gltf) => {
+    tableObject = gltf.scene;
 
-    shader.vertexShader =
-        'varying vec3 vLocalPos;\n' +
-        shader.vertexShader.replace(
-            '#include <begin_vertex>',
-            `#include <begin_vertex>
-            vLocalPos = position;`
-        );
+    // ── Dissolve shader on every submesh ─────────────────────────────────────
+    // GLB files contain a tree of Mesh children. We traverse every one and
+    // inject the same dissolve logic used on the cylinder — local position so
+    // the noise pattern stays fixed on the object as it floats.
+    tableObject.traverse((child) => {
+        if (!child.isMesh) return;
+        child.castShadow = child.receiveShadow = true;
 
-    shader.fragmentShader =
-        `uniform float uCylinderProgress;
-         uniform float uEdge;
-         uniform float uFreq;
-         uniform vec3  uEdgeColor;
-         varying vec3  vLocalPos;
-         ${NOISE_GLSL}` +
-        shader.fragmentShader;
+        // Clone the material so each submesh owns its shader independently.
+        // Without cloning, all meshes would share one compiled program and
+        // the first mesh to compile would overwrite the others.
+        const mat = child.material.clone();
+        mat.transparent = true;
 
-    shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <dithering_fragment>',
-        `#include <dithering_fragment>
-        if(uCylinderProgress > 0.01){
-            float threshold = mix(-1.2, 1.2, uCylinderProgress);
-            float noise     = snoise3(vLocalPos * uFreq * 4.0);
-            if(noise < threshold) discard;
-            float edgeEnd = threshold + uEdge;
-            if(noise < edgeEnd){
-                float t = (noise - threshold) / uEdge;
-                gl_FragColor = vec4(mix(uEdgeColor, gl_FragColor.rgb, t), mix(0.5, 1.0, t));
-            }
-        }`
-    );
-};
+        mat.onBeforeCompile = (shader) => {
+            shader.uniforms.uTableProgress = uTableProgress;
+            shader.uniforms.uEdge          = uDissolveEdge;
+            shader.uniforms.uFreq          = uNoiseFreq;
+            shader.uniforms.uEdgeColor     = uDissolveEdgeColor;
 
-const cylinder = new THREE.Mesh(
-    new THREE.CylinderGeometry(CYLINDER_RADIUS, CYLINDER_RADIUS, cylinderHeight, 32),
-    cylinderMat
-);
-const CYLINDER_FLOOR_Y = -3.5 + cylinderHeight / 2;
-cylinder.position.set(0, CYLINDER_FLOOR_Y, -1);
-cylinder.castShadow    = true;
-cylinder.receiveShadow = true;
-scene.add(cylinder);
+            // Capture local-space vertex position and pass it to the fragment shader.
+            // Local position stays constant on the mesh surface regardless of where
+            // the table floats — the noise pattern "rides" with the object.
+            shader.vertexShader =
+                'varying vec3 vLocalPos;\n' +
+                shader.vertexShader.replace(
+                    '#include <begin_vertex>',
+                    `#include <begin_vertex>
+                    vLocalPos = position;`
+                );
 
-// ─── Cylinder particles ───────────────────────────────────────────────────────
-// Sampled on cylinder surface in local space — attached as child so they
-// automatically follow the cylinder as it floats.
-const CYLINDER_PARTICLE_COUNT = 1500;
-const cylinderParticlePositions   = new Float32Array(CYLINDER_PARTICLE_COUNT * 3);
-const cylinderParticleVelocities   = new Float32Array(CYLINDER_PARTICLE_COUNT * 3);
+            shader.fragmentShader =
+                `uniform float uTableProgress;
+                 uniform float uEdge;
+                 uniform float uFreq;
+                 uniform vec3  uEdgeColor;
+                 varying vec3  vLocalPos;
+                 ${NOISE_GLSL}` +
+                shader.fragmentShader;
 
-for (let i = 0; i < CYLINDER_PARTICLE_COUNT; i++) {
-    const i3    = i * 3;
-    const theta = Math.random() * Math.PI * 2;
-    const type  = Math.random();
+            // Inject after PBR lighting so dissolve punches through the lit colour.
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <dithering_fragment>',
+                `#include <dithering_fragment>
+                if (uTableProgress > 0.01) {
+                    float threshold = mix(-1.2, 1.2, uTableProgress);
+                    float noise     = snoise3(vLocalPos * uFreq * 4.0);
+                    if (noise < threshold) discard;
+                    float edgeEnd = threshold + uEdge;
+                    if (noise < edgeEnd) {
+                        float t = (noise - threshold) / uEdge;
+                        gl_FragColor = vec4(mix(uEdgeColor, gl_FragColor.rgb, t), mix(0.5, 1.0, t));
+                    }
+                }`
+            );
+        };
+        // Unique key per submesh prevents Three.js from reusing another mesh's
+        // compiled shader program (which would skip our onBeforeCompile injection).
+        mat.customProgramCacheKey = () => 'table_dissolve_' + child.uuid;
+        child.material = mat;
+    });
 
-    if (type < 0.8) {
-        // side surface — drift radially outward + upward
-        const y = (Math.random() - 0.5) * cylinderHeight;
-        cylinderParticlePositions[i3]   = Math.cos(theta) * CYLINDER_RADIUS;
-        cylinderParticlePositions[i3+1] = y;
-        cylinderParticlePositions[i3+2] = Math.sin(theta) * CYLINDER_RADIUS;
-        cylinderParticleVelocities[i3]   = Math.cos(theta) * (Math.random() * 1.0 + 0.5);
-        cylinderParticleVelocities[i3+1] = Math.random() * 1.5 + 0.3;
-        cylinderParticleVelocities[i3+2] = Math.sin(theta) * (Math.random() * 1.0 + 0.5);
-    } else {
-        // top / bottom caps — drift upward + sideways
-        const rad   = Math.random() * CYLINDER_RADIUS;
-        const isTop = type > 0.9;
-        cylinderParticlePositions[i3]   = Math.cos(theta) * rad;
-        cylinderParticlePositions[i3+1] = isTop ? cylinderHeight / 2 : -cylinderHeight / 2;
-        cylinderParticlePositions[i3+2] = Math.sin(theta) * rad;
-        cylinderParticleVelocities[i3]   = (Math.random() - 0.5) * 1.0;
-        cylinderParticleVelocities[i3+1] = Math.random() * 2.0 + 0.5;
-        cylinderParticleVelocities[i3+2] = (Math.random() - 0.5) * 1.0;
+    // ── Position table: bottom face on the floor ──────────────────────────────
+    // Add to scene first (at origin), then measure the bounding box.
+    // Shifting position.y by (-3.5 - box.min.y) drops the lowest vertex to y=-3.5.
+    tableObject.scale.setScalar(1.0);
+    scene.add(tableObject);
+    tableObject.updateWorldMatrix(true, true); // every mesh inside the table has a correct matrixWorld, so our vertex position sampling is accurate.
+
+    const tableBox = new THREE.Box3().setFromObject(tableObject);
+    tableObject.position.y = -3.5 - tableBox.min.y;
+    TABLE_FLOOR_Y = tableObject.position.y; // save resting Y for floating animation
+
+    console.log('Table size (units):', tableBox.getSize(new THREE.Vector3()));
+
+    // ── Load stage objects now that table surface Y is known ─────────────────
+    tableBox.setFromObject(tableObject);
+    const tableSurfaceY = tableBox.max.y;
+    OBJECT_DEFS.forEach(def => loadStageObject(def, tableSurfaceY));
+
+    // ── Build particle positions from GLB geometry ────────────────────────────
+    // Each submesh has its own local coordinate system. We transform every vertex
+    // into the table root's local space so particles sit on the actual mesh surface
+    // and follow the table correctly as it floats (attached as a child below).
+    const tableWorldInverse = new THREE.Matrix4().copy(tableObject.matrixWorld).invert();
+    const rawPositions = [];
+
+    tableObject.traverse((child) => {
+        if (!child.isMesh || !child.geometry?.getAttribute('position')) return;
+        const posAttr = child.geometry.getAttribute('position');
+        // toLocal converts: child world space → table local space
+        const toLocal = new THREE.Matrix4().multiplyMatrices(tableWorldInverse, child.matrixWorld);
+        const v = new THREE.Vector3();
+        for (let i = 0; i < posAttr.count; i++) {
+            v.fromBufferAttribute(posAttr, i).applyMatrix4(toLocal);
+            rawPositions.push(v.x, v.y, v.z);
+        }
+    });
+
+    if (rawPositions.length === 0) return; // guard: GLB had no geometry
+
+    const tableParticlePositions  = new Float32Array(TABLE_PARTICLE_COUNT * 3);
+    const tableParticleVelocities = new Float32Array(TABLE_PARTICLE_COUNT * 3);
+    const vertexCount = rawPositions.length / 3;
+
+    for (let i = 0; i < TABLE_PARTICLE_COUNT; i++) {
+        // Pick a random vertex from the collected geometry as a particle origin.
+        const src = Math.floor(Math.random() * vertexCount) * 3;
+        const px  = rawPositions[src];
+        const py  = rawPositions[src + 1];
+        const pz  = rawPositions[src + 2];
+        // Store this position as the particle's starting position
+        tableParticlePositions[i * 3]     = px;
+        tableParticlePositions[i * 3 + 1] = py;
+        tableParticlePositions[i * 3 + 2] = pz;
+
+        // Velocity: scatter outward radially (xz) and upward (y).
+        // Radial length prevents division by zero at the exact center.
+        const radial = Math.sqrt(px * px + pz * pz) || 1;
+        tableParticleVelocities[i * 3]     = (px / radial) * (Math.random() * 1.2 + 0.4);
+        tableParticleVelocities[i * 3 + 1] = Math.random() * 2.0 + 0.3;
+        tableParticleVelocities[i * 3 + 2] = (pz / radial) * (Math.random() * 1.2 + 0.4);
     }
-}
 
-const cylinderParticleGeometry = new THREE.BufferGeometry();
-cylinderParticleGeometry.setAttribute('position',  new THREE.BufferAttribute(cylinderParticlePositions, 3));
-cylinderParticleGeometry.setAttribute('aVelocity', new THREE.BufferAttribute(cylinderParticleVelocities, 3));
+    const tableParticleGeometry = new THREE.BufferGeometry();
+    tableParticleGeometry.setAttribute('position',  new THREE.BufferAttribute(tableParticlePositions, 3));
+    tableParticleGeometry.setAttribute('aVelocity', new THREE.BufferAttribute(tableParticleVelocities, 3));
 
-const cylinderParticleVertexShader = /* glsl */`
+    const tableParticleMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+            uObjectProgress: uTableProgress, // same GLSL name as cylinder; different { value } reference
+            uEdge:           uDissolveEdge,
+            uFreq:           uNoiseFreq,
+            uParticleColor,
+            uTime:           uTableTime,
+        },
+        vertexShader:   objectParticleVertexShader,   // shared shader — uObjectProgress is the only variable
+        fragmentShader: objectParticleFragmentShader,
+        transparent:    true,
+        depthWrite:     false,
+        blending:       THREE.AdditiveBlending,
+    });
+
+    // Attach as child so particles inherit the table's position/rotation automatically.
+    tableObject.add(new THREE.Points(tableParticleGeometry, tableParticleMaterial));
+});
+
+// ─── Stage Objects (GLB models placed on the table) ──────────────────────────
+// Each entry defines one still-life object: its file, visual scale, table position,
+// floating motion params, and when it starts dissolving after the button is clicked.
+const OBJECT_PARTICLE_COUNT = 1500;
+
+const OBJECT_DEFS = [
+    // offsetX/Z are relative to the table centre (world 0,0).
+    // dissolveStart: seconds after button click when this object begins dissolving.
+    // phaseOffset: shifts the sin/cos waves so every object drifts independently in space.
+    { file: 'asset/the_lonely_tulip.glb', label: 'tulip', targetHeight: 0.8,  offsetX: -0.5, offsetZ: -0.5, H: 2.5, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/Wooden_dummy.glb',      label: 'dummy', targetHeight: 0.55, offsetX:  0.0, offsetZ:  0.1, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
+    { file: 'asset/teddy_bear.glb',        label: 'teddy', targetHeight: 0.45, offsetX:  0.5, offsetZ: -0.4, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
+];
+
+// Filled as each GLB loads. Each entry: mesh, uProgress, uTime, restY, restX, restZ,
+// H, phaseOffset, dissolveStart, shadowsKilled.
+const stageObjects = [];
+
+// Shared particle vertex shader — used by every dissolving object.
+// The progress uniform is always bound as 'uObjectProgress' in the material;
+// each object supplies its own { value } reference so they dissolve independently.
+const objectParticleVertexShader = /* glsl */`
     attribute vec3  aVelocity;
-    uniform float   uCylinderProgress;
+    uniform float   uObjectProgress;
     uniform float   uEdge;
     uniform float   uFreq;
     uniform float   uTime;
@@ -346,7 +428,7 @@ const cylinderParticleVertexShader = /* glsl */`
     ${NOISE_GLSL}
 
     void main(){
-        float threshold    = mix(-1.2, 1.2, uCylinderProgress);
+        float threshold    = mix(-1.2, 1.2, uObjectProgress);
         float noise        = snoise3(position * uFreq * 4.0);
         float distFromEdge = noise - threshold;
         float driftBand    = uEdge * 1.5;
@@ -375,7 +457,7 @@ const cylinderParticleVertexShader = /* glsl */`
 
 const uParticleColor = { value: new THREE.Color(0xffffff) }; // bright white
 
-const cylinderParticleFragmentShader = /* glsl */`
+const objectParticleFragmentShader = /* glsl */`
     uniform vec3  uParticleColor;
     varying float vAlpha;
 
@@ -383,27 +465,149 @@ const cylinderParticleFragmentShader = /* glsl */`
         if(vAlpha < 0.01) discard;
         vec2  uv = gl_PointCoord - .5;
         if(length(uv) > .5) discard;
-        float alpha = vAlpha * (1. - length(uv) * 2.);
+        float alpha = vAlpha * (1. - length(uv) * 2.);// = 1 at center, 0 at edge → makes the particle fade out at the edges (soft circle).
         gl_FragColor = vec4(uParticleColor, alpha);
     }
 `;
 
-const cylinderParticleMaterial = new THREE.ShaderMaterial({
-    uniforms: {
-        uCylinderProgress,
-        uEdge: uDissolveEdge, uFreq: uNoiseFreq,
-        uParticleColor,
-        uTime: uCylinderTime,
-    },
-    vertexShader:   cylinderParticleVertexShader,
-    fragmentShader: cylinderParticleFragmentShader,
-    transparent:    true,
-    depthWrite:     false,
-    blending:       THREE.AdditiveBlending,
-});
+// ─── loadStageObject ──────────────────────────────────────────────────────────
+// Called once per entry in OBJECT_DEFS, after the table surface Y is known.
+// Loads the GLB, applies dissolve shader + particle system, and registers the
+// object in stageObjects so the animate loop can drive its floating + dissolve.
+function loadStageObject(def, surfaceY) {
+    const uObjProgress = { value: 0.0 };
+    const uObjTime     = { value: 0.0 };
 
-// Attach particles as child — they follow cylinder position/rotation automatically
-cylinder.add(new THREE.Points(cylinderParticleGeometry, cylinderParticleMaterial));
+    gltfLoader.load(def.file, (gltf) => {
+        const mesh = gltf.scene;
+
+        // ── Dissolve shader on every submesh (same pattern as table) ───────────
+        mesh.traverse((child) => {
+            if (!child.isMesh) return;
+            child.castShadow = child.receiveShadow = true;
+
+            const mat = child.material.clone();
+            mat.transparent = true;
+            mat.onBeforeCompile = (shader) => {
+                shader.uniforms.uObjProgress = uObjProgress;
+                shader.uniforms.uEdge        = uDissolveEdge;
+                shader.uniforms.uFreq        = uNoiseFreq;
+                shader.uniforms.uEdgeColor   = uDissolveEdgeColor;
+
+                shader.vertexShader =
+                    'varying vec3 vLocalPos;\n' +
+                    shader.vertexShader.replace(
+                        '#include <begin_vertex>',
+                        `#include <begin_vertex>
+                        vLocalPos = position;`
+                    );
+
+                shader.fragmentShader =
+                    `uniform float uObjProgress;
+                     uniform float uEdge;
+                     uniform float uFreq;
+                     uniform vec3  uEdgeColor;
+                     varying vec3  vLocalPos;
+                     ${NOISE_GLSL}` +
+                    shader.fragmentShader;
+
+                shader.fragmentShader = shader.fragmentShader.replace(
+                    '#include <dithering_fragment>',
+                    `#include <dithering_fragment>
+                    if (uObjProgress > 0.01) {
+                        float threshold = mix(-1.2, 1.2, uObjProgress);
+                        float noise     = snoise3(vLocalPos * uFreq * 4.0);
+                        if (noise < threshold) discard;
+                        float edgeEnd = threshold + uEdge;
+                        if (noise < edgeEnd) {
+                            float t = (noise - threshold) / uEdge;
+                            gl_FragColor = vec4(mix(uEdgeColor, gl_FragColor.rgb, t), mix(0.5, 1.0, t));
+                        }
+                    }`
+                );
+            };
+            mat.customProgramCacheKey = () => def.label + '_dissolve_' + child.uuid;
+            child.material = mat;
+        });
+
+        // ── Scale to target height and position on table ───────────────────────
+        scene.add(mesh);
+        mesh.updateWorldMatrix(true, true);
+        const box0 = new THREE.Box3().setFromObject(mesh);
+        const scaleFactor = def.targetHeight / (box0.max.y - box0.min.y);
+        mesh.scale.setScalar(scaleFactor);
+
+        // After scaling, recompute box to find the scaled bottom vertex
+        const box1 = new THREE.Box3().setFromObject(mesh);
+        // Place so bottom of mesh sits exactly on the table surface
+        mesh.position.set(def.offsetX, surfaceY - box1.min.y, def.offsetZ);
+
+        console.log(`${def.label} size:`, box1.getSize(new THREE.Vector3()));
+
+        // ── Build particle positions from GLB geometry (in mesh local space) ───
+        mesh.updateWorldMatrix(true, true);
+        const meshWorldInv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+        const rawPositions = [];
+
+        mesh.traverse((child) => {
+            if (!child.isMesh || !child.geometry?.getAttribute('position')) return;
+            const posAttr = child.geometry.getAttribute('position');
+            const toLocal = new THREE.Matrix4().multiplyMatrices(meshWorldInv, child.matrixWorld);
+            const v = new THREE.Vector3();
+            for (let i = 0; i < posAttr.count; i++) {
+                v.fromBufferAttribute(posAttr, i).applyMatrix4(toLocal);
+                rawPositions.push(v.x, v.y, v.z);
+            }
+        });
+
+        if (rawPositions.length === 0) return;
+
+        const particlePositions  = new Float32Array(OBJECT_PARTICLE_COUNT * 3);
+        const particleVelocities = new Float32Array(OBJECT_PARTICLE_COUNT * 3);
+        const vertexCount = rawPositions.length / 3;
+
+        for (let i = 0; i < OBJECT_PARTICLE_COUNT; i++) {
+            const src = Math.floor(Math.random() * vertexCount) * 3;
+            const px = rawPositions[src], py = rawPositions[src+1], pz = rawPositions[src+2];
+            particlePositions[i*3] = px; particlePositions[i*3+1] = py; particlePositions[i*3+2] = pz;
+            const r = Math.sqrt(px*px + pz*pz) || 1;
+            particleVelocities[i*3]   = (px/r) * (Math.random() * 1.2 + 0.4);
+            particleVelocities[i*3+1] = Math.random() * 2.0 + 0.3;
+            particleVelocities[i*3+2] = (pz/r) * (Math.random() * 1.2 + 0.4);
+        }
+
+        const particleGeom = new THREE.BufferGeometry();
+        particleGeom.setAttribute('position',  new THREE.BufferAttribute(particlePositions, 3));
+        particleGeom.setAttribute('aVelocity', new THREE.BufferAttribute(particleVelocities, 3));
+
+        const particleMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uObjectProgress: uObjProgress, // bound to THIS object's progress
+                uEdge: uDissolveEdge, uFreq: uNoiseFreq,
+                uParticleColor, uTime: uObjTime,
+            },
+            vertexShader:   objectParticleVertexShader,
+            fragmentShader: objectParticleFragmentShader,
+            transparent: true, depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+
+        mesh.add(new THREE.Points(particleGeom, particleMat));
+
+        stageObjects.push({
+            mesh,
+            uProgress:    uObjProgress,
+            uTime:        uObjTime,
+            restY:        mesh.position.y,
+            restX:        def.offsetX,
+            restZ:        def.offsetZ,
+            H:            def.H,
+            phaseOffset:  def.phaseOffset,
+            dissolveStart: def.dissolveStart,
+            shadowsKilled: false,
+        });
+    });
+}
 
 // ─── Orbit Controls ──────────────────────────────────────────────────────────
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -412,7 +616,7 @@ controls.dampingFactor    = 0.08;
 controls.enablePan        = false;
 controls.enableZoom       = false;
 controls.rotateSpeed      = 1.0;
-controls.target.set(0, -2.5, -1);
+controls.target.set(0, -2.0, -1); // aimed at table surface for still-life view
 
 // Room-mode limits (applied initially, relaxed when in space)
 // Limits calculated from orbital radius (r≈6.1) and room bounds
@@ -427,7 +631,7 @@ const ROOM_LIMITS = {
 
 // Camera is "at the starting point" when within this distance of the target.
 // Original orbit radius ≈ 6.1; add a small margin so the switch feels natural.
-const ROOM_RETURN_DIST = 7.0;
+const ROOM_RETURN_DIST = 9.5; // new camera radius ≈ 8.1 units; 9.5 gives comfortable margin
 
 // Armed once the user zooms out past ROOM_RETURN_DIST after entering space.
 // Prevents the room from immediately re-appearing when the room first dissolves
@@ -470,9 +674,20 @@ window.addEventListener('wheel', (e) => {
     uProgress.value = Math.min(1.0, Math.max(0.0, uProgress.value + e.deltaY * 0.001));
     if (uProgress.value < 0.95) {
         hasZoomedOut = false;
-        // reset phase if user scrolls back to room
         phase = 'room';
-        uCylinderProgress.value = 0;
+        uTableProgress.value = 0;
+        if (tableObject) {
+            tableObject.userData.shadowsKilled = false;
+            tableObject.traverse(c => { if (c.isMesh) c.castShadow = true; });
+        }
+        for (const obj of stageObjects) {
+            obj.uProgress.value = 0;
+            if (obj.shadowsKilled) {
+                obj.mesh.traverse(c => { if (c.isMesh) c.castShadow = true; });
+                obj.shadowsKilled = false;
+            }
+        }
+        dissolveController.disable();
     }
     applyControlMode();
 });
@@ -490,6 +705,19 @@ const lightFolder = gui.addFolder('Lighting');
 lightFolder.add(ambientLight, 'intensity', 0, 3, 0.05).name('Ambient');
 lightFolder.add(directionalLight, 'intensity', 0, 10, 0.1).name('Directional');
 
+// Button lives in the GUI panel. Disabled until phase === 'space'.
+const dissolveActions = {
+    dissolve: () => {
+        if (phase !== 'space') return;
+        phase         = 'dissolving';
+        phaseStart    = clock.getElapsedTime();
+        scrollBlocked = true;
+        dissolveController.disable();
+    },
+};
+const dissolveController = gui.add(dissolveActions, 'dissolve').name('▶ Dissolve Objects');
+dissolveController.disable(); // enabled by phase machine when room is fully gone
+
 // ─── Resize ──────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -506,28 +734,37 @@ function animate() {
     const t = clock.getElapsedTime();
     const p = uProgress.value;           // 0 = full room, 1 = full space
 
-    uCylinderTime.value = t;
+    uTableTime.value = t;
 
     // ── Phase state machine ──────────────────────────────────────────────────
-    // room → (uProgress=1) → space → (5s timer) → dissolving → done
+    // room → (uProgress=1) → space → (GUI button) → dissolving → done
     if (phase === 'room' && p >= 1.0) {
-        phase      = 'space';
-        phaseStart = t;
+        phase         = 'space';
+        phaseStart    = t;
         scrollBlocked = false;
-    }
-
-    if (phase === 'space' && t - phaseStart >= 5.0) {
-        phase      = 'dissolving';
-        phaseStart = t;
-        scrollBlocked = true;
+        dissolveController.enable(); // button becomes clickable when fully in space
     }
 
     if (phase === 'dissolving') {
-        // Cylinder dissolves over 3 seconds
-        uCylinderProgress.value = Math.min(1.0, (t - phaseStart) / 3.0);
-        if (uCylinderProgress.value >= 1.0) {
+        const elapsed = t - phaseStart;
+        // Objects dissolve sequentially: tulip 0s, dummy 5s, teddy 10s (each over 3s)
+        for (const obj of stageObjects) {
+            const objElapsed = elapsed - obj.dissolveStart;
+            obj.uProgress.value = Math.min(1.0, Math.max(0.0, objElapsed / 3.0));
+            if (obj.uProgress.value >= 1.0 && !obj.shadowsKilled) {
+                obj.mesh.traverse(c => { if (c.isMesh) c.castShadow = false; });
+                obj.shadowsKilled = true;
+            }
+        }
+        // Table dissolves last: starts at 15s, ends at 18s
+        uTableProgress.value = Math.min(1.0, Math.max(0.0, (elapsed - 15.0) / 3.0));
+        if (uTableProgress.value >= 1.0 && tableObject && !tableObject.userData.shadowsKilled) {
+            tableObject.traverse(c => { if (c.isMesh) c.castShadow = false; });
+            tableObject.userData.shadowsKilled = true;
+        }
+        if (elapsed >= 18.0) {
             phase         = 'done';
-            scrollBlocked = false; // re-enable scroll to restore room
+            scrollBlocked = false;
         }
     }
 
@@ -563,17 +800,37 @@ function animate() {
         directionalLight.intensity = THREE.MathUtils.lerp(1.05, 3.5, p);
     }
 
-    // ── Cylinder floating ────────────────────────────────────────────────────
-    // Rise to room centre, then drift weightlessly in a slow orbital pattern
-    const rise   = p * 2.0;                                    // lifts to near centre (y ≈ -0.9)
-    const bob    = Math.sin(t * 0.8) * 0.25 * p;              // slow vertical bob
-    const driftX = Math.sin(t * 0.5) * 0.35 * p;              // slow left-right sway
-    const driftZ = Math.cos(t * 0.4) * 0.25 * p;              // slow front-back drift
-    cylinder.position.y = CYLINDER_FLOOR_Y + rise + bob;
-    cylinder.position.x = driftX;
-    cylinder.position.z = -1 + driftZ;
-    cylinder.rotation.y += 0.003 * p;                          // slow lazy spin
-    cylinder.rotation.z  = Math.sin(t * 0.45) * 0.08 * p;    // gentle tilt
+    // ── Stage objects floating ────────────────────────────────────────────────
+    // Each object uses the same formula but with a unique phaseOffset so they
+    // drift independently (phase-shifted sin/cos waves → never in sync).
+    for (const obj of stageObjects) {
+        obj.uTime.value = t;
+        const phi    = obj.phaseOffset;
+        const rise   = p * obj.H;
+        const bob    = Math.sin(t * 0.75 + phi) * 0.25 * p;
+        const driftX = Math.sin(t * 0.40 + phi * 0.7) * 0.4 * p;
+        const driftZ = Math.cos(t * 0.33 + phi * 0.9) * 0.3 * p;
+        obj.mesh.position.y = obj.restY + rise + bob;
+        obj.mesh.position.x = obj.restX + driftX;
+        obj.mesh.position.z = obj.restZ + driftZ;
+        obj.mesh.rotation.y += 0.002 * p;
+        obj.mesh.rotation.z  = Math.sin(t * 0.42 + phi) * 0.06 * p;
+    }
+
+    // ── Table floating ───────────────────────────────────────────────────────
+    // Different H, A, ω values from cylinder → independent drift in space.
+    // Guard with null check because the GLB loads asynchronously.
+    if (tableObject) {
+        const tableRise   = p * 1.5;
+        const tableBob    = Math.sin(t * 0.62 + 1.2) * 0.18 * p;
+        const tableDriftX = Math.sin(t * 0.37 + 0.7) * 0.55 * p;
+        const tableDriftZ = Math.cos(t * 0.29 + 1.5) * 0.40 * p;
+        tableObject.position.y = TABLE_FLOOR_Y + tableRise + tableBob;
+        tableObject.position.x = tableDriftX;
+        tableObject.position.z = tableDriftZ;
+        tableObject.rotation.y += 0.0015 * p;
+        tableObject.rotation.z  = Math.sin(t * 0.38) * 0.04 * p;
+    }
 
     controls.update();
     renderer.render(scene, camera);
