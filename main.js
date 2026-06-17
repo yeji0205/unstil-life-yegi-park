@@ -157,6 +157,14 @@ function onGLBLoaded() {
         maybeStartDissolve();
     }
 }
+// Safety net: if GLBs haven't finished after 15 s (slow network / 404), force proceed.
+setTimeout(() => {
+    if (!allGLBsReady) {
+        console.warn('GLB load timeout — forcing loading screen to proceed.');
+        allGLBsReady = true;
+        maybeStartDissolve();
+    }
+}, 15000);
 
 // ─── Scene & Camera ──────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
@@ -616,6 +624,9 @@ gltfLoader.load('asset/table.glb', (gltf) => {
     // Attach as child so particles inherit the table's position/rotation automatically.
     tableObject.add(new THREE.Points(tableParticleGeometry, tableParticleMaterial));
     onGLBLoaded(); // table is ready
+}, undefined, (err) => {
+    console.error('Failed to load table.glb:', err);
+    onGLBLoaded(); // still advance the counter so loading screen doesn't hang
 });
 
 // ─── Stage Objects (GLB models placed on the table) ──────────────────────────
@@ -854,6 +865,9 @@ function loadStageObject(def, surfaceY) {
         objFolder.add(entry, 'rotYOffset', -Math.PI, Math.PI, 0.01).name('Rot Y offset');
         objFolder.close();
         entry.guiFolder = objFolder; // saved so we can hide it after permanent dissolve
+    }, undefined, (err) => {
+        console.error(`Failed to load ${def.file}:`, err);
+        onGLBLoaded(); // still advance counter so loading screen doesn't hang
     });
 }
 
