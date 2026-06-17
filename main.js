@@ -161,7 +161,7 @@ function onGLBLoaded() {
 // ─── Scene & Camera ──────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 2000);
-camera.position.set(0, 0.5, 5.8); // near-table-height for still-life "across the table" angle (~22° down)
+camera.position.set(-0.2, -0.29, 5.52);
 
 // ─── Skybox ──────────────────────────────────────────────────────────────────
 const textureLoader = new THREE.TextureLoader();
@@ -378,6 +378,8 @@ const directionalLight = new THREE.DirectionalLight(0xffe8b0, 2.2);
 directionalLight.position.set(-6, 7, 5);
 directionalLight.castShadow = true;
 directionalLight.shadow.mapSize.set(1024, 1024);
+directionalLight.shadow.bias       = -0.003; // prevents shadow acne (self-shadowing stripes)
+directionalLight.shadow.normalBias =  0.02;  // extra offset along surface normal for curved meshes
 directionalLight.shadow.camera.near = 0.5;
 directionalLight.shadow.camera.far  = 30;
 directionalLight.shadow.camera.left = -8;
@@ -627,7 +629,7 @@ const OBJECT_DEFS = [
     // phaseOffset: shifts the sin/cos waves so every object drifts independently in space.
     // Photo reference: tulip vase left-back, dummy center, teddy right.
     // Z offsets shifted back to sit under the light cone (table is at z = -1.2)
-    { file: 'asset/the_lonely_tulip.glb', label: 'tulip', targetHeight: 1.70, offsetX: -0.55, offsetZ: -1.55, H: 2.5, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/vase_with_flowers.glb', label: 'tulip', targetHeight: 1.70, offsetX: -0.55, offsetZ: -1.55, H: 2.5, phaseOffset: 0.0, dissolveStart:  0 },
     { file: 'asset/Wooden_dummy.glb',      label: 'dummy', targetHeight: 1.04, offsetX:  0.08, offsetZ: -1.05, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
     { file: 'asset/teddy_bear.glb',        label: 'teddy', targetHeight: 0.84, offsetX:  0.58, offsetZ: -1.15, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
 ];
@@ -862,7 +864,7 @@ controls.dampingFactor    = 0.08;
 controls.enablePan        = false;
 controls.enableZoom       = false;
 controls.rotateSpeed      = 1.0;
-controls.target.set(0, -1.5, -0.5); // aimed at table-surface center for still-life view
+controls.target.set(0, -0.69, -0.5); // aimed at scene center, shifted up with camera
 
 // Room-mode limits (applied initially, relaxed when in space)
 // Limits calculated from orbital radius (r≈6.1) and room bounds
@@ -877,7 +879,7 @@ const ROOM_LIMITS = {
 
 // Camera is "at the starting point" when within this distance of the target.
 // Original orbit radius ≈ 6.1; add a small margin so the switch feels natural.
-const ROOM_RETURN_DIST = 8.5; // orbit radius from new camera (~7.1 units); 8.5 gives comfortable margin
+const ROOM_RETURN_DIST = 5.5; // orbit radius from new camera (~3.8 units); 5.5 gives comfortable margin
 
 // Armed once the user zooms out past ROOM_RETURN_DIST after entering space.
 // Prevents the room from immediately re-appearing when the room first dissolves
