@@ -642,7 +642,7 @@ const OBJECT_DEFS = [
     // Z offsets shifted back to sit under the light cone (table is at z = -1.2)
     { file: 'asset/vase_with_flowers.glb', label: 'tulip', targetHeight: 1.70, offsetX: -0.55, offsetZ: -1.55, H: 2.5, phaseOffset: 0.0, dissolveStart:  0 },
     { file: 'asset/Wooden_dummy.glb',      label: 'dummy', targetHeight: 1.04, offsetX:  0.08, offsetZ: -1.05, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
-    { file: 'asset/teddy_bear.glb',        label: 'teddy', targetHeight: 0.84, offsetX:  0.58, offsetZ: -1.15, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
+    { file: 'asset/bear_skeleton.glb',     label: 'teddy', targetHeight: 0.84, offsetX:  0.58, offsetZ: -1.15, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
 ];
 
 // Filled as each GLB loads. Each entry: mesh, uProgress, uTime, restY, restX, restZ,
@@ -849,6 +849,38 @@ function loadStageObject(def, surfaceY) {
             rotYOffset:   0,       // user-controlled rotation offset from GUI
         };
         stageObjects.push(entry);
+
+        // ── Skeleton bone animation (bear_skeleton.glb) ────────────────────────
+        // If the GLB contains a SkinnedMesh, find leg bones and set an initial
+        // sitting pose (upper legs rotated 90° forward, lower legs 90° back).
+        // The animate loop then drives them toward 0° as uObjProgress rises,
+        // so the bear "stands up" as it floats off the table and dissolves.
+        let legBones = null;
+        mesh.traverse((child) => {
+            if (!child.isSkinnedMesh || legBones) return; // first SkinnedMesh only
+            const bones = child.skeleton.bones;
+            console.log(`[${def.label}] skeleton bones:`, bones.map(b => b.name));
+            const found = { upperL: null, upperR: null, lowerL: null, lowerR: null };
+            bones.forEach(bone => {
+                const n = bone.name.toLowerCase();
+                const isUpper = n.includes('upperleg') || n.includes('thigh') || n.includes('upleg');
+                const isLower = n.includes('lowerleg') || n.includes('shin')  || n.includes('calf')
+                             || n.includes('lowleg')   || n.includes('knee');
+                const isLeft  = n.includes('left')  || n.endsWith('.l') || n.endsWith('_l') || n.startsWith('l.');
+                const isRight = n.includes('right') || n.endsWith('.r') || n.endsWith('_r') || n.startsWith('r.');
+                if (isUpper && isLeft)  found.upperL = bone;
+                if (isUpper && isRight) found.upperR = bone;
+                if (isLower && isLeft)  found.lowerL = bone;
+                if (isLower && isRight) found.lowerR = bone;
+            });
+            // Apply initial sitting pose
+            if (found.upperL) found.upperL.rotation.x = -Math.PI / 2;
+            if (found.upperR) found.upperR.rotation.x = -Math.PI / 2;
+            if (found.lowerL) found.lowerL.rotation.x =  Math.PI / 2;
+            if (found.lowerR) found.lowerR.rotation.x =  Math.PI / 2;
+            legBones = found;
+        });
+        entry.legBones = legBones; // null for non-skeleton objects
 
         onGLBLoaded(); // this object is ready
 
@@ -1099,6 +1131,17 @@ function animate() {
         obj.spinY += 0.002 * p;
         obj.mesh.rotation.y = obj.spinY + obj.rotYOffset;
         obj.mesh.rotation.z  = Math.sin(t * 0.42 + phi) * 0.06 * p;
+
+        // Skeleton leg animation: sitting → standing as uObjProgress 0 → 0.4
+        if (obj.legBones) {
+            const boneT = Math.min(1, obj.uProgress.value / 0.4);
+            const upper = THREE.MathUtils.lerp(-Math.PI / 2, 0, boneT);
+            const lower = THREE.MathUtils.lerp( Math.PI / 2, 0, boneT);
+            if (obj.legBones.upperL) obj.legBones.upperL.rotation.x = upper;
+            if (obj.legBones.upperR) obj.legBones.upperR.rotation.x = upper;
+            if (obj.legBones.lowerL) obj.legBones.lowerL.rotation.x = lower;
+            if (obj.legBones.lowerR) obj.legBones.lowerR.rotation.x = lower;
+        }
     }
 
     // ── Table floating ───────────────────────────────────────────────────────
