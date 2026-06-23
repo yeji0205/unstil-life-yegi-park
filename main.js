@@ -869,9 +869,9 @@ function loadStageObject(def, surfaceY) {
             const standR = bR.quaternion.clone();
             const standL = bL.quaternion.clone();
 
-            // Sitting = rest pose folded forward 90° in the bone's parent space
+            // Sitting = rest pose folded backward -90° in the bone's parent space
             const fold = new THREE.Quaternion().setFromAxisAngle(
-                new THREE.Vector3(1, 0, 0), Math.PI / 2
+                new THREE.Vector3(1, 0, 0), -Math.PI / 2
             );
             const sitR = fold.clone().multiply(standR);
             const sitL = fold.clone().multiply(standL);
@@ -1134,10 +1134,12 @@ function animate() {
         obj.mesh.rotation.y = obj.spinY + obj.rotYOffset;
         obj.mesh.rotation.z  = Math.sin(t * 0.42 + phi) * 0.06 * p;
 
-        // Skeleton leg animation: sitting → standing as uObjProgress 0 → 0.4
+        // Skeleton leg animation: sitting (-90°) → standing (0°) driven by
+        // scroll progress p, so legs unfold as soon as the bear starts floating.
+        // Transition completes at p = 0.3 (well before full space mode).
         if (obj.legBones) {
             const { bR, bL, sitR, sitL, standR, standL } = obj.legBones;
-            const boneT = Math.min(1, obj.uProgress.value / 0.4);
+            const boneT = Math.min(1, p / 0.3);
             bR.quaternion.slerpQuaternions(sitR, standR, boneT);
             bL.quaternion.slerpQuaternions(sitL, standL, boneT);
         }
