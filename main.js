@@ -834,6 +834,13 @@ function loadStageObject(def, surfaceY) {
 
         mesh.add(new THREE.Points(particleGeom, particleMat));
 
+        // Bounding sphere radius — used for sphere-sphere collision repulsion.
+        // Shrink by 0.75 so only genuine overlaps trigger a push (avoids
+        // jitter from the loose fit of a sphere around an irregular shape).
+        const sphere = new THREE.Sphere();
+        box1.getBoundingSphere(sphere);
+        const radius = sphere.radius * 0.75;
+
         const entry = {
             mesh,
             uProgress:    uObjProgress,
@@ -847,6 +854,10 @@ function loadStageObject(def, surfaceY) {
             shadowsKilled: false,
             spinY:        0,       // cumulative auto-rotation (driven by animate loop)
             rotYOffset:   0,       // user-controlled rotation offset from GUI
+            radius,                // sphere radius for collision detection
+            repelX:       0,       // accumulated repulsion offset, decays each frame
+            repelY:       0,
+            repelZ:       0,
         };
         stageObjects.push(entry);
 
@@ -1127,9 +1138,10 @@ function animate() {
         directionalLight.intensity = THREE.MathUtils.lerp(2.2, 3.5, p);
     }
 
-    // ── Stage objects floating ────────────────────────────────────────────────
-    // Each object uses the same formula but with a unique phaseOffset so they
-    // drift independently (phase-shifted sin/cos waves → never in sync).
+    // ── Stage objects floating + collision ───────────────────────────────────
+    // Split into 4 steps so collision resolution sees all positions at once.
+
+    // Step 1 — compute sin/cos base position for each object (no mesh write yet)
     for (const obj of stageObjects) {
         obj.uTime.value = t;
         const phi    = obj.phaseOffset;
@@ -1137,16 +1149,48 @@ function animate() {
         const bob    = Math.sin(t * 0.75 + phi) * 0.25 * p;
         const driftX = Math.sin(t * 0.40 + phi * 0.7) * 0.4 * p;
         const driftZ = Math.cos(t * 0.33 + phi * 0.9) * 0.3 * p;
-        obj.mesh.position.y = obj.restY + rise + bob;
-        obj.mesh.position.x = obj.restX + driftX;
-        obj.mesh.position.z = obj.restZ + driftZ;
+        obj._baseX = obj.restX + driftX;
+        obj._baseY = obj.restY + rise + bob;
+        obj._baseZ = obj.restZ + driftZ;
+    }
+
+    // Step 2 — decay accumulated repulsion so it dissipates smoothly
+    for (const obj of stageObjects) {
+        obj.repelX *= 0.88;
+        obj.repelY *= 0.88;
+        obj.repelZ *= 0.88;
+    }
+
+    // Step 3 — sphere-sphere collision: push overlapping pairs apart
+    for (let i = 0; i < stageObjects.length; i++) {
+        for (let j = i + 1; j < stageObjects.length; j++) {
+            const a = stageObjects[i];
+            const b = stageObjects[j];
+            const minDist = a.radius + b.radius;
+            const dx = (a._baseX + a.repelX) - (b._baseX + b.repelX);
+            const dy = (a._baseY + a.repelY) - (b._baseY + b.repelY);
+            const dz = (a._baseZ + a.repelZ) - (b._baseZ + b.repelZ);
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (dist < minDist && dist > 0.001) {
+                const push = (minDist - dist) * 0.5;
+                const nx = dx / dist, ny = dy / dist, nz = dz / dist;
+                a.repelX += nx * push;  a.repelY += ny * push;  a.repelZ += nz * push;
+                b.repelX -= nx * push;  b.repelY -= ny * push;  b.repelZ -= nz * push;
+            }
+        }
+    }
+
+    // Step 4 — write final position + rotation to each mesh
+    for (const obj of stageObjects) {
+        obj.mesh.position.x = obj._baseX + obj.repelX;
+        obj.mesh.position.y = obj._baseY + obj.repelY;
+        obj.mesh.position.z = obj._baseZ + obj.repelZ;
         obj.spinY += 0.002 * p;
         obj.mesh.rotation.y = obj.spinY + obj.rotYOffset;
-        obj.mesh.rotation.z  = Math.sin(t * 0.42 + phi) * 0.06 * p;
+        obj.mesh.rotation.z = Math.sin(t * 0.42 + obj.phaseOffset) * 0.06 * p;
 
         // Skeleton leg animation: sitting (-90°) → standing (0°) driven by
         // scroll progress p, so legs unfold as soon as the bear starts floating.
-        // Transition completes at p = 0.3 (well before full space mode).
         if (obj.legBones) {
             const { bR, bL, sitR, sitL, standR, standL } = obj.legBones;
             const boneT = Math.min(1, p / 0.3);
