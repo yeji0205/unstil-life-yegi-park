@@ -851,34 +851,36 @@ function loadStageObject(def, surfaceY) {
         stageObjects.push(entry);
 
         // ── Skeleton bone animation (bear_skeleton.glb) ────────────────────────
-        // If the GLB contains a SkinnedMesh, find leg bones and set an initial
-        // sitting pose (upper legs rotated 90° forward, lower legs 90° back).
-        // The animate loop then drives them toward 0° as uObjProgress rises,
-        // so the bear "stands up" as it floats off the table and dissolves.
+        // Leg bones are named exactly 'legR' / 'legL'. The GLB rest pose is
+        // standing. We premultiply a 90° forward fold (X axis, parent space) to
+        // create the sitting quaternion, apply it immediately, then slerp back
+        // to the rest (standing) quaternion as uObjProgress rises 0 → 0.4.
         let legBones = null;
         mesh.traverse((child) => {
-            if (!child.isSkinnedMesh || legBones) return; // first SkinnedMesh only
+            if (!child.isSkinnedMesh || legBones) return;
             const bones = child.skeleton.bones;
             console.log(`[${def.label}] skeleton bones:`, bones.map(b => b.name));
-            const found = { upperL: null, upperR: null, lowerL: null, lowerR: null };
-            bones.forEach(bone => {
-                const n = bone.name.toLowerCase();
-                const isUpper = n.includes('upperleg') || n.includes('thigh') || n.includes('upleg');
-                const isLower = n.includes('lowerleg') || n.includes('shin')  || n.includes('calf')
-                             || n.includes('lowleg')   || n.includes('knee');
-                const isLeft  = n.includes('left')  || n.endsWith('.l') || n.endsWith('_l') || n.startsWith('l.');
-                const isRight = n.includes('right') || n.endsWith('.r') || n.endsWith('_r') || n.startsWith('r.');
-                if (isUpper && isLeft)  found.upperL = bone;
-                if (isUpper && isRight) found.upperR = bone;
-                if (isLower && isLeft)  found.lowerL = bone;
-                if (isLower && isRight) found.lowerR = bone;
-            });
-            // Apply initial sitting pose
-            if (found.upperL) found.upperL.rotation.x = -Math.PI / 2;
-            if (found.upperR) found.upperR.rotation.x = -Math.PI / 2;
-            if (found.lowerL) found.lowerL.rotation.x =  Math.PI / 2;
-            if (found.lowerR) found.lowerR.rotation.x =  Math.PI / 2;
-            legBones = found;
+
+            const bR = bones.find(b => b.name === 'legR');
+            const bL = bones.find(b => b.name === 'legL');
+            if (!bR || !bL) return;
+
+            // Store the GLB's rest pose (= standing) for each leg
+            const standR = bR.quaternion.clone();
+            const standL = bL.quaternion.clone();
+
+            // Sitting = rest pose folded forward 90° in the bone's parent space
+            const fold = new THREE.Quaternion().setFromAxisAngle(
+                new THREE.Vector3(1, 0, 0), Math.PI / 2
+            );
+            const sitR = fold.clone().multiply(standR);
+            const sitL = fold.clone().multiply(standL);
+
+            // Apply sitting pose right away so bear starts seated
+            bR.quaternion.copy(sitR);
+            bL.quaternion.copy(sitL);
+
+            legBones = { bR, bL, standR, standL, sitR, sitL };
         });
         entry.legBones = legBones; // null for non-skeleton objects
 
@@ -1134,13 +1136,10 @@ function animate() {
 
         // Skeleton leg animation: sitting → standing as uObjProgress 0 → 0.4
         if (obj.legBones) {
+            const { bR, bL, sitR, sitL, standR, standL } = obj.legBones;
             const boneT = Math.min(1, obj.uProgress.value / 0.4);
-            const upper = THREE.MathUtils.lerp(-Math.PI / 2, 0, boneT);
-            const lower = THREE.MathUtils.lerp( Math.PI / 2, 0, boneT);
-            if (obj.legBones.upperL) obj.legBones.upperL.rotation.x = upper;
-            if (obj.legBones.upperR) obj.legBones.upperR.rotation.x = upper;
-            if (obj.legBones.lowerL) obj.legBones.lowerL.rotation.x = lower;
-            if (obj.legBones.lowerR) obj.legBones.lowerR.rotation.x = lower;
+            bR.quaternion.slerpQuaternions(sitR, standR, boneT);
+            bL.quaternion.slerpQuaternions(sitL, standL, boneT);
         }
     }
 
