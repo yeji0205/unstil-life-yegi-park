@@ -467,9 +467,10 @@ scene.add(beamMesh);
 const TABLE_PARTICLE_COUNT = 2000;
 const uTableProgress       = { value: 0.0 };
 const uTableTime           = { value: 0.0 };
-let tableObject   = null; // set once GLB loads
-let TABLE_FLOOR_Y = -3.5; // resting Y, updated after GLB loads
-let TABLE_FLOOR_Z =  0.0; // resting Z, updated after GLB loads (table is moved back into the cone)
+let tableObject      = null;  // set once GLB loads
+let TABLE_FLOOR_Y    = -3.5;  // resting Y, updated after GLB loads
+let TABLE_FLOOR_Z    =  0.0;  // resting Z, updated after GLB loads
+let TABLE_TOP_OFFSET =  0.0;  // table surface Y above pivot — used for sphere-plane collision
 
 const gltfLoader = new GLTFLoader();
 
@@ -556,6 +557,7 @@ gltfLoader.load('asset/table.glb', (gltf) => {
     // ── Load stage objects now that table surface Y is known ─────────────────
     tableBox.setFromObject(tableObject);
     const tableSurfaceY = tableBox.max.y;
+    TABLE_TOP_OFFSET = tableSurfaceY - TABLE_FLOOR_Y; // fixed offset from pivot to surface top
     OBJECT_DEFS.forEach(def => loadStageObject(def, tableSurfaceY));
 
     // ── Build particle positions from GLB geometry ────────────────────────────
@@ -834,12 +836,14 @@ function loadStageObject(def, surfaceY) {
 
         mesh.add(new THREE.Points(particleGeom, particleMat));
 
-        // Bounding sphere radius — used for sphere-sphere collision repulsion.
-        // Shrink by 0.75 so only genuine overlaps trigger a push (avoids
-        // jitter from the loose fit of a sphere around an irregular shape).
+        // Bounding sphere — used for collision detection.
+        // radius shrunk to 0.75× so only genuine overlaps trigger a push.
+        // sphereCenterLocalY is the sphere centre's Y offset from the mesh pivot
+        // (box1 was computed with mesh at y=0, so this offset is constant).
         const sphere = new THREE.Sphere();
         box1.getBoundingSphere(sphere);
-        const radius = sphere.radius * 0.75;
+        const radius            = sphere.radius * 0.75;
+        const sphereCenterLocalY = sphere.center.y; // Y of sphere centre in mesh-local space
 
         const entry = {
             mesh,
@@ -855,6 +859,7 @@ function loadStageObject(def, surfaceY) {
             spinY:        0,       // cumulative auto-rotation (driven by animate loop)
             rotYOffset:   0,       // user-controlled rotation offset from GUI
             radius,                // sphere radius for collision detection
+            sphereCenterLocalY,    // sphere centre Y above mesh pivot (for table collision)
             repelX:       0,       // accumulated repulsion offset, decays each frame
             repelY:       0,
             repelZ:       0,
@@ -1161,7 +1166,7 @@ function animate() {
         obj.repelZ *= 0.88;
     }
 
-    // Step 3 — sphere-sphere collision: push overlapping pairs apart
+    // Step 3a — sphere-sphere collision: push overlapping pairs apart
     for (let i = 0; i < stageObjects.length; i++) {
         for (let j = i + 1; j < stageObjects.length; j++) {
             const a = stageObjects[i];
@@ -1176,6 +1181,20 @@ function animate() {
                 const nx = dx / dist, ny = dy / dist, nz = dz / dist;
                 a.repelX += nx * push;  a.repelY += ny * push;  a.repelZ += nz * push;
                 b.repelX -= nx * push;  b.repelY -= ny * push;  b.repelZ -= nz * push;
+            }
+        }
+    }
+
+    // Step 3b — sphere-plane collision with table top surface.
+    // tableTopY moves with the table as it floats; the sphere bottom of each
+    // object must stay above it so objects can't sink into the table surface.
+    // sphereCenterLocalY converts from mesh-pivot Y (_baseY) to sphere-centre Y.
+    if (tableObject) {
+        const tableTopY = tableObject.position.y + TABLE_TOP_OFFSET;
+        for (const obj of stageObjects) {
+            const sphereBottomY = (obj._baseY + obj.repelY) + obj.sphereCenterLocalY - obj.radius;
+            if (sphereBottomY < tableTopY) {
+                obj.repelY += tableTopY - sphereBottomY;
             }
         }
     }
