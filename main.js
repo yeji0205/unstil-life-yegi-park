@@ -880,6 +880,16 @@ function loadStageObject(def, surfaceY) {
             bR.quaternion.copy(sitR);
             bL.quaternion.copy(sitL);
 
+            // The position was calculated from the standing-pose bounding box,
+            // so the bear now floats above the table. Fix: get the leg pivot's
+            // world Y after the sitting pose and lower the mesh until that pivot
+            // is at the table surface (hip touching the table = sitting pose).
+            mesh.updateWorldMatrix(true, true);
+            const pivotWorld = new THREE.Vector3();
+            bR.getWorldPosition(pivotWorld);
+            mesh.position.y -= (pivotWorld.y - surfaceY);
+            entry.restY = mesh.position.y; // sync restY so floating starts from here
+
             legBones = { bR, bL, standR, standL, sitR, sitL };
         });
         entry.legBones = legBones; // null for non-skeleton objects
