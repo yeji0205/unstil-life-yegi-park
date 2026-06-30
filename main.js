@@ -1158,11 +1158,9 @@ function animate() {
         const phi    = obj.phaseOffset;
         const rise   = p * obj.H;
         const bob    = Math.sin(t * 0.75 + phi) * 0.25 * p;
-        const driftX = Math.sin(t * 0.40 + phi * 0.7) * 0.4 * p;
-        const driftZ = Math.cos(t * 0.33 + phi * 0.9) * 0.3 * p;
-        obj._baseX = obj.restX + driftX;
+        obj._baseX = obj.restX;
         obj._baseY = obj.restY + rise + bob;
-        obj._baseZ = obj.restZ + driftZ;
+        obj._baseZ = obj.restZ;
     }
 
     // Step 2 — decay accumulated repulsion every frame
@@ -1236,11 +1234,9 @@ function animate() {
     if (tableObject) {
         const tableRise   = p * 1.5;
         const tableBob    = Math.sin(t * 0.62 + 1.2) * 0.18 * p;
-        const tableDriftX = Math.sin(t * 0.37 + 0.7) * 0.55 * p;
-        const tableDriftZ = Math.cos(t * 0.29 + 1.5) * 0.40 * p;
         tableObject.position.y = TABLE_FLOOR_Y + tableRise + tableBob;
-        tableObject.position.x = tableDriftX;
-        tableObject.position.z = TABLE_FLOOR_Z + tableDriftZ;
+        tableObject.position.x = 0;
+        tableObject.position.z = TABLE_FLOOR_Z;
         tableObject.rotation.y += 0.0015 * p;
         tableObject.rotation.z  = Math.sin(t * 0.38) * 0.04 * p;
     }
