@@ -725,16 +725,22 @@ function loadStageObject(def, surfaceY) {
             if (!child.isMesh) return;
             child.castShadow = child.receiveShadow = true;
 
-            const mat = child.material.clone();
-            mat.transparent = true;
-            if (def.label === 'cup') {
-                // Glass cup: render both faces, disable depth write so transparent
-                // surfaces sort correctly, and clear alphaTest so no fragments discarded.
-                mat.side       = THREE.DoubleSide;
-                mat.depthWrite = false;
-                mat.alphaTest  = 0;
-                child.renderOrder = 1; // render after opaque objects
-            }
+            // For the glass cup replace the GLB material entirely — the GLB's
+            // transmission-based material refracts the dark background and looks black.
+            // A simple semi-transparent physical material looks far more like glass.
+            const mat = def.label === 'cup'
+                ? new THREE.MeshPhysicalMaterial({
+                    color:      0xc8e8ff,   // faint icy blue tint
+                    opacity:    0.30,
+                    transparent: true,
+                    roughness:  0.05,
+                    metalness:  0.10,
+                    side:       THREE.DoubleSide,
+                    depthWrite: false,
+                  })
+                : child.material.clone();
+            if (def.label !== 'cup') mat.transparent = true;
+            if (def.label === 'cup') child.renderOrder = 1;
             mat.onBeforeCompile = (shader) => {
                 shader.uniforms.uObjProgress = uObjProgress;
                 shader.uniforms.uEdge        = uDissolveEdge;
