@@ -1170,13 +1170,13 @@ function animate() {
         obj.repelZ *= 0.92;
     }
 
-    // collisionStrength ramps 0→1 over the first 15% of scroll so collision
-    // forces grow from zero with floating — no hard threshold = no jump.
-    const collisionStrength = Math.min(1, p / 0.15);
+    // Vertical collision ramps early (table push); horizontal only after p=0.4
+    // so objects rise straight up before any sideways separation begins.
+    const collisionStrengthY  = Math.min(1, p / 0.15);
+    const collisionStrengthXZ = Math.min(1, Math.max(0, (p - 0.4) / 0.2));
 
     // Step 3a — sphere-sphere collision (3 iterations for fast convergence).
-    // Push is scaled by collisionStrength so at p=0 no force is applied.
-    if (collisionStrength > 0) {
+    if (collisionStrengthY > 0 || collisionStrengthXZ > 0) {
         for (let iter = 0; iter < 3; iter++) {
             for (let i = 0; i < stageObjects.length; i++) {
                 for (let j = i + 1; j < stageObjects.length; j++) {
@@ -1189,23 +1189,27 @@ function animate() {
                     const dz = (a._baseZ + a.repelZ) - (b._baseZ + b.repelZ);
                     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
                     if (dist < minDist && dist > 0.001) {
-                        const push = (minDist - dist) * 0.5 * collisionStrength;
+                        const pushMag = (minDist - dist) * 0.5;
                         const nx = dx / dist, ny = dy / dist, nz = dz / dist;
-                        a.repelX += nx * push;  a.repelY += ny * push;  a.repelZ += nz * push;
-                        b.repelX -= nx * push;  b.repelY -= ny * push;  b.repelZ -= nz * push;
+                        a.repelX += nx * pushMag * collisionStrengthXZ;
+                        a.repelY += ny * pushMag * collisionStrengthY;
+                        a.repelZ += nz * pushMag * collisionStrengthXZ;
+                        b.repelX -= nx * pushMag * collisionStrengthXZ;
+                        b.repelY -= ny * pushMag * collisionStrengthY;
+                        b.repelZ -= nz * pushMag * collisionStrengthXZ;
                     }
                 }
             }
         }
     }
 
-    // Step 3b — sphere-plane collision with table top surface (also scaled).
-    if (tableObject && collisionStrength > 0) {
+    // Step 3b — table surface keeps objects from sinking through the table.
+    if (tableObject && collisionStrengthY > 0) {
         const tableTopY = tableObject.position.y + TABLE_TOP_OFFSET;
         for (const obj of stageObjects) {
             const sphereBottomY = (obj._baseY + obj.repelY) + obj.sphereCenterLocalY - obj.radius;
             if (sphereBottomY < tableTopY) {
-                obj.repelY += (tableTopY - sphereBottomY) * collisionStrength;
+                obj.repelY += (tableTopY - sphereBottomY) * collisionStrengthY;
             }
         }
     }
