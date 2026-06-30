@@ -1065,10 +1065,10 @@ function animate() {
     requestAnimationFrame(animate);
     const t = clock.getElapsedTime();
 
-    // Lerp uProgress.value toward targetP each frame so every consumer
-    // (GPU dissolve shader, floating, lighting, collision) sees a smooth value.
-    // Factor 0.05 ≈ 0.3 s lag — absorbs trackpad deltaY spikes completely.
+    // Lerp uProgress.value toward targetP — absorbs trackpad deltaY spikes.
+    // Snap when within 0.001 so it actually reaches 0 and 1 exactly.
     uProgress.value += (targetP - uProgress.value) * 0.05;
+    if (Math.abs(targetP - uProgress.value) < 0.001) uProgress.value = targetP;
     const p    = uProgress.value; // smooth — drives all visuals and shaders
     const rawP = targetP;         // instant — used only for state-machine thresholds
 
@@ -1165,22 +1165,20 @@ function animate() {
         obj._baseZ = obj.restZ + driftZ;
     }
 
-    // Step 2 — decay accumulated repulsion (only while floating)
-    if (p > 0.01) {
-        for (const obj of stageObjects) {
-            obj.repelX *= 0.92;
-            obj.repelY *= 0.92;
-            obj.repelZ *= 0.92;
-        }
-    } else {
-        // On the table: clear any stale repulsion so objects stay at restX/Y/Z
-        for (const obj of stageObjects) { obj.repelX = obj.repelY = obj.repelZ = 0; }
+    // Step 2 — decay accumulated repulsion every frame
+    for (const obj of stageObjects) {
+        obj.repelX *= 0.92;
+        obj.repelY *= 0.92;
+        obj.repelZ *= 0.92;
     }
 
+    // collisionStrength ramps 0→1 over the first 15% of scroll so collision
+    // forces grow from zero with floating — no hard threshold = no jump.
+    const collisionStrength = Math.min(1, p / 0.15);
+
     // Step 3a — sphere-sphere collision (3 iterations for fast convergence).
-    // Distance is measured between sphere CENTRES (pivot + sphereCenterLocalY in Y).
-    // Only active while floating so on-table artistic placement is undisturbed.
-    if (p > 0.01) {
+    // Push is scaled by collisionStrength so at p=0 no force is applied.
+    if (collisionStrength > 0) {
         for (let iter = 0; iter < 3; iter++) {
             for (let i = 0; i < stageObjects.length; i++) {
                 for (let j = i + 1; j < stageObjects.length; j++) {
@@ -1193,7 +1191,7 @@ function animate() {
                     const dz = (a._baseZ + a.repelZ) - (b._baseZ + b.repelZ);
                     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
                     if (dist < minDist && dist > 0.001) {
-                        const push = (minDist - dist) * 0.5;
+                        const push = (minDist - dist) * 0.5 * collisionStrength;
                         const nx = dx / dist, ny = dy / dist, nz = dz / dist;
                         a.repelX += nx * push;  a.repelY += ny * push;  a.repelZ += nz * push;
                         b.repelX -= nx * push;  b.repelY -= ny * push;  b.repelZ -= nz * push;
@@ -1203,15 +1201,13 @@ function animate() {
         }
     }
 
-    // Step 3b — sphere-plane collision with table top surface.
-    // tableTopY moves with the table as it floats; the sphere bottom of each
-    // object must stay above it so objects can't sink into the table surface.
-    if (tableObject && p > 0.01) {
+    // Step 3b — sphere-plane collision with table top surface (also scaled).
+    if (tableObject && collisionStrength > 0) {
         const tableTopY = tableObject.position.y + TABLE_TOP_OFFSET;
         for (const obj of stageObjects) {
             const sphereBottomY = (obj._baseY + obj.repelY) + obj.sphereCenterLocalY - obj.radius;
             if (sphereBottomY < tableTopY) {
-                obj.repelY += tableTopY - sphereBottomY;
+                obj.repelY += (tableTopY - sphereBottomY) * collisionStrength;
             }
         }
     }
