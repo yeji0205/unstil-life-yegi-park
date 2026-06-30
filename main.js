@@ -965,7 +965,7 @@ let hasZoomedOut = false;
 // 'dissolving' — objects dissolving automatically, scroll blocked
 // 'done'       — all objects gone, scroll re-enabled to restore room
 let phase         = 'room';
-let smoothedP     = 0;     // lerped version of uProgress.value — drives all visuals
+let targetP       = 0;     // raw scroll destination; uProgress.value lerps toward this
 let phaseStart    = 0;   // clock time when current phase began
 let scrollBlocked = false;
 
@@ -989,12 +989,12 @@ window.addEventListener('wheel', (e) => {
     // Block scroll entirely during object dissolve phase
     if (scrollBlocked) return;
 
-    if (uProgress.value >= 1.0) {
+    if (targetP >= 1.0) {
         const dist = camera.position.distanceTo(controls.target);
         if (!hasZoomedOut || dist > ROOM_RETURN_DIST) return;
     }
-    uProgress.value = Math.min(1.0, Math.max(0.0, uProgress.value + e.deltaY * 0.001));
-    if (uProgress.value < 0.95) {
+    targetP = Math.min(1.0, Math.max(0.0, targetP + e.deltaY * 0.001));
+    if (targetP < 0.95) {
         hasZoomedOut = false;
         phase = 'room';
         uTableProgress.value = 0;
@@ -1065,12 +1065,12 @@ function animate() {
     requestAnimationFrame(animate);
     const t = clock.getElapsedTime();
 
-    // smoothedP eases toward the raw scroll target each frame.
-    // Factor 0.06 ≈ 0.25 s lag at 60 fps — enough to absorb trackpad spikes
-    // while still feeling responsive to deliberate scrolling.
-    smoothedP += (uProgress.value - smoothedP) * 0.06;
-    const p = smoothedP;   // used for all visuals: floating, lighting, collision
-    const rawP = uProgress.value; // used only for state-machine thresholds
+    // Lerp uProgress.value toward targetP each frame so every consumer
+    // (GPU dissolve shader, floating, lighting, collision) sees a smooth value.
+    // Factor 0.05 ≈ 0.3 s lag — absorbs trackpad deltaY spikes completely.
+    uProgress.value += (targetP - uProgress.value) * 0.05;
+    const p    = uProgress.value; // smooth — drives all visuals and shaders
+    const rawP = targetP;         // instant — used only for state-machine thresholds
 
     uTableTime.value = t;
 
