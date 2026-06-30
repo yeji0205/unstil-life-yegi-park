@@ -893,32 +893,18 @@ function loadStageObject(def, surfaceY) {
             const sitR = fold.clone().multiply(standR);
             const sitL = fold.clone().multiply(standL);
 
-            // Arm bones for drooping pose (arms close to body, not T-pose)
-            const bAR = bones.find(b => b.name === 'armR');
-            const bAL = bones.find(b => b.name === 'armL');
-            const standAR = bAR ? bAR.quaternion.clone() : null;
-            const standAL = bAL ? bAL.quaternion.clone() : null;
-            // Droop: fold arms ~60° inward toward body (around Z in parent space)
-            const droopR = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1),  Math.PI / 3);
-            const droopL = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 3);
-            const sitAR = standAR ? droopR.clone().multiply(standAR) : null;
-            const sitAL = standAL ? droopL.clone().multiply(standAL) : null;
-
-            // Apply sitting pose right away
+            // Apply sitting pose (legs only — arms stay in GLB rest/T-pose)
             bR.quaternion.copy(sitR);
             bL.quaternion.copy(sitL);
-            if (bAR && sitAR) bAR.quaternion.copy(sitAR);
-            if (bAL && sitAL) bAL.quaternion.copy(sitAL);
 
-            // Position fix: in sitting pose the origin (pelvis) should rest on
-            // the table surface. The standing placement was (surfaceY - box1.min.y),
-            // which places feet at surfaceY. Subtracting abs(box1.min.y) moves the
-            // origin down to surfaceY so the pelvis/butt sits on the table.
-            mesh.position.y = surfaceY;
-            entry.restY = surfaceY;
+            // Position: raise the mesh so the body sits ON the table rather than
+            // sinking into it. box1.min.y is the foot Y when mesh is at origin
+            // (negative = below pivot). 30% of that distance lifts the bear just
+            // enough so the butt geometry clears the table surface.
+            mesh.position.y = surfaceY + Math.abs(box1.min.y) * 0.3;
+            entry.restY = mesh.position.y;
 
-            legBones = { bR, bL, standR, standL, sitR, sitL,
-                         bAR, bAL, standAR, standAL, sitAR, sitAL };
+            legBones = { bR, bL, standR, standL, sitR, sitL };
         });
         entry.legBones = legBones; // null for non-skeleton objects
 
@@ -1232,15 +1218,12 @@ function animate() {
         obj.mesh.rotation.y = obj.spinY + obj.rotYOffset;
         obj.mesh.rotation.z = Math.sin(t * 0.42 + obj.phaseOffset) * 0.06 * p;
 
-        // Skeleton animation: sitting/drooping → standing as p goes 0 → 0.3
+        // Skeleton leg animation: sitting → standing as p goes 0 → 0.3
         if (obj.legBones) {
-            const { bR, bL, sitR, sitL, standR, standL,
-                    bAR, bAL, sitAR, sitAL, standAR, standAL } = obj.legBones;
+            const { bR, bL, sitR, sitL, standR, standL } = obj.legBones;
             const boneT = Math.min(1, p / 0.3);
             bR.quaternion.slerpQuaternions(sitR, standR, boneT);
             bL.quaternion.slerpQuaternions(sitL, standL, boneT);
-            if (bAR && sitAR && standAR) bAR.quaternion.slerpQuaternions(sitAR, standAR, boneT);
-            if (bAL && sitAL && standAL) bAL.quaternion.slerpQuaternions(sitAL, standAL, boneT);
         }
     }
 
