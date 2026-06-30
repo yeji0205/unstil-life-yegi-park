@@ -643,11 +643,11 @@ const OBJECT_DEFS = [
     // phaseOffset: shifts the sin/cos waves so every object drifts independently in space.
     // Vase + tulip are separate meshes; tulip offsetY lifts it into the vase opening.
     // Tulip has a higher H so it rises faster and pulls away from the vase naturally.
-    { file: 'asset/vase.glb',         label: 'vase',   targetHeight: 0.864, offsetX: -0.55, offsetZ: -1.55, H: 2.2, phaseOffset: 0.0, dissolveStart:  0 },
-    { file: 'asset/tulip.glb',        label: 'tulip',  targetHeight: 1.056, offsetX: -0.55, offsetZ: -1.55, offsetY: 0.85, H: 3.2, phaseOffset: 0.0, dissolveStart:  0 },
-    { file: 'asset/glass_cup.glb',    label: 'cup',    targetHeight: 0.55,  offsetX:  0.08, offsetZ: -1.45, H: 1.8, phaseOffset: 0.6, dissolveStart:  3 },
-    { file: 'asset/Wooden_dummy.glb', label: 'dummy',  targetHeight: 1.04,  offsetX:  0.08, offsetZ: -1.05, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
-    { file: 'asset/bear_skeleton.glb',label: 'teddy',  targetHeight: 0.84, offsetX:  0.58, offsetZ: -1.15, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
+    { file: 'asset/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/tulip.glb',        label: 'tulip', targetHeight: 1.056, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.85, rotYOffset: 0, H: 3.2, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/glass_cup.glb',    label: 'cup',   targetHeight: 0.55,  offsetX: -0.24, offsetZ: -0.76, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart:  3 },
+    { file: 'asset/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
+    { file: 'asset/bear_skeleton.glb',label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
 ];
 
 // Filled as each GLB loads. Each entry: mesh, uProgress, uTime, restY, restX, restZ,
@@ -874,8 +874,8 @@ function loadStageObject(def, surfaceY) {
             phaseOffset:  def.phaseOffset,
             dissolveStart: def.dissolveStart,
             shadowsKilled: false,
-            spinY:        0,       // cumulative auto-rotation (driven by animate loop)
-            rotYOffset:   0,       // user-controlled rotation offset from GUI
+            spinY:        0,                        // cumulative auto-rotation (driven by animate loop)
+            rotYOffset:   def.rotYOffset ?? 0,     // initial facing direction baked from GUI
             radius,                // sphere radius for collision detection
             sphereCenterLocalY,    // sphere centre Y above mesh pivot (for table collision)
             repelX:       0,       // accumulated repulsion offset, decays each frame
