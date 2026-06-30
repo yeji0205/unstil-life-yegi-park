@@ -965,6 +965,7 @@ let hasZoomedOut = false;
 // 'dissolving' — objects dissolving automatically, scroll blocked
 // 'done'       — all objects gone, scroll re-enabled to restore room
 let phase         = 'room';
+let smoothedP     = 0;     // lerped version of uProgress.value — drives all visuals
 let phaseStart    = 0;   // clock time when current phase began
 let scrollBlocked = false;
 
@@ -1063,13 +1064,19 @@ const clock = new THREE.Clock();
 function animate() {
     requestAnimationFrame(animate);
     const t = clock.getElapsedTime();
-    const p = uProgress.value;           // 0 = full room, 1 = full space
+
+    // smoothedP eases toward the raw scroll target each frame.
+    // Factor 0.06 ≈ 0.25 s lag at 60 fps — enough to absorb trackpad spikes
+    // while still feeling responsive to deliberate scrolling.
+    smoothedP += (uProgress.value - smoothedP) * 0.06;
+    const p = smoothedP;   // used for all visuals: floating, lighting, collision
+    const rawP = uProgress.value; // used only for state-machine thresholds
 
     uTableTime.value = t;
 
     // ── Phase state machine ──────────────────────────────────────────────────
     // room → (uProgress=1) → space → (GUI button) → dissolving → done
-    if (phase === 'room' && p >= 1.0) {
+    if (phase === 'room' && rawP >= 1.0) {
         phase         = 'space';
         phaseStart    = t;
         scrollBlocked = false;
