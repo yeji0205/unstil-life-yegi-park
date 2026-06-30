@@ -638,13 +638,16 @@ const OBJECT_PARTICLE_COUNT = 750;
 
 const OBJECT_DEFS = [
     // offsetX/Z are relative to the table centre (world 0,0).
+    // offsetY (optional): extra height added on top of the surface-flush position.
     // dissolveStart: seconds after button click when this object begins dissolving.
     // phaseOffset: shifts the sin/cos waves so every object drifts independently in space.
-    // Photo reference: tulip vase left-back, dummy center, teddy right.
-    // Z offsets shifted back to sit under the light cone (table is at z = -1.2)
-    { file: 'asset/vase_with_flowers.glb', label: 'tulip', targetHeight: 1.70, offsetX: -0.55, offsetZ: -1.55, H: 2.5, phaseOffset: 0.0, dissolveStart:  0 },
-    { file: 'asset/Wooden_dummy.glb',      label: 'dummy', targetHeight: 1.04, offsetX:  0.08, offsetZ: -1.05, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
-    { file: 'asset/bear_skeleton.glb',     label: 'teddy', targetHeight: 0.84, offsetX:  0.58, offsetZ: -1.15, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
+    // Vase + tulip are separate meshes; tulip offsetY lifts it into the vase opening.
+    // Tulip has a higher H so it rises faster and pulls away from the vase naturally.
+    { file: 'asset/vase.glb',         label: 'vase',   targetHeight: 1.20, offsetX: -0.55, offsetZ: -1.55, H: 2.2, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/tulip.glb',        label: 'tulip',  targetHeight: 0.80, offsetX: -0.55, offsetZ: -1.55, offsetY: 0.85, H: 3.2, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/glass_cup.glb',    label: 'cup',    targetHeight: 0.55, offsetX:  0.35, offsetZ: -1.55, H: 1.8, phaseOffset: 0.6, dissolveStart:  3 },
+    { file: 'asset/Wooden_dummy.glb', label: 'dummy',  targetHeight: 1.04, offsetX:  0.08, offsetZ: -1.05, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
+    { file: 'asset/bear_skeleton.glb',label: 'teddy',  targetHeight: 0.84, offsetX:  0.58, offsetZ: -1.15, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
 ];
 
 // Filled as each GLB loads. Each entry: mesh, uProgress, uTime, restY, restX, restZ,
@@ -775,8 +778,8 @@ function loadStageObject(def, surfaceY) {
 
         // After scaling, recompute box to find the scaled bottom vertex
         const box1 = new THREE.Box3().setFromObject(mesh);
-        // Place so bottom of mesh sits exactly on the table surface
-        mesh.position.set(def.offsetX, surfaceY - box1.min.y, def.offsetZ);
+        // Place so bottom of mesh sits exactly on the table surface, plus optional offsetY
+        mesh.position.set(def.offsetX, surfaceY - box1.min.y + (def.offsetY ?? 0), def.offsetZ);
 
         console.log(`${def.label} size:`, box1.getSize(new THREE.Vector3()));
 
