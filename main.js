@@ -643,9 +643,9 @@ const OBJECT_DEFS = [
     // phaseOffset: shifts the sin/cos waves so every object drifts independently in space.
     // Vase + tulip are separate meshes; tulip offsetY lifts it into the vase opening.
     // Tulip has a higher H so it rises faster and pulls away from the vase naturally.
-    { file: 'asset/vase.glb',         label: 'vase',   targetHeight: 1.20, offsetX: -0.55, offsetZ: -1.55, H: 2.2, phaseOffset: 0.0, dissolveStart:  0 },
-    { file: 'asset/tulip.glb',        label: 'tulip',  targetHeight: 0.80, offsetX: -0.55, offsetZ: -1.55, offsetY: 0.85, H: 3.2, phaseOffset: 0.0, dissolveStart:  0 },
-    { file: 'asset/glass_cup.glb',    label: 'cup',    targetHeight: 0.55, offsetX:  0.35, offsetZ: -1.55, H: 1.8, phaseOffset: 0.6, dissolveStart:  3 },
+    { file: 'asset/vase.glb',         label: 'vase',   targetHeight: 0.96, offsetX: -0.55, offsetZ: -1.55, H: 2.2, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/tulip.glb',        label: 'tulip',  targetHeight: 0.88, offsetX: -0.55, offsetZ: -1.55, offsetY: 0.85, H: 3.2, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/glass_cup.glb',    label: 'cup',    targetHeight: 0.55, offsetX: -0.05, offsetZ: -1.75, H: 1.8, phaseOffset: 0.6, dissolveStart:  3 },
     { file: 'asset/Wooden_dummy.glb', label: 'dummy',  targetHeight: 1.04, offsetX:  0.08, offsetZ: -1.05, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
     { file: 'asset/bear_skeleton.glb',label: 'teddy',  targetHeight: 0.84, offsetX:  0.58, offsetZ: -1.15, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
 ];
@@ -727,6 +727,9 @@ function loadStageObject(def, surfaceY) {
 
             const mat = child.material.clone();
             mat.transparent = true;
+            // Glass/transparent meshes need DoubleSide so back faces render at
+            // oblique angles and the cup doesn't disappear when viewed from the side.
+            if (def.label === 'cup') mat.side = THREE.DoubleSide;
             mat.onBeforeCompile = (shader) => {
                 shader.uniforms.uObjProgress = uObjProgress;
                 shader.uniforms.uEdge        = uDissolveEdge;
@@ -1168,43 +1171,12 @@ function animate() {
 
     // Step 2 — decay accumulated repulsion every frame
     for (const obj of stageObjects) {
-        obj.repelX *= 0.92;
         obj.repelY *= 0.92;
-        obj.repelZ *= 0.92;
+        obj.repelX = obj.repelZ = 0; // no horizontal repulsion — objects rise straight up
     }
 
-    // Vertical collision ramps early (table push); horizontal only after p=0.4
-    // so objects rise straight up before any sideways separation begins.
-    const collisionStrengthY  = Math.min(1, p / 0.15);
-    const collisionStrengthXZ = Math.min(1, Math.max(0, (p - 0.4) / 0.2));
-
-    // Step 3a — sphere-sphere collision (3 iterations for fast convergence).
-    if (collisionStrengthY > 0 || collisionStrengthXZ > 0) {
-        for (let iter = 0; iter < 3; iter++) {
-            for (let i = 0; i < stageObjects.length; i++) {
-                for (let j = i + 1; j < stageObjects.length; j++) {
-                    const a = stageObjects[i];
-                    const b = stageObjects[j];
-                    const minDist = a.radius + b.radius;
-                    const dx = (a._baseX + a.repelX) - (b._baseX + b.repelX);
-                    const dy = (a._baseY + a.repelY + a.sphereCenterLocalY)
-                             - (b._baseY + b.repelY + b.sphereCenterLocalY);
-                    const dz = (a._baseZ + a.repelZ) - (b._baseZ + b.repelZ);
-                    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                    if (dist < minDist && dist > 0.001) {
-                        const pushMag = (minDist - dist) * 0.5;
-                        const nx = dx / dist, ny = dy / dist, nz = dz / dist;
-                        a.repelX += nx * pushMag * collisionStrengthXZ;
-                        a.repelY += ny * pushMag * collisionStrengthY;
-                        a.repelZ += nz * pushMag * collisionStrengthXZ;
-                        b.repelX -= nx * pushMag * collisionStrengthXZ;
-                        b.repelY -= ny * pushMag * collisionStrengthY;
-                        b.repelZ -= nz * pushMag * collisionStrengthXZ;
-                    }
-                }
-            }
-        }
-    }
+    // Only vertical collision: table surface pushes objects upward when they overlap it.
+    const collisionStrengthY = Math.min(1, p / 0.15);
 
     // Step 3b — table surface keeps objects from sinking through the table.
     if (tableObject && collisionStrengthY > 0) {
