@@ -837,12 +837,13 @@ function loadStageObject(def, surfaceY) {
         mesh.add(new THREE.Points(particleGeom, particleMat));
 
         // Bounding sphere — used for collision detection.
-        // radius shrunk to 0.75× so only genuine overlaps trigger a push.
+        // radius at 0.85× gives tighter fit than full diagonal, avoids jitter
+        // on very irregular shapes while still preventing visible overlap.
         // sphereCenterLocalY is the sphere centre's Y offset from the mesh pivot
         // (box1 was computed with mesh at y=0, so this offset is constant).
         const sphere = new THREE.Sphere();
         box1.getBoundingSphere(sphere);
-        const radius            = sphere.radius * 0.75;
+        const radius             = sphere.radius * 0.85;
         const sphereCenterLocalY = sphere.center.y; // Y of sphere centre in mesh-local space
 
         const entry = {
@@ -892,21 +893,32 @@ function loadStageObject(def, surfaceY) {
             const sitR = fold.clone().multiply(standR);
             const sitL = fold.clone().multiply(standL);
 
-            // Apply sitting pose right away so bear starts seated
+            // Arm bones for drooping pose (arms close to body, not T-pose)
+            const bAR = bones.find(b => b.name === 'armR');
+            const bAL = bones.find(b => b.name === 'armL');
+            const standAR = bAR ? bAR.quaternion.clone() : null;
+            const standAL = bAL ? bAL.quaternion.clone() : null;
+            // Droop: fold arms ~60° inward toward body (around Z in parent space)
+            const droopR = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1),  Math.PI / 3);
+            const droopL = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 3);
+            const sitAR = standAR ? droopR.clone().multiply(standAR) : null;
+            const sitAL = standAL ? droopL.clone().multiply(standAL) : null;
+
+            // Apply sitting pose right away
             bR.quaternion.copy(sitR);
             bL.quaternion.copy(sitL);
+            if (bAR && sitAR) bAR.quaternion.copy(sitAR);
+            if (bAL && sitAL) bAL.quaternion.copy(sitAL);
 
-            // The position was calculated from the standing-pose bounding box,
-            // so the bear now floats above the table. Fix: get the leg pivot's
-            // world Y after the sitting pose and lower the mesh until that pivot
-            // is at the table surface (hip touching the table = sitting pose).
-            mesh.updateWorldMatrix(true, true);
-            const pivotWorld = new THREE.Vector3();
-            bR.getWorldPosition(pivotWorld);
-            mesh.position.y -= (pivotWorld.y - surfaceY);
-            entry.restY = mesh.position.y; // sync restY so floating starts from here
+            // Position fix: in sitting pose the origin (pelvis) should rest on
+            // the table surface. The standing placement was (surfaceY - box1.min.y),
+            // which places feet at surfaceY. Subtracting abs(box1.min.y) moves the
+            // origin down to surfaceY so the pelvis/butt sits on the table.
+            mesh.position.y = surfaceY;
+            entry.restY = surfaceY;
 
-            legBones = { bR, bL, standR, standL, sitR, sitL };
+            legBones = { bR, bL, standR, standL, sitR, sitL,
+                         bAR, bAL, standAR, standAL, sitAR, sitAL };
         });
         entry.legBones = legBones; // null for non-skeleton objects
 
@@ -919,9 +931,10 @@ function loadStageObject(def, surfaceY) {
         const scaleProxy = { scale: scaleFactor };
         objFolder.add(scaleProxy, 'scale', 0.05, 5.0, 0.01).name('Scale')
             .onChange(v => mesh.scale.setScalar(v));
-        objFolder.add(entry, 'restX', -3, 3, 0.01).name('Pos X').listen();
-        objFolder.add(entry, 'restY', -5, 8, 0.01).name('Pos Y').listen();
-        objFolder.add(entry, 'restZ', -3, 3, 0.01).name('Pos Z').listen();
+        const resetRepel = () => { entry.repelX = entry.repelY = entry.repelZ = 0; };
+        objFolder.add(entry, 'restX', -3, 3, 0.01).name('Pos X').listen().onChange(resetRepel);
+        objFolder.add(entry, 'restY', -5, 8, 0.01).name('Pos Y').listen().onChange(resetRepel);
+        objFolder.add(entry, 'restZ', -3, 3, 0.01).name('Pos Z').listen().onChange(resetRepel);
         objFolder.add(entry, 'rotYOffset', -Math.PI, Math.PI, 0.01).name('Rot Y offset');
         objFolder.close();
         entry.guiFolder = objFolder; // saved so we can hide it after permanent dissolve
@@ -1159,28 +1172,40 @@ function animate() {
         obj._baseZ = obj.restZ + driftZ;
     }
 
-    // Step 2 — decay accumulated repulsion so it dissipates smoothly
-    for (const obj of stageObjects) {
-        obj.repelX *= 0.88;
-        obj.repelY *= 0.88;
-        obj.repelZ *= 0.88;
+    // Step 2 — decay accumulated repulsion (only while floating)
+    if (p > 0.01) {
+        for (const obj of stageObjects) {
+            obj.repelX *= 0.92;
+            obj.repelY *= 0.92;
+            obj.repelZ *= 0.92;
+        }
+    } else {
+        // On the table: clear any stale repulsion so objects stay at restX/Y/Z
+        for (const obj of stageObjects) { obj.repelX = obj.repelY = obj.repelZ = 0; }
     }
 
-    // Step 3a — sphere-sphere collision: push overlapping pairs apart
-    for (let i = 0; i < stageObjects.length; i++) {
-        for (let j = i + 1; j < stageObjects.length; j++) {
-            const a = stageObjects[i];
-            const b = stageObjects[j];
-            const minDist = a.radius + b.radius;
-            const dx = (a._baseX + a.repelX) - (b._baseX + b.repelX);
-            const dy = (a._baseY + a.repelY) - (b._baseY + b.repelY);
-            const dz = (a._baseZ + a.repelZ) - (b._baseZ + b.repelZ);
-            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            if (dist < minDist && dist > 0.001) {
-                const push = (minDist - dist) * 0.5;
-                const nx = dx / dist, ny = dy / dist, nz = dz / dist;
-                a.repelX += nx * push;  a.repelY += ny * push;  a.repelZ += nz * push;
-                b.repelX -= nx * push;  b.repelY -= ny * push;  b.repelZ -= nz * push;
+    // Step 3a — sphere-sphere collision (3 iterations for fast convergence).
+    // Distance is measured between sphere CENTRES (pivot + sphereCenterLocalY in Y).
+    // Only active while floating so on-table artistic placement is undisturbed.
+    if (p > 0.01) {
+        for (let iter = 0; iter < 3; iter++) {
+            for (let i = 0; i < stageObjects.length; i++) {
+                for (let j = i + 1; j < stageObjects.length; j++) {
+                    const a = stageObjects[i];
+                    const b = stageObjects[j];
+                    const minDist = a.radius + b.radius;
+                    const dx = (a._baseX + a.repelX) - (b._baseX + b.repelX);
+                    const dy = (a._baseY + a.repelY + a.sphereCenterLocalY)
+                             - (b._baseY + b.repelY + b.sphereCenterLocalY);
+                    const dz = (a._baseZ + a.repelZ) - (b._baseZ + b.repelZ);
+                    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    if (dist < minDist && dist > 0.001) {
+                        const push = (minDist - dist) * 0.5;
+                        const nx = dx / dist, ny = dy / dist, nz = dz / dist;
+                        a.repelX += nx * push;  a.repelY += ny * push;  a.repelZ += nz * push;
+                        b.repelX -= nx * push;  b.repelY -= ny * push;  b.repelZ -= nz * push;
+                    }
+                }
             }
         }
     }
@@ -1188,8 +1213,7 @@ function animate() {
     // Step 3b — sphere-plane collision with table top surface.
     // tableTopY moves with the table as it floats; the sphere bottom of each
     // object must stay above it so objects can't sink into the table surface.
-    // sphereCenterLocalY converts from mesh-pivot Y (_baseY) to sphere-centre Y.
-    if (tableObject) {
+    if (tableObject && p > 0.01) {
         const tableTopY = tableObject.position.y + TABLE_TOP_OFFSET;
         for (const obj of stageObjects) {
             const sphereBottomY = (obj._baseY + obj.repelY) + obj.sphereCenterLocalY - obj.radius;
@@ -1208,13 +1232,15 @@ function animate() {
         obj.mesh.rotation.y = obj.spinY + obj.rotYOffset;
         obj.mesh.rotation.z = Math.sin(t * 0.42 + obj.phaseOffset) * 0.06 * p;
 
-        // Skeleton leg animation: sitting (-90°) → standing (0°) driven by
-        // scroll progress p, so legs unfold as soon as the bear starts floating.
+        // Skeleton animation: sitting/drooping → standing as p goes 0 → 0.3
         if (obj.legBones) {
-            const { bR, bL, sitR, sitL, standR, standL } = obj.legBones;
+            const { bR, bL, sitR, sitL, standR, standL,
+                    bAR, bAL, sitAR, sitAL, standAR, standAL } = obj.legBones;
             const boneT = Math.min(1, p / 0.3);
             bR.quaternion.slerpQuaternions(sitR, standR, boneT);
             bL.quaternion.slerpQuaternions(sitL, standL, boneT);
+            if (bAR && sitAR && standAR) bAR.quaternion.slerpQuaternions(sitAR, standAR, boneT);
+            if (bAL && sitAL && standAL) bAL.quaternion.slerpQuaternions(sitAL, standAL, boneT);
         }
     }
 
