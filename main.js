@@ -643,10 +643,10 @@ const OBJECT_DEFS = [
     // phaseOffset: shifts the sin/cos waves so every object drifts independently in space.
     // Vase + tulip are separate meshes; tulip offsetY lifts it into the vase opening.
     // Tulip has a higher H so it rises faster and pulls away from the vase naturally.
-    { file: 'asset/vase.glb',         label: 'vase',   targetHeight: 0.96, offsetX: -0.55, offsetZ: -1.55, H: 2.2, phaseOffset: 0.0, dissolveStart:  0 },
-    { file: 'asset/tulip.glb',        label: 'tulip',  targetHeight: 0.88, offsetX: -0.55, offsetZ: -1.55, offsetY: 0.85, H: 3.2, phaseOffset: 0.0, dissolveStart:  0 },
-    { file: 'asset/glass_cup.glb',    label: 'cup',    targetHeight: 0.55, offsetX: -0.05, offsetZ: -1.75, H: 1.8, phaseOffset: 0.6, dissolveStart:  3 },
-    { file: 'asset/Wooden_dummy.glb', label: 'dummy',  targetHeight: 1.04, offsetX:  0.08, offsetZ: -1.05, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
+    { file: 'asset/vase.glb',         label: 'vase',   targetHeight: 0.864, offsetX: -0.55, offsetZ: -1.55, H: 2.2, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/tulip.glb',        label: 'tulip',  targetHeight: 1.056, offsetX: -0.55, offsetZ: -1.55, offsetY: 0.85, H: 3.2, phaseOffset: 0.0, dissolveStart:  0 },
+    { file: 'asset/glass_cup.glb',    label: 'cup',    targetHeight: 0.55,  offsetX:  0.08, offsetZ: -1.45, H: 1.8, phaseOffset: 0.6, dissolveStart:  3 },
+    { file: 'asset/Wooden_dummy.glb', label: 'dummy',  targetHeight: 1.04,  offsetX:  0.08, offsetZ: -1.05, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
     { file: 'asset/bear_skeleton.glb',label: 'teddy',  targetHeight: 0.84, offsetX:  0.58, offsetZ: -1.15, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
 ];
 
@@ -727,9 +727,14 @@ function loadStageObject(def, surfaceY) {
 
             const mat = child.material.clone();
             mat.transparent = true;
-            // Glass/transparent meshes need DoubleSide so back faces render at
-            // oblique angles and the cup doesn't disappear when viewed from the side.
-            if (def.label === 'cup') mat.side = THREE.DoubleSide;
+            if (def.label === 'cup') {
+                // Glass cup: render both faces, disable depth write so transparent
+                // surfaces sort correctly, and clear alphaTest so no fragments discarded.
+                mat.side       = THREE.DoubleSide;
+                mat.depthWrite = false;
+                mat.alphaTest  = 0;
+                child.renderOrder = 1; // render after opaque objects
+            }
             mat.onBeforeCompile = (shader) => {
                 shader.uniforms.uObjProgress = uObjProgress;
                 shader.uniforms.uEdge        = uDissolveEdge;
@@ -1158,21 +1163,33 @@ function animate() {
     // ── Stage objects floating + collision ───────────────────────────────────
     // Split into 4 steps so collision resolution sees all positions at once.
 
-    // Step 1 — compute sin/cos base position for each object (no mesh write yet)
+    // Step 1 — compute base position for each object (no mesh write yet)
     for (const obj of stageObjects) {
         obj.uTime.value = t;
-        const phi    = obj.phaseOffset;
-        const rise   = p * obj.H;
-        const bob    = Math.sin(t * 0.75 + phi) * 0.25 * p;
-        obj._baseX = obj.restX;
+        const phi  = obj.phaseOffset;
+        const rise = p * obj.H;
+        // Bob: vertical oscillation gives the main floating rhythm
+        const bob  = Math.sin(t * 0.75 + phi) * 0.25 * p;
+        // Micro-sway: very small horizontal drift so objects feel weightless,
+        // not like they're on a vertical rail. Amplitude is ~10× smaller than
+        // the old driftX to avoid visible sliding.
+        const swayX = Math.sin(t * 0.28 + phi * 1.1) * 0.04 * p;
+        const swayZ = Math.cos(t * 0.21 + phi * 0.9) * 0.03 * p;
+        obj._baseX = obj.restX + swayX;
         obj._baseY = obj.restY + rise + bob;
-        obj._baseZ = obj.restZ;
+        obj._baseZ = obj.restZ + swayZ;
     }
 
-    // Step 2 — decay accumulated repulsion every frame
+    // Step 2 — decay / reset repulsion
     for (const obj of stageObjects) {
-        obj.repelY *= 0.92;
-        obj.repelX = obj.repelZ = 0; // no horizontal repulsion — objects rise straight up
+        if (p < 0.01) {
+            // Fully back on the table: snap repelY to 0 so objects return to
+            // exact rest position and don't hover after scrolling back.
+            obj.repelY = 0;
+        } else {
+            obj.repelY *= 0.92;
+        }
+        obj.repelX = obj.repelZ = 0;
     }
 
     // Only vertical collision: table surface pushes objects upward when they overlap it.
@@ -1197,6 +1214,7 @@ function animate() {
         obj.spinY += 0.002 * p;
         obj.mesh.rotation.y = obj.spinY + obj.rotYOffset;
         obj.mesh.rotation.z = Math.sin(t * 0.42 + obj.phaseOffset) * 0.06 * p;
+        obj.mesh.rotation.x = Math.sin(t * 0.31 + obj.phaseOffset * 1.3) * 0.04 * p;
 
         // Skeleton leg animation: sitting → standing as p goes 0 → 0.3
         if (obj.legBones) {
