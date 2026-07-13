@@ -10,6 +10,33 @@ import { injectSkyboxFlow, uFlowStrength } from '../render/skyboxFlow.js';
 export const SKYBOX_NONE    = 'None (white)';
 export const SKYBOX_OPTIONS = ['skybox_blue', SKYBOX_NONE];
 
+// Ambient/directional tint the room lighting eases toward as it enters
+// 'space' (see render/lighting.js updateLighting) — keyed by the same names
+// as SKYBOX_OPTIONS. Lighting should match whatever the viewer can actually
+// see behind the objects: the blue nebula implies a cool blue tint, but a
+// plain white void has no light source to tint anything, so it gets a
+// neutral studio-white preset instead. Add an entry here whenever a new
+// skybox option is added above.
+export const LIGHTING_PRESETS = {
+    skybox_blue: {
+        // Deep space: ambient fades to ~nothing, the directional "sun" does
+        // all the work — moody, high-contrast.
+        ambientColor:         [0.05, 0.08, 0.22],
+        ambientIntensity:     0.0,
+        directionalColor:     [1.00, 1.00, 1.00],
+        directionalIntensity: 3.5,
+    },
+    [SKYBOX_NONE]: {
+        // Plain white void: no light source to justify a moody directional
+        // look, so ambient stays bright and neutral instead of fading out —
+        // an even fill that shows each object's own material color.
+        ambientColor:         [1.00, 1.00, 1.00],
+        ambientIntensity:     1.6,
+        directionalColor:     [1.00, 1.00, 1.00],
+        directionalIntensity: 2.0,
+    },
+};
+
 const SKYBOX_FACES = ['right', 'left', 'top', 'bot', 'front', 'back'];
 
 export function buildSkybox(scene) {

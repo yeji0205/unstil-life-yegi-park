@@ -6,7 +6,7 @@ import { uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor } from './src/
 import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
 
 import { buildRoom } from './src/geometry/room.js';
-import { buildSkybox, buildStars, SKYBOX_OPTIONS } from './src/geometry/environment.js';
+import { buildSkybox, buildStars, SKYBOX_OPTIONS, LIGHTING_PRESETS } from './src/geometry/environment.js';
 
 import { loadScene, tableState, stageObjects, LOADING_TOTAL } from './src/persistence/glbLoader.js';
 
@@ -25,12 +25,20 @@ setupResize(camera, renderer);
 
 // ─── Geometry ────────────────────────────────────────────────────────────────
 const { loadSkybox } = buildSkybox(scene);
-loadSkybox(SKYBOX_OPTIONS[0]);
 const { updateStars } = buildStars(scene);
 buildRoom(scene);
 
 // ─── Lighting ────────────────────────────────────────────────────────────────
-const { ambientLight, directionalLight, updateLighting } = setupLighting(scene);
+const { ambientLight, directionalLight, updateLighting, setSpacePreset } = setupLighting(scene);
+
+// Swaps the background AND its matching lighting tint together — the GUI's
+// "Skybox" dropdown is the only control needed; there's no separate lighting
+// button because the two should never be out of sync.
+function selectBackground(name) {
+    loadSkybox(name);
+    setSpacePreset(LIGHTING_PRESETS[name]);
+}
+selectBackground(SKYBOX_OPTIONS[0]);
 
 // ─── Camera controls ─────────────────────────────────────────────────────────
 const cameraControls = createCameraControls(camera, renderer.domElement);
@@ -40,7 +48,7 @@ const gui = createDebugGUI({
     uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor,
     ambientLight, directionalLight,
     skyboxOptions: SKYBOX_OPTIONS, defaultSkybox: SKYBOX_OPTIONS[0],
-    onSkyboxChange: loadSkybox,
+    onSkyboxChange: selectBackground,
     onDissolveClick: () => phaseMachine.triggerDissolve(),
 });
 

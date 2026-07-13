@@ -92,6 +92,22 @@ export function setupLighting(scene) {
     const { beamMesh, uBeamFade } = createBeam();
     scene.add(beamMesh);
 
+    // The color AND intensity the lights ease toward at p=1 — swapped by
+    // setSpacePreset() whenever the background changes (see
+    // geometry/environment.js LIGHTING_PRESETS). Intensity matters as much
+    // as color here: against deep space, ambient fades to ~0 and the
+    // directional key light does the work; against a plain white void
+    // there's no light source to justify that, so ambient instead stays
+    // bright and neutral, acting as an even fill that shows each object's
+    // own material color instead of a moody directional-only look.
+    let spacePreset = {
+        ambientColor:         [0.05, 0.08, 0.22],
+        ambientIntensity:     0.0,
+        directionalColor:     [1.00, 1.00, 1.00],
+        directionalIntensity: 3.5,
+    };
+    function setSpacePreset(preset) { spacePreset = preset; }
+
     // Called once per frame with the smoothed room→space progress (0→1).
     function updateLighting(p) {
         // Beam fades quickly in the first 40% of the scroll so it's gone well
@@ -100,23 +116,26 @@ export function setupLighting(scene) {
 
         // Only update lighting during transition — skip when fully settled at p=0 or p=1
         if (p > 0.001 && p < 0.999) {
-            // Ambient: dark warm brown (room) → faint deep blue (space)
-            ambientLight.color.setRGB(
-                THREE.MathUtils.lerp(0.24, 0.05, p),   // R  (0x3d = 61 → 0.24)
-                THREE.MathUtils.lerp(0.13, 0.08, p),   // G  (0x20 = 32 → 0.13)
-                THREE.MathUtils.lerp(0.06, 0.22, p)    // B  (0x10 = 16 → 0.06)
-            );
-            ambientLight.intensity = THREE.MathUtils.lerp(0.4, 0.0, p);
+            const [ar, ag, ab] = spacePreset.ambientColor;
+            const [dr, dg, db] = spacePreset.directionalColor;
 
-            // Directional: warm amber key (0xffe8b0) → pure white harsh sunlight in space
-            directionalLight.color.setRGB(
-                THREE.MathUtils.lerp(1.00, 1.00, p),
-                THREE.MathUtils.lerp(0.91, 1.00, p),   // 0xe8 = 232 → 0.91
-                THREE.MathUtils.lerp(0.69, 1.00, p)    // 0xb0 = 176 → 0.69
+            // Ambient: dark warm brown (room) → space preset
+            ambientLight.color.setRGB(
+                THREE.MathUtils.lerp(0.24, ar, p),   // R  (0x3d = 61 → 0.24)
+                THREE.MathUtils.lerp(0.13, ag, p),   // G  (0x20 = 32 → 0.13)
+                THREE.MathUtils.lerp(0.06, ab, p)    // B  (0x10 = 16 → 0.06)
             );
-            directionalLight.intensity = THREE.MathUtils.lerp(2.6, 3.5, p);
+            ambientLight.intensity = THREE.MathUtils.lerp(0.4, spacePreset.ambientIntensity, p);
+
+            // Directional: warm amber key (0xffe8b0) → space preset
+            directionalLight.color.setRGB(
+                THREE.MathUtils.lerp(1.00, dr, p),
+                THREE.MathUtils.lerp(0.91, dg, p),   // 0xe8 = 232 → 0.91
+                THREE.MathUtils.lerp(0.69, db, p)    // 0xb0 = 176 → 0.69
+            );
+            directionalLight.intensity = THREE.MathUtils.lerp(2.6, spacePreset.directionalIntensity, p);
         }
     }
 
-    return { ambientLight, directionalLight, updateLighting };
+    return { ambientLight, directionalLight, updateLighting, setSpacePreset };
 }

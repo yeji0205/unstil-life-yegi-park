@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { FLOAT_START } from './floating.js';
 
 // Room-mode limits (applied initially, relaxed when in space)
 // Limits calculated from orbital radius (r≈6.1) and room bounds
@@ -16,13 +17,13 @@ const ROOM_LIMITS = {
 // Original orbit radius ≈ 6.1; add a small margin so the switch feels natural.
 export const ROOM_RETURN_DIST = 5.5; // orbit radius from new camera (~3.8 units); 5.5 gives comfortable margin
 
-const ZOOM_OUT_START = 0.5;
-const ZOOM_OUT_EXTRA = 3.0; // extra distance (units) added by p = 1
+// Starts exactly when objects start rising (FLOAT_START) — previously this
+// waited until p=0.5, leaving a stretch where objects rose with no
+// compensating pull-back and drifted out of frame.
+const ZOOM_OUT_START = FLOAT_START;
+const ZOOM_OUT_EXTRA = 5.5; // extra distance (units) added by p = 1
 
-// LOOK_UP_START matches FLOAT_START in simulation/floating.js — objects only
-// start rising off the table at that point, so there's nothing to tilt toward
-// before it.
-const LOOK_UP_START = 0.2;
+const LOOK_UP_START = FLOAT_START;
 const LOOK_UP_EXTRA = 2.4; // extra height added to the look-at target by p = 1
 
 export function createCameraControls(camera, domElement) {
@@ -34,9 +35,15 @@ export function createCameraControls(camera, domElement) {
     controls.rotateSpeed   = 1.0;
     controls.target.set(0, -0.69, -0.5); // aimed at scene center, shifted up with camera
 
-    // Captured once at startup — the baseline orbit distance/target height the
-    // auto zoom-out (see updateAutoZoomOut) adds extra distance/height on top of.
-    const initialOrbitDist = camera.position.distanceTo(controls.target);
+    // Captured once at startup — the baseline camera↔target offset that
+    // updateAutoZoomOut scales/raises, and the target height it adds on top
+    // of. Everything below is a pure function of this snapshot plus the
+    // current p, never of last frame's camera position — recomputing from
+    // "current" position each frame (as this used to) turns any asymmetry
+    // between the camera's and target's rise speed into a feedback loop that
+    // compounds frame over frame instead of settling.
+    const initialOffset    = camera.position.clone().sub(controls.target);
+    const initialOrbitDist = initialOffset.length();
     const initialTargetY   = controls.target.y;
 
     // Armed once the user zooms out past ROOM_RETURN_DIST after entering space.
@@ -77,21 +84,22 @@ export function createCameraControls(camera, domElement) {
     // touching the camera.
     function updateAutoZoomOut(phase, p) {
         if (phase !== 'room') return;
-        const zoomT = Math.max(0, (p - ZOOM_OUT_START) / (1 - ZOOM_OUT_START));
-        const desiredDist = initialOrbitDist + ZOOM_OUT_EXTRA * zoomT;
-        const dir = camera.position.clone().sub(controls.target).normalize();
-        camera.position.copy(controls.target).addScaledVector(dir, desiredDist);
+        const zoomT  = Math.max(0, (p - ZOOM_OUT_START) / (1 - ZOOM_OUT_START));
+        const scale  = (initialOrbitDist + ZOOM_OUT_EXTRA * zoomT) / initialOrbitDist;
+        const riseY  = 0.2 * ZOOM_OUT_EXTRA * zoomT; // camera's own rise — a little, not as much as the target
+        const lookT  = Math.max(0, (p - LOOK_UP_START) / (1 - LOOK_UP_START));
 
-        // Camera itself only rises a little (20% of the extra pull-back distance)...
-        const riseY = 0.2 * ZOOM_OUT_EXTRA * zoomT;
-        camera.position.y += riseY;
-
-        // ...but the look-at target rises faster than the camera, so the
-        // gaze angle pitches upward over time instead of just translating —
-        // that's what keeps objects in frame as they float up past the
-        // camera's height.
-        const lookT = Math.max(0, (p - LOOK_UP_START) / (1 - LOOK_UP_START));
+        // Target x/z never move; only its height changes (rising faster than
+        // the camera's own riseY tilts the gaze upward toward floating objects).
         controls.target.y = initialTargetY + riseY + LOOK_UP_EXTRA * lookT;
+
+        // Camera position = target(x,z) + the ORIGINAL offset direction,
+        // radially scaled — anchored to initialTargetY, not the tilted
+        // controls.target.y, so the look-up tilt only rotates the gaze
+        // instead of also dragging the camera's own height along with it.
+        camera.position.x = controls.target.x + initialOffset.x * scale;
+        camera.position.z = controls.target.z + initialOffset.z * scale;
+        camera.position.y = initialTargetY + initialOffset.y * scale + riseY;
     }
 
     return { controls, zoomState, applyControlMode, updateZoom, updateAutoZoomOut };
