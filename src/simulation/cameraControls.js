@@ -21,10 +21,12 @@ export const ROOM_RETURN_DIST = 5.5; // orbit radius from new camera (~3.8 units
 // waited until p=0.5, leaving a stretch where objects rose with no
 // compensating pull-back and drifted out of frame.
 const ZOOM_OUT_START = FLOAT_START;
-const ZOOM_OUT_EXTRA = 5.5; // extra distance (units) added by p = 1
-
-const LOOK_UP_START = FLOAT_START;
-const LOOK_UP_EXTRA = 2.4; // extra height added to the look-at target by p = 1
+// Extra orbit distance added by p = 1. The camera keeps its ROOM position and
+// gaze; it only dollies straight back along its original view direction so the
+// whole rising still-life fits on screen. (Bumped from 5.5 to 8.0 to compensate
+// for no longer raising the camera / tilting the gaze up — pure pull-back needs
+// more distance to keep the floating objects framed.)
+const ZOOM_OUT_EXTRA = 8.0;
 
 export function createCameraControls(camera, domElement) {
     const controls = new OrbitControls(camera, domElement);
@@ -34,6 +36,10 @@ export function createCameraControls(camera, domElement) {
     controls.enableZoom    = false;
     controls.rotateSpeed   = 1.0;
     controls.target.set(0, -0.69, -0.5); // aimed at scene center, shifted up with camera
+    // Disabled until the painting intro (if any) finishes dissolving — see
+    // main.js, which flips this to true once createPaintingIntro's reveal
+    // completes (or immediately, if there's no intro image to show).
+    controls.enabled = false;
 
     // Captured once at startup — the baseline camera↔target offset that
     // updateAutoZoomOut scales/raises, and the target height it adds on top
@@ -45,6 +51,12 @@ export function createCameraControls(camera, domElement) {
     const initialOffset    = camera.position.clone().sub(controls.target);
     const initialOrbitDist = initialOffset.length();
     const initialTargetY   = controls.target.y;
+
+    // Orbit distance the dolly-back grows from. Tracks the viewer's current
+    // distance while free-looking in the room, then the transition adds
+    // ZOOM_OUT_EXTRA on top of it — the DIRECTION is left to OrbitControls the
+    // whole time, so the viewer keeps orbiting freely even mid-scroll.
+    let activeDist = initialOrbitDist;
 
     // Armed once the user zooms out past ROOM_RETURN_DIST after entering space.
     // Prevents the room from immediately re-appearing when the room first dissolves
@@ -82,24 +94,43 @@ export function createCameraControls(camera, domElement) {
     // Only runs during the scroll-driven 'room' phase; once 'space' is
     // reached, manual OrbitControls zoom/orbit takes over and this stops
     // touching the camera.
-    function updateAutoZoomOut(phase, p) {
-        if (phase !== 'room') return;
-        const zoomT  = Math.max(0, (p - ZOOM_OUT_START) / (1 - ZOOM_OUT_START));
-        const scale  = (initialOrbitDist + ZOOM_OUT_EXTRA * zoomT) / initialOrbitDist;
-        const riseY  = 0.2 * ZOOM_OUT_EXTRA * zoomT; // camera's own rise — a little, not as much as the target
-        const lookT  = Math.max(0, (p - LOOK_UP_START) / (1 - LOOK_UP_START));
+    function updateAutoZoomOut(p) {
+        // Driven purely by the SMOOTHED p across the room→space transition (and
+        // its reverse). Deliberately NOT gated on phase === 'room': the phase
+        // flips to 'space' the instant the RAW scroll target reaches 1, which on
+        // a quick scroll is many frames before the smoothed p (what the visuals
+        // ease along) actually gets there. Gating on phase froze the pull-back
+        // and upward look mid-transition — the camera stopped rising as it
+        // entered space. Two hand-offs bracket the auto motion instead:
+        //   • p ≤ ZOOM_OUT_START  → still in the room: OrbitControls owns the
+        //     free look-around (within ROOM_LIMITS).
+        //   • p ≥ 0.999           → fully in space: OrbitControls takes over for
+        //     manual orbit/zoom, starting from the finished transition pose.
+        if (p <= ZOOM_OUT_START) {
+            // Still free-looking in the room: remember the current orbit distance
+            // so the dolly-back begins from exactly here (no jump).
+            activeDist = camera.position.distanceTo(controls.target);
+            return;
+        }
+        if (p >= 0.999) return;
+        // smoothstep-eased so the pull-back starts and ends gently, matching the
+        // eased object float (simulation/floating.js) — a linear ramp jerked the
+        // camera into motion the instant scrolling crossed ZOOM_OUT_START.
+        const rawZoomT = Math.max(0, (p - ZOOM_OUT_START) / (1 - ZOOM_OUT_START));
+        const zoomT  = rawZoomT * rawZoomT * (3 - 2 * rawZoomT);
+        const desiredDist = activeDist + ZOOM_OUT_EXTRA * zoomT;
 
-        // Target x/z never move; only its height changes (rising faster than
-        // the camera's own riseY tilts the gaze upward toward floating objects).
-        controls.target.y = initialTargetY + riseY + LOOK_UP_EXTRA * lookT;
-
-        // Camera position = target(x,z) + the ORIGINAL offset direction,
-        // radially scaled — anchored to initialTargetY, not the tilted
-        // controls.target.y, so the look-up tilt only rotates the gaze
-        // instead of also dragging the camera's own height along with it.
-        camera.position.x = controls.target.x + initialOffset.x * scale;
-        camera.position.z = controls.target.z + initialOffset.z * scale;
-        camera.position.y = initialTargetY + initialOffset.y * scale + riseY;
+        // Enforce only the DISTANCE — rescale the current camera→target offset to
+        // desiredDist, preserving its DIRECTION. OrbitControls (which runs right
+        // after, with zoom disabled during the transition) keeps owning the angle,
+        // so the viewer can orbit and explore the whole time while the scene
+        // still pulls back with the scroll. target is fixed, so this can't feed
+        // back / run away. At zoomT≈0 desiredDist≈activeDist → no jump.
+        const offset = camera.position.clone().sub(controls.target);
+        const len = offset.length();
+        if (len > 1e-4) {
+            camera.position.copy(controls.target).addScaledVector(offset, desiredDist / len);
+        }
     }
 
     return { controls, zoomState, applyControlMode, updateZoom, updateAutoZoomOut };

@@ -3,12 +3,17 @@ import { uProgress } from '../render/dissolve.js';
 // 'room'       — room visible, scroll controls uProgress
 // 'space'      — room gone, zoom active, waiting for the dissolve button
 // 'dissolving' — objects dissolving automatically, scroll blocked
-// 'done'       — all objects gone, scroll re-enabled to restore room
+// 'done'       — objects dissolved away (kept, invisible); scroll re-enabled
 //
 // uProgress < 1              → scroll dissolves / restores room
 // uProgress = 1, not yet zoomed out OR still far → OrbitControls zooms
 // uProgress = 1, zoomed out AND back to start    → scroll restores room
-export function createPhaseMachine({ scene, camera, cameraControls, tableState, stageObjects, dissolveController, getTime }) {
+//
+// After a dissolve, the objects are NOT deleted — they're kept at uProgress = 1
+// (fully dissolved / invisible). Scrolling back toward the room then drives
+// their uProgress from 1 → 0 (see the reverse-dissolve block in update), so the
+// exact same objects re-materialize by playing the dissolve effect backwards.
+export function createPhaseMachine({ scene, camera, cameraControls, tableState, stageObjects, dissolveController, getTime, onObjectDissolveStart }) {
     const { controls, zoomState, applyControlMode } = cameraControls;
     const ROOM_RETURN_DIST = 5.5; // kept in sync with simulation/cameraControls.js
 
@@ -16,10 +21,24 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     let targetP       = 0;   // raw scroll destination; uProgress.value lerps toward this
     let phaseStart    = 0;   // clock time when current phase began
     let scrollBlocked = false;
+    // True from when a dissolve finishes until the objects have fully
+    // re-materialized back in the room. While set, the objects' dissolve amount
+    // tracks the scroll (p) so returning to the room reverses the dissolve.
+    let objectsDissolved = false;
+    // One-shot guard so the table's dissolve whoosh fires once per dissolve.
+    let tableDissolveSoundFired = false;
+    // False until the painting intro (if any) finishes dissolving away —
+    // see main.js, which calls enableInteraction() once that completes.
+    let interactionEnabled = false;
 
     function resetToRoom() {
         zoomState.hasZoomedOut = false;
         phase = 'room';
+        dissolveController.disable();
+        // If we're mid reverse-dissolve, DON'T snap the objects/table solid —
+        // update()'s reverse-dissolve block eases their uProgress from 1 → 0 as
+        // p falls, and re-enables shadows / clears objectsDissolved once solid.
+        if (objectsDissolved) return;
         tableState.uProgress.value = 0;
         if (tableState.object) {
             tableState.object.userData.shadowsKilled = false;
@@ -32,10 +51,11 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
                 obj.shadowsKilled = false;
             }
         }
-        dissolveController.disable();
     }
 
     window.addEventListener('wheel', (e) => {
+        // Locked out during the painting intro — nothing to scroll into yet.
+        if (!interactionEnabled) return;
         // Block scroll entirely during object dissolve phase
         if (scrollBlocked) return;
 
@@ -53,11 +73,13 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     // rest of the time, but the phase is re-checked here in case a stray click
     // lands mid-transition.
     function triggerDissolve() {
-        if (phase !== 'space') return;
+        if (phase !== 'space') return false;
         phase         = 'dissolving';
         phaseStart    = getTime();
         scrollBlocked = true;
+        tableDissolveSoundFired = false; // re-arm the table whoosh for this run
         dissolveController.disable();
+        return true; // caller uses this to fire the one-shot dissolve sound
     }
 
     // Advances uProgress toward targetP and runs the phase transitions. Called
@@ -85,16 +107,29 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
 
         if (phase === 'dissolving') {
             const elapsed = t - phaseStart;
-            // Objects dissolve sequentially: tulip 0s, dummy 5s, teddy 10s (each over 3s)
+            // Objects dissolve sequentially: vase 0s, tulip 1.5s, stone 3s,
+            // dummy 5s, teddy 10s (each over 3s).
             for (const obj of stageObjects) {
                 const objElapsed = elapsed - obj.dissolveStart;
+                // Fire the one-shot dissolve sound the moment THIS object begins
+                // dissolving, so each object gets its own whoosh in sequence
+                // rather than a single sound at button-press.
+                if (objElapsed >= 0 && !obj.dissolveSoundFired) {
+                    obj.dissolveSoundFired = true;
+                    onObjectDissolveStart?.();
+                }
                 obj.uProgress.value = Math.min(1.0, Math.max(0.0, objElapsed / 3.0));
                 if (obj.uProgress.value >= 1.0 && !obj.shadowsKilled) {
                     obj.mesh.traverse(c => { if (c.isMesh) c.castShadow = false; });
                     obj.shadowsKilled = true;
                 }
             }
-            // Table dissolves last: starts at 15s, ends at 18s
+            // Table dissolves last: starts at 15s, ends at 18s. Give it a
+            // whoosh too, the moment it starts — same one-shot the objects use.
+            if (elapsed >= 15.0 && !tableDissolveSoundFired) {
+                tableDissolveSoundFired = true;
+                onObjectDissolveStart?.();
+            }
             tableState.uProgress.value = Math.min(1.0, Math.max(0.0, (elapsed - 15.0) / 3.0));
             if (tableState.uProgress.value >= 1.0 && tableState.object && !tableState.object.userData.shadowsKilled) {
                 tableState.object.traverse(c => { if (c.isMesh) c.castShadow = false; });
@@ -103,17 +138,48 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
             if (elapsed >= 18.0) {
                 phase         = 'done';
                 scrollBlocked = false;
-                // Permanently remove the stage objects — only the table returns on room restore
-                for (const obj of stageObjects) {
-                    scene.remove(obj.mesh);
-                    if (obj.guiFolder) obj.guiFolder.hide();
+                // Keep the objects (now fully dissolved / invisible at uProgress=1)
+                // so they can reverse-dissolve back on the way home. objectsDissolved
+                // hands control of their uProgress to the reverse block below.
+                objectsDissolved = true;
+            }
+        }
+
+        // Reverse dissolve: while the objects are in their dissolved-away state,
+        // tie every object's (and the table's) uProgress to the scroll p. In
+        // 'done' p is still 1 so they stay invisible; as the viewer scrolls back
+        // toward the room p falls to 0 and they re-materialize — the dissolve
+        // effect played backwards — while floating back down onto the table.
+        if (objectsDissolved && phase !== 'dissolving') {
+            tableState.uProgress.value = p;
+            for (const obj of stageObjects) obj.uProgress.value = p;
+
+            if (p <= 0.02) {
+                // Fully home: solidify, restore shadows, and leave the dissolved
+                // state so a later scroll-up just floats them (and Dissolve can
+                // run fresh — including re-firing each object's whoosh).
+                objectsDissolved = false;
+                tableState.uProgress.value = 0;
+                if (tableState.object) {
+                    tableState.object.userData.shadowsKilled = false;
+                    tableState.object.traverse(c => { if (c.isMesh) c.castShadow = true; });
                 }
-                stageObjects.length = 0; // clear array so downstream loops skip them
+                for (const obj of stageObjects) {
+                    obj.uProgress.value = 0;
+                    obj.dissolveSoundFired = false;
+                    if (obj.shadowsKilled) {
+                        obj.mesh.traverse(c => { if (c.isMesh) c.castShadow = true; });
+                        obj.shadowsKilled = false;
+                    }
+                }
             }
         }
 
         return { p, rawP, phase };
     }
 
-    return { update, triggerDissolve };
+    // Called once the painting intro finishes dissolving (or there is none).
+    function enableInteraction() { interactionEnabled = true; }
+
+    return { update, triggerDissolve, enableInteraction };
 }

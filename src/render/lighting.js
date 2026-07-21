@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { uRimColor, uRimStrength } from './dissolve.js';
 
 // ─── Fake volumetric light beam ──────────────────────────────────────────────
 // Single cone with a custom gradient shader: full brightness at the tip (light
@@ -114,27 +115,35 @@ export function setupLighting(scene) {
         // before the room walls fully dissolve.
         uBeamFade.value = Math.max(0, 1 - p / 0.4);
 
-        // Only update lighting during transition — skip when fully settled at p=0 or p=1
-        if (p > 0.001 && p < 0.999) {
-            const [ar, ag, ab] = spacePreset.ambientColor;
-            const [dr, dg, db] = spacePreset.directionalColor;
+        // Recomputed every frame — even at settled p=0/p=1 — so switching the
+        // skybox preset while sitting still in 'room' or 'space' takes effect
+        // immediately instead of only updating the next time p crosses back
+        // through the transition. lerp(x, y, 0)=x and lerp(x, y, 1)=y exactly,
+        // so this is a no-op at the endpoints when the preset hasn't changed.
+        const [ar, ag, ab] = spacePreset.ambientColor;
+        const [dr, dg, db] = spacePreset.directionalColor;
 
-            // Ambient: dark warm brown (room) → space preset
-            ambientLight.color.setRGB(
-                THREE.MathUtils.lerp(0.24, ar, p),   // R  (0x3d = 61 → 0.24)
-                THREE.MathUtils.lerp(0.13, ag, p),   // G  (0x20 = 32 → 0.13)
-                THREE.MathUtils.lerp(0.06, ab, p)    // B  (0x10 = 16 → 0.06)
-            );
-            ambientLight.intensity = THREE.MathUtils.lerp(0.4, spacePreset.ambientIntensity, p);
+        // Ambient: dark warm brown (room) → space preset
+        ambientLight.color.setRGB(
+            THREE.MathUtils.lerp(0.24, ar, p),   // R  (0x3d = 61 → 0.24)
+            THREE.MathUtils.lerp(0.13, ag, p),   // G  (0x20 = 32 → 0.13)
+            THREE.MathUtils.lerp(0.06, ab, p)    // B  (0x10 = 16 → 0.06)
+        );
+        ambientLight.intensity = THREE.MathUtils.lerp(0.4, spacePreset.ambientIntensity, p);
 
-            // Directional: warm amber key (0xffe8b0) → space preset
-            directionalLight.color.setRGB(
-                THREE.MathUtils.lerp(1.00, dr, p),
-                THREE.MathUtils.lerp(0.91, dg, p),   // 0xe8 = 232 → 0.91
-                THREE.MathUtils.lerp(0.69, db, p)    // 0xb0 = 176 → 0.69
-            );
-            directionalLight.intensity = THREE.MathUtils.lerp(2.6, spacePreset.directionalIntensity, p);
-        }
+        // Directional: warm amber key (0xffe8b0) → space preset
+        directionalLight.color.setRGB(
+            THREE.MathUtils.lerp(1.00, dr, p),
+            THREE.MathUtils.lerp(0.91, dg, p),   // 0xe8 = 232 → 0.91
+            THREE.MathUtils.lerp(0.69, db, p)    // 0xb0 = 176 → 0.69
+        );
+        directionalLight.intensity = THREE.MathUtils.lerp(2.6, spacePreset.directionalIntensity, p);
+
+        // Rim tint always tracks the current ambient color/intensity (even at
+        // settled p=0/p=1, unlike the block above) so every object's edges
+        // pick up whatever's actually around them right now.
+        uRimColor.value.copy(ambientLight.color);
+        uRimStrength.value = THREE.MathUtils.clamp(ambientLight.intensity * 0.3, 0.05, 0.6);
     }
 
     return { ambientLight, directionalLight, updateLighting, setSpacePreset };

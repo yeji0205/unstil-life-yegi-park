@@ -19,7 +19,13 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
     // Step 1 — compute base position for each object (no mesh write yet)
     // Floating (rise/bob/sway) only kicks in once p passes FLOAT_START —
     // objects stay put on the table for the first part of the scroll.
-    const floatP = Math.max(0, (p - FLOAT_START) / (1 - FLOAT_START));
+    // rawFloatP rises linearly from 0, but rise/bob/sway all scale with it, so a
+    // linear ramp means their velocity jumps from 0 to a constant the instant
+    // floating begins — a sudden, jerky start. smoothstep eases floatP in (and
+    // out), so the derivative is 0 at both ends: objects accelerate smoothly off
+    // the table and ease into their top height instead of snapping into motion.
+    const rawFloatP = Math.max(0, (p - FLOAT_START) / (1 - FLOAT_START));
+    const floatP    = rawFloatP * rawFloatP * (3 - 2 * rawFloatP); // smoothstep
     for (const obj of stageObjects) {
         obj.uTime.value = t;
         const phi  = obj.phaseOffset;
@@ -62,6 +68,18 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
         }
     }
 
+    // Step 3b — vase + tulip lift together. The flowers sit ~0.68 up inside the
+    // vase, so only the VASE's collision sphere touches the table. Early in the
+    // rise the table floats up faster than the objects' own float, so the table
+    // surface pushes the vase upward (repelY) while the free-floating tulip,
+    // sitting above the surface, gets no such push — leaving it behind. THAT is
+    // the "tulip starts floating later" artifact (not phase/H). Handing the
+    // tulip the vase's table-push makes the pair lift as one; the tulip's
+    // slightly higher H still lets it pull gently ahead as they rise.
+    const vaseObj  = stageObjects.find(o => o.label === 'vase');
+    const tulipObj = stageObjects.find(o => o.label === 'tulip');
+    if (vaseObj && tulipObj) tulipObj.repelY = Math.max(tulipObj.repelY, vaseObj.repelY);
+
     // Step 4 — write final position + rotation to each mesh
     for (const obj of stageObjects) {
         obj.mesh.position.x = obj._baseX + obj.repelX;
@@ -77,10 +95,16 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
         // moment floating begins. Divisor < 1 reaches full standing pose
         // before p hits 1, so the transition finishes early.
         if (obj.legBones) {
-            const { bR, bL, sitR, sitL, standR, standL } = obj.legBones;
-            const boneT = Math.min(1, p / 0.5);
-            bR.quaternion.slerpQuaternions(sitR, standR, boneT);
-            bL.quaternion.slerpQuaternions(sitL, standL, boneT);
+            // Legs unfold from sitting → straight, beginning almost immediately
+            // (p = 0.02) so they're already extending by the time the bear lifts
+            // off, and fully straight by p ≈ 0.42. Driven by raw p (not floatP)
+            // so the motion starts before the float proper — the bear begins
+            // straightening its legs as the scene first stirs, rather than
+            // snapping straight only once airborne.
+            const { bR, bL, sitR, sitL, straightR, straightL } = obj.legBones;
+            const boneT = Math.min(1, Math.max(0, (p - 0.02) / 0.4));
+            bR.quaternion.slerpQuaternions(sitR, straightR, boneT);
+            bL.quaternion.slerpQuaternions(sitL, straightL, boneT);
         }
     }
 
