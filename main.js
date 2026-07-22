@@ -64,7 +64,7 @@ const cameraControls = createCameraControls(camera, renderer.domElement);
 // A stylized (e.g. Van Gogh) painting of the starting room, shown first and
 // dissolved away once loading finishes — see selectBackground-style wiring
 // below where its reveal is kicked off and interaction unlocked afterward.
-const paintingIntro = createPaintingIntro(renderer, scene, camera, 'asset/intro_painting.jpeg');
+const paintingIntro = createPaintingIntro(renderer, scene, camera, 'asset/intro_painting.png');
 
 // Swaps the table geometry live. Called both from the GUI's preset options
 // (Box/Cylinder/Table (default)) and after a custom .glb file is picked —
@@ -99,13 +99,14 @@ const ambientSound = createAmbientSoundTracks();
 const gui = createDebugGUI({
     uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor,
     ambientLight, directionalLight,
+    onRevealPainting: () => paintingIntro.beginDissolve(),
     skyboxOptions: SKYBOX_OPTIONS, defaultSkybox: SKYBOX_OPTIONS[0], skyboxCustomLabel: SKYBOX_CUSTOM_LABEL,
     onSkyboxChange: selectBackground,
     onCustomSkyboxFiles: selectCustomSkybox,
     tableOptions: TABLE_OPTIONS, defaultTable: TABLE_OPTIONS[0], tableCustomLabel: TABLE_CUSTOM_LABEL,
     onTableChange: selectTable,
     onCustomTableFile: selectCustomTable,
-    onTableTextureFile: (file) => setTableTexture(scene, file),
+    onTableTextureFile: (file, type) => setTableTexture(scene, file, type),
     stoneOptions: STONE_OPTIONS, defaultStone: STONE_OPTIONS[0], stoneCustomLabel: STONE_CUSTOM_LABEL,
     onStoneChange: selectStone,
     onCustomStoneFile: selectCustomStone,
@@ -143,7 +144,9 @@ const phaseMachine = createPhaseMachine({
 // there's no intro image) does scroll/orbit interaction unlock.
 const loadingScreen = createLoadingScreen(LOADING_TOTAL, () => {
     gui.gui.show();
-    paintingIntro.startReveal(() => {
+    // Show the painting and wait — the viewer dissolves it with the GUI's
+    // "Reveal Scene" button (onRevealPainting below), controlling the timing.
+    paintingIntro.arm(() => {
         cameraControls.controls.enabled = true;
         phaseMachine.enableInteraction();
     });

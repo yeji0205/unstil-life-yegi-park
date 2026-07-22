@@ -107,8 +107,8 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
 
         if (phase === 'dissolving') {
             const elapsed = t - phaseStart;
-            // Objects dissolve sequentially: vase 0s, tulip 1.5s, stone 3s,
-            // dummy 5s, teddy 10s (each over 3s).
+            // Objects dissolve sequentially, 5s apart: vase 0s, tulip 5s,
+            // stone 10s, dummy 15s, teddy 20s (each over 3s → a ~2s beat between).
             for (const obj of stageObjects) {
                 const objElapsed = elapsed - obj.dissolveStart;
                 // Fire the one-shot dissolve sound the moment THIS object begins
@@ -124,18 +124,18 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
                     obj.shadowsKilled = true;
                 }
             }
-            // Table dissolves last: starts at 15s, ends at 18s. Give it a
-            // whoosh too, the moment it starts — same one-shot the objects use.
-            if (elapsed >= 15.0 && !tableDissolveSoundFired) {
+            // Table dissolves last, after teddy finishes (~23s): starts at 25s,
+            // ends at 28s. Give it a whoosh too, the moment it starts.
+            if (elapsed >= 25.0 && !tableDissolveSoundFired) {
                 tableDissolveSoundFired = true;
                 onObjectDissolveStart?.();
             }
-            tableState.uProgress.value = Math.min(1.0, Math.max(0.0, (elapsed - 15.0) / 3.0));
+            tableState.uProgress.value = Math.min(1.0, Math.max(0.0, (elapsed - 25.0) / 3.0));
             if (tableState.uProgress.value >= 1.0 && tableState.object && !tableState.object.userData.shadowsKilled) {
                 tableState.object.traverse(c => { if (c.isMesh) c.castShadow = false; });
                 tableState.object.userData.shadowsKilled = true;
             }
-            if (elapsed >= 18.0) {
+            if (elapsed >= 28.0) {
                 phase         = 'done';
                 scrollBlocked = false;
                 // Keep the objects (now fully dissolved / invisible at uProgress=1)

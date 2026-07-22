@@ -1,37 +1,54 @@
-// Regenerates asset/intro_painting.jpeg by sending a screenshot of the
-// starting scene to Google's Nano Banana image model (gemini-2.5-flash-image).
+// Regenerates asset/intro_painting.jpeg by sending a screenshot of the starting
+// scene to Google's "Nano Banana" image model and asking it to repaint the
+// scene in a Caravaggio (Baroque chiaroscuro) style. The painting-intro
+// (src/render/paintingIntro.js) then shows this image first and dissolves it
+// into the live 3D render.
+//
+// MODEL: defaults to Nano Banana Pro (Gemini 3 Pro Image = "gemini-3-pro-image").
+// Override with GEMINI_IMAGE_MODEL, e.g. the original Nano Banana:
+//     GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
+//
+// ⚠️  BILLING: image generation is NOT available on the Gemini free tier — it
+// returns HTTP 429 (this is why the intro was blank before). You need an API
+// key on a project with billing enabled. Enable it at
+// https://aistudio.google.com  →  Get API key  →  (project) billing, or in the
+// Google Cloud console. Nano Banana Pro is the pricier of the two models.
 //
 // Usage:
-//   1. Get an API key at https://aistudio.google.com (free tier works).
-//   2. export GEMINI_API_KEY=your-key-here
-//   3. npm run dev            (in another terminal — the scene must be live)
-//   4. node tools/generate-intro-painting.mjs
+//   1. Put your key in a .env file at the project root (already gitignored):
+//          GEMINI_API_KEY=AIza...
+//      (or:  export GEMINI_API_KEY=...)
+//   2. npm run dev            (in another terminal — the scene must be live)
+//   3. node tools/generate-intro-painting.mjs
 //
 // Or skip the live capture and stylize an existing screenshot instead:
 //   node tools/generate-intro-painting.mjs path/to/screenshot.png
 //
 // The prompt asks the model to KEEP THE COMPOSITION IDENTICAL — that matters,
-// because the painting-intro transition (src/render/paintingIntro.js) merges
-// the painting into the real render per-pixel; if the painted objects sit in
-// different screen positions than the real ones, the dot-soak reveal won't
-// line up.
+// because the painting-intro transition merges the painting into the real
+// render per-pixel; if the painted objects sit in different screen positions
+// than the real ones, the dot-soak reveal won't line up.
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const OUTPUT_PATH  = resolve(PROJECT_ROOT, 'asset/intro_painting.jpeg');
-const DEV_URL      = process.env.SCENE_URL ?? 'http://localhost:5173';
-const MODEL        = 'gemini-2.5-flash-image';
+const OUTPUT_PATH  = resolve(PROJECT_ROOT, 'asset/intro_painting.png');
+// The dev server serves under vite's base path (see vite.config).
+const DEV_URL      = process.env.SCENE_URL ?? 'http://localhost:5173/unstil-life-yegi-park/';
+const MODEL        = process.env.GEMINI_IMAGE_MODEL ?? 'gemini-3-pro-image';
 
-const PROMPT = `Repaint this exact scene as an oil painting in the style of
-Vincent van Gogh: thick impasto brushstrokes, swirling expressive linework in
-the background, rich blues, purples and warm golds. IMPORTANT: keep the
-composition, framing, and the position and size of every object (round wooden
-table, vase with orange tulips, drinking glass, wooden artist mannequin, teddy
-bear) exactly the same as in the input image — only change the artistic style,
-not the layout. No text, no signature, no border.`;
+const PROMPT = `Repaint this exact scene as a Caravaggio-style Baroque oil painting.
+Dramatic chiaroscuro / tenebrism: a single strong light raking in from the upper
+left, the objects emerging from deep near-black shadow, luminous highlights, rich
+earthy palette (warm umber, ochre, deep crimson, aged gold, soft flesh tones).
+Photorealistic Baroque realism with subtle oil glazes, in the spirit of
+Caravaggio's still lifes. IMPORTANT: keep the composition, framing, and the exact
+position and size of every object — round wooden table, ceramic vase with orange
+tulips, a rough natural stone/gem, wooden artist mannequin, and teddy bear —
+identical to the input image. Change only the artistic style, lighting mood and
+palette, never the layout. No text, no signature, no border.`;
 
 // ── 1. Get the input screenshot ───────────────────────────────────────────────
 // Either a path passed on the command line, or a live capture of the dev
@@ -59,9 +76,9 @@ async function getScreenshot() {
     const browser = await chromium.launch();
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     await page.goto(DEV_URL, { waitUntil: 'load', timeout: 60000 });
-    // Wait out the loading screen + painting intro so we capture the real
-    // scene at p=0. Generous fixed wait — simpler than instrumenting the app.
-    await page.waitForTimeout(45000);
+    // Wait out the loading screen (and any intro) so we capture the real scene
+    // at p=0. Generous fixed wait — simpler than instrumenting the app.
+    await page.waitForTimeout(30000);
     await page.evaluate(() => {
         document.querySelectorAll('.lil-gui').forEach(el => el.style.display = 'none');
     });
@@ -118,7 +135,24 @@ async function stylize(imageBuffer) {
     );
 
     if (!res.ok) {
-        console.error(`API error ${res.status}: ${await res.text()}`);
+        const body = await res.text();
+        if (res.status === 429) {
+            console.error(
+                `\n❌  Quota error (429) from ${MODEL}.\n` +
+                'Image generation does NOT work on the Gemini free tier. Enable billing on\n' +
+                "the API key's Google Cloud project (https://aistudio.google.com → Get API key\n" +
+                '→ set up billing), then re-run. This is almost certainly why the intro was\n' +
+                'blank before.\n\n' + body
+            );
+        } else if (res.status === 404) {
+            console.error(
+                `\n❌  Model "${MODEL}" not found (404). The model id may have changed, or the\n` +
+                'legacy generateContent endpoint may not serve it. Try the original Nano Banana:\n' +
+                '    GEMINI_IMAGE_MODEL=gemini-2.5-flash-image node tools/generate-intro-painting.mjs\n\n' + body
+            );
+        } else {
+            console.error(`API error ${res.status}: ${body}`);
+        }
         process.exit(1);
     }
 
@@ -127,7 +161,7 @@ async function stylize(imageBuffer) {
     const parts = json.candidates?.[0]?.content?.parts ?? [];
     const imagePart = parts.find(p => p.inlineData?.data ?? p.inline_data?.data);
     if (!imagePart) {
-        console.error('No image in response. Full response:\n' + JSON.stringify(json, null, 2));
+        console.error('No image in response (the model may have refused or returned only text).\nFull response:\n' + JSON.stringify(json, null, 2));
         process.exit(1);
     }
     const data = imagePart.inlineData?.data ?? imagePart.inline_data?.data;
@@ -140,4 +174,4 @@ const painting   = await stylize(screenshot);
 await mkdir(dirname(OUTPUT_PATH), { recursive: true });
 await writeFile(OUTPUT_PATH, painting);
 console.log(`Saved ${painting.length} bytes → ${OUTPUT_PATH}`);
-console.log('Reload the app to see the new intro painting.');
+console.log('Reload the app to see the new Caravaggio intro painting dissolve into the scene.');

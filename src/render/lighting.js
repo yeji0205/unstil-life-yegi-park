@@ -50,7 +50,7 @@ function createBeam() {
             void main() {
                 // Tip-to-base fall-off (quadratic) × soft silhouette edge × room fade
                 float edge  = smoothstep(0.0, 0.5, vEdgeFade); // transparent at edge, solid toward centre
-                float alpha = vTipness * vTipness * 0.18 * edge * uBeamFade;
+                float alpha = vTipness * vTipness * 0.30 * edge * uBeamFade; // brighter so the shaft reads clearly
                 gl_FragColor = vec4(1.0, 0.91, 0.65, alpha);
             }
         `,
@@ -80,8 +80,9 @@ export function setupLighting(scene) {
     directionalLight.position.set(-6, 7, 5);
     directionalLight.castShadow = true;
     directionalLight.shadow.mapSize.set(1024, 1024);
-    directionalLight.shadow.bias       = -0.003; // prevents shadow acne (self-shadowing stripes)
-    directionalLight.shadow.normalBias =  0.02;  // extra offset along surface normal for curved meshes
+    directionalLight.shadow.bias       = -0.0015; // prevents shadow acne (self-shadowing stripes)
+    directionalLight.shadow.normalBias =  0.008;  // small: larger values detached the shadow from
+                                                  // small objects (the stone) — "peter-panning" gap
     directionalLight.shadow.camera.near = 0.5;
     directionalLight.shadow.camera.far  = 30;
     directionalLight.shadow.camera.left = -8;
@@ -111,9 +112,12 @@ export function setupLighting(scene) {
 
     // Called once per frame with the smoothed room→space progress (0→1).
     function updateLighting(p) {
-        // Beam fades quickly in the first 40% of the scroll so it's gone well
-        // before the room walls fully dissolve.
-        uBeamFade.value = Math.max(0, 1 - p / 0.4);
+        // Beam holds FULL brightness through the start of the scroll (p ≤ 0.2,
+        // i.e. while still settled in the room / objects just beginning to rise),
+        // then fades out gradually, gone by ~0.9 — so it never looks like the
+        // light "disappears shortly" right after the intro. (Old 1−p/0.85 began
+        // dimming from the very first bit of scroll.)
+        uBeamFade.value = THREE.MathUtils.clamp((0.9 - p) / 0.7, 0, 1);
 
         // Recomputed every frame — even at settled p=0/p=1 — so switching the
         // skybox preset while sitting still in 'room' or 'space' takes effect

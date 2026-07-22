@@ -8,6 +8,7 @@ import { flowState } from '../render/skyboxFlow.js';
 // button returned here as `dissolveController`.
 export function createDebugGUI({
     uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor,
+    onRevealPainting,
     ambientLight, directionalLight,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
@@ -21,6 +22,16 @@ export function createDebugGUI({
 }) {
     const gui = new GUI({ title: 'Unstil Life Debug' });
     gui.hide(); // hidden during loading screen; shown once the loading dissolve completes
+
+    // Reveal button — the intro painting stays on screen until this is clicked,
+    // then it dissolves into the live scene. Lets the viewer control the timing.
+    // Disables itself after one use (there's nothing left to dissolve).
+    const revealActions = {
+        reveal: () => {
+            if (onRevealPainting?.()) revealController.disable();
+        },
+    };
+    const revealController = gui.add(revealActions, 'reveal').name('▶ Reveal Scene (dissolve painting)');
 
     gui.add(uProgress,      'value', 0, 1, 0.01).name('Progress (p)').listen();
     gui.add(uDissolveEdge,  'value', 0, 0.8, 0.01).name('Dissolve Edge');
@@ -125,22 +136,31 @@ export function createDebugGUI({
         fileInput.value = ''; // reset so picking the same file again still fires 'change'
     });
 
-    // Table texture — attaches an image to the Box/Cylinder tables so they get
-    // some character instead of a flat color. Button opens an image picker; the
-    // texture persists across Box↔Cylinder swaps (glbLoader keeps it).
-    const tableTexInput = document.createElement('input');
-    tableTexInput.type = 'file';
-    tableTexInput.accept = 'image/*';
-    tableTexInput.style.display = 'none';
-    document.body.appendChild(tableTexInput);
-    const tableTexAction = { pick: () => tableTexInput.click() };
-    gui.add(tableTexAction, 'pick').name('Table Texture (Box/Cyl)…');
-    tableTexInput.addEventListener('change', () => {
-        const file = tableTexInput.files[0];
-        if (!file) return;
-        onTableTextureFile(file);
-        tableTexInput.value = '';
-    });
+    // Table material — attach image textures to the Box/Cylinder tables so they
+    // get real material character. Several maps can be mixed (albedo + normal +
+    // roughness + bump); each picker opens an image dialog and the maps persist
+    // across Box↔Cylinder swaps (glbLoader keeps them).
+    const tableMatFolder = gui.addFolder('Table Material (Box/Cyl)');
+    const addTexturePicker = (name, type) => {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = 'image/*';
+        inp.style.display = 'none';
+        document.body.appendChild(inp);
+        const action = { pick: () => inp.click() };
+        tableMatFolder.add(action, 'pick').name(name);
+        inp.addEventListener('change', () => {
+            const file = inp.files[0];
+            if (!file) return;
+            onTableTextureFile(file, type);
+            inp.value = '';
+        });
+    };
+    addTexturePicker('Color / Albedo…', 'map');
+    addTexturePicker('Normal…',         'normalMap');
+    addTexturePicker('Roughness…',      'roughnessMap');
+    addTexturePicker('Bump…',           'bumpMap');
+    tableMatFolder.close();
 
     // Stone picker — same pattern as Table: preset options swap the asset
     // live, "Custom GLB…" opens a hidden file input.

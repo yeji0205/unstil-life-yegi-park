@@ -35,30 +35,41 @@ export const tableState = {
     uTime:      uTableTime,
 };
 
-// Optional user-uploaded texture for the primitive (Box/Cylinder) tables so
-// they carry some character instead of a flat color. Stored here so it survives
+// Optional user-uploaded textures for the primitive (Box/Cylinder) tables so
+// they carry real material character instead of a flat color. Several map slots
+// can be mixed — albedo + normal + roughness + bump. Stored here so they survive
 // Box↔Cylinder swaps (re-applied when those meshes are (re)built). The GLB/
-// custom tables keep their own textures and ignore this.
+// custom tables keep their own textures and ignore these.
 const textureLoader = new THREE.TextureLoader();
-let primitiveTableTexture = null;
+const primitiveTableMaps = { map: null, normalMap: null, roughnessMap: null, bumpMap: null };
 
-// Applies a user-picked image as the map of the primitive tables. Called from
-// the GUI's "Table Texture" picker. Applies live to the current table if it's a
-// Box/Cylinder, and is re-applied whenever a primitive table is rebuilt.
-export function setTableTexture(scene, file) {
+// Copies every set map slot onto a primitive-table material (and whitens the
+// base color when an albedo map is present so its true colors show).
+function applyPrimitiveMaps(mat) {
+    mat.map          = primitiveTableMaps.map;
+    mat.normalMap    = primitiveTableMaps.normalMap;
+    mat.roughnessMap = primitiveTableMaps.roughnessMap;
+    mat.bumpMap      = primitiveTableMaps.bumpMap;
+    mat.color.set(primitiveTableMaps.map ? 0xffffff : TABLE_MATERIAL_COLOR);
+}
+
+// Sets one texture slot on the primitive tables from a user-picked image.
+// type: 'map' (albedo/color) | 'normalMap' | 'roughnessMap' | 'bumpMap'.
+// Applies live to the current Box/Cylinder and persists for future rebuilds.
+export function setTableTexture(scene, file, type = 'map') {
+    if (!(type in primitiveTableMaps)) return;
     const url = URL.createObjectURL(file);
     const tex = textureLoader.load(url, () => URL.revokeObjectURL(url));
-    tex.colorSpace = THREE.SRGBColorSpace;
+    // Albedo carries color (sRGB); normal/roughness/bump are linear data maps.
+    tex.colorSpace = type === 'map' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    primitiveTableTexture = tex;
+    primitiveTableMaps[type] = tex;
 
     if ((tableState.kind === 'box' || tableState.kind === 'cylinder') && tableState.object) {
         tableState.object.traverse((c) => {
-            if (c.isMesh) {
-                c.material.map = tex;
-                c.material.color.set(0xffffff); // white base so the texture shows true colors
-                c.material.needsUpdate = true;
-            }
+            if (!c.isMesh) return;
+            applyPrimitiveMaps(c.material);
+            c.material.needsUpdate = true;
         });
     }
 }
@@ -84,14 +95,17 @@ export const stageObjects = [];
 // Separation instead comes purely from H: 2.5 vs 2.2 (~14% faster) means the
 // flowers steadily pull UP out of the vase (rise = floatP·H is linear, so the
 // H ratio IS the speed ratio) — a clean "lighter object rises a bit faster"
-// read with no false late start. dissolveStart still differs so they dissolve
-// at separate moments.
+// read with no false late start. dissolveStart values are spaced a full 5s
+// apart: each object dissolves over 3s (the /3.0 in phaseMachine's dissolving
+// step), so a 5s spacing means one finishes before the next starts, with a ~2s beat
+// between — the old 0/1.5/3/5/10 values were uneven AND closer than the 3s
+// dissolve, so consecutive objects visibly overlapped.
 export const OBJECT_DEFS = [
     { file: 'asset/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0, dissolveStart:  0 },
-    { file: 'asset/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart:  1.5 },
-    { file: 'asset/agate.glb',        label: 'stone', targetHeight: 0.55,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.15, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart:  3, recenterXZ: true },
-    { file: 'asset/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart:  5 },
-    { file: 'asset/bear_skeleton.glb',label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 10 },
+    { file: 'asset/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart:  5 },
+    { file: 'asset/agate.glb',        label: 'stone', targetHeight: 0.55,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.15, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart: 10, recenterXZ: true },
+    { file: 'asset/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart: 15 },
+    { file: 'asset/bear_skeleton.glb',label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 20 },
 ];
 
 // ─── Table geometry options ───────────────────────────────────────────────────
@@ -141,13 +155,8 @@ const PRIMITIVE_TABLE_HEIGHT = 1.88;
 // Material for the primitive tables — carries the user-uploaded texture (if any)
 // so Box/Cylinder pick it up on every (re)build.
 function buildPrimitiveTableMaterial() {
-    // With a texture, use a white base so the image shows its true colors
-    // (base color multiplies the map — a brown base would tint/darken it).
-    const mat = new THREE.MeshStandardMaterial({
-        color: primitiveTableTexture ? 0xffffff : TABLE_MATERIAL_COLOR,
-        roughness: 0.85, metalness: 0.0,
-    });
-    if (primitiveTableTexture) mat.map = primitiveTableTexture;
+    const mat = new THREE.MeshStandardMaterial({ color: TABLE_MATERIAL_COLOR, roughness: 0.85, metalness: 0.0 });
+    applyPrimitiveMaps(mat); // carry over any user-uploaded maps
     return mat;
 }
 
@@ -499,9 +508,13 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             const standR = bR.quaternion.clone();
             const standL = bL.quaternion.clone();
 
-            // Sitting = rest pose folded backward -95° in the bone's parent space
+            // Sitting = rest pose folded forward in the bone's parent space.
+            // 85° (was 100°): past 90° tucked the feet under and read as
+            // over-folded/unnatural; 85° keeps the thighs roughly horizontal
+            // like a normal seated pose.
+            const SIT_FOLD_DEG = 85;
             const fold = new THREE.Quaternion().setFromAxisAngle(
-                new THREE.Vector3(1, 0, 0), -Math.PI * 100 / 180
+                new THREE.Vector3(1, 0, 0), (-SIT_FOLD_DEG * Math.PI) / 180
             );
             const sitR = fold.clone().multiply(standR);
             const sitL = fold.clone().multiply(standL);

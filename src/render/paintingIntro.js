@@ -20,7 +20,7 @@ import { NOISE_GLSL } from './noise.js';
 // this "the drawing's pixel color merging into the actual scene's pixel
 // color" rather than a discard/alpha trick.
 
-const REVEAL_DURATION = 5.0; // seconds — how long the merge takes once started
+const REVEAL_DURATION = 5.0; // seconds the dot-soak dissolve takes once the viewer triggers it
 const MAX_DT = 0.1; // clamp any single frame's contribution to the reveal timer
 
 // A single stalled/throttled frame (backgrounded tab, GPU stall, breakpoint)
@@ -90,7 +90,12 @@ function injectPaintingMerge(material, progressUniform, sceneTexture, resolution
                 float threshold = mix(-halfRange, halfRange, uProgress);
                 float dotAlive  = smoothstep(threshold, threshold + band, n); // 1 = still a dot, 0 = fully soaked in
 
-                float maxRadius = 0.42; // < 0.5 so neighbouring dots never touch
+                // maxRadius 0.8 > the cell half-diagonal (~0.707): at progress=0
+                // (dotAlive≈1) each "dot" more than fills its cell, so the painting
+                // shows SOLID — a clean image, not a halftone screen. As progress
+                // rises the dots shrink past the cell, gaps open, and it breaks
+                // into the soaking dot pattern before revealing the live scene.
+                float maxRadius = 0.8;
                 float dotRadius = maxRadius * dotAlive;
                 float inDot     = 1.0 - smoothstep(dotRadius - 0.06, dotRadius, dist);
 
@@ -139,7 +144,8 @@ export function createPaintingIntro(renderer, scene, camera, imageUrl) {
     camera.add(plane);
 
     let elapsed    = 0;
-    let revealing  = false;
+    let dissolving = false;
+    let armed      = false;
     let onComplete = null;
     let removed    = false;
 
@@ -153,14 +159,25 @@ export function createPaintingIntro(renderer, scene, camera, imageUrl) {
         sceneRenderTarget.dispose();
     }
 
-    // Starts the merge countdown; `callback` fires once fully merged (or
-    // immediately, if the image never loaded — in which case the plane is
+    // Shows the painting and WAITS — the dissolve is triggered by the viewer
+    // (a GUI button, see beginDissolve), not on a timer, so they control when
+    // the drawing disappears. `callback` fires once the painting has fully
+    // dissolved (or immediately, if the image never loaded — the plane is
     // removed right away instead of sitting in front of the camera forever).
-    function startReveal(callback) {
-        if (imageFailed) { removePlane(); callback?.(); return; }
-        revealing  = true;
-        elapsed    = 0;
+    function arm(callback) {
         onComplete = callback;
+        if (imageFailed) { removePlane(); onComplete?.(); return; }
+        armed = true;
+    }
+
+    // Triggered by the GUI button — begins the dot-soak dissolve. Returns false
+    // if there's nothing to dissolve (no painting, or already under way / done),
+    // so the caller can leave the button alone in that case.
+    function beginDissolve() {
+        if (!armed || dissolving || removed) return false;
+        dissolving = true;
+        elapsed = 0;
+        return true;
     }
 
     // Called every frame regardless of phase.
@@ -168,11 +185,11 @@ export function createPaintingIntro(renderer, scene, camera, imageUrl) {
         // Keep the quad covering the full view even if the window is resized.
         plane.scale.x = camera.aspect / initialAspect;
 
-        if (!revealing) return;
+        if (!dissolving) return;
         elapsed += Math.min(dt, MAX_DT);
         uPaintingProgress.value = Math.min(1, elapsed / REVEAL_DURATION);
         if (uPaintingProgress.value >= 1) {
-            revealing = false;
+            dissolving = false;
             removePlane();
             onComplete?.();
         }
@@ -202,5 +219,5 @@ export function createPaintingIntro(renderer, scene, camera, imageUrl) {
         renderer.render(sceneToRender, cam);
     }
 
-    return { startReveal, update, render };
+    return { arm, beginDissolve, update, render };
 }

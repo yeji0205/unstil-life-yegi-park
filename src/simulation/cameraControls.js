@@ -3,12 +3,17 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FLOAT_START } from './floating.js';
 
 // Room-mode limits (applied initially, relaxed when in space)
-// Limits calculated from orbital radius (r≈6.1) and room bounds
-// maxPolar: acos((-3.3 - targetY) / r) = 1.70 rad — keeps camera above floor
-// azimuth ±0.55π: keeps camera away from back wall at z=-7
+// Limits calculated from orbital radius (r≈6.1) and room bounds.
+// maxPolar: acos((-3.3 - targetY) / r) = 1.70 rad — keeps camera above floor.
+// Azimuth is deliberately narrow (±30°): the viewer can look around a little,
+// but can't orbit far enough to see the volumetric light beam's bright origin
+// against the wall from the side (where it read as an odd bright cylinder).
+// Space mode (p ≥ 0.95) removes these limits, but the beam has faded out by
+// then, so there's no source to reveal.
+const ROOM_AZIMUTH = Math.PI / 6; // 30° each side of the front view
 const ROOM_LIMITS = {
-    minAzimuth: -Math.PI * 0.55,
-    maxAzimuth:  Math.PI * 0.55,
+    minAzimuth: -ROOM_AZIMUTH,
+    maxAzimuth:  ROOM_AZIMUTH,
     minPolar:    Math.PI * 0.1,
     maxPolar:    1.65,
 };
