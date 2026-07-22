@@ -34,7 +34,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const OUTPUT_PATH  = resolve(PROJECT_ROOT, 'asset/intro_painting.png');
+// public/asset is vite's publicDir — the ONLY asset folder copied into the
+// build/deploy. (The top-level asset/ is served by the dev server too, which is
+// why dev-only placement silently breaks the deployed site.)
+const OUTPUT_PATH  = resolve(PROJECT_ROOT, 'public/asset/intro_painting.png');
 // The dev server serves under vite's base path (see vite.config).
 const DEV_URL      = process.env.SCENE_URL ?? 'http://localhost:5173/unstil-life-yegi-park/';
 const MODEL        = process.env.GEMINI_IMAGE_MODEL ?? 'gemini-3-pro-image';
