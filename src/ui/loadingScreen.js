@@ -41,8 +41,11 @@ export function createLoadingScreen(totalAssets, onDone) {
         setTimeout(() => { if (state === 'showing') state = 'dissolving'; }, delay);
     }
 
-    // Sample "Unstil Life" glyph pixels after the Google Font is guaranteed loaded.
-    document.fonts.ready.then(() => {
+    // (Re)samples the "Unstil Life" glyph into particles at the CURRENT canvas
+    // size and re-centers it. Called once the font is ready, and again on every
+    // window resize while the text is still static — so the title stays centered
+    // and correctly sized instead of being clipped/off-center after a resize.
+    function sampleParticles() {
         const W = canvas.width;
         const H = canvas.height;
 
@@ -84,7 +87,22 @@ export function createLoadingScreen(totalAssets, onDone) {
                 r:            Math.random() * 1.0 + 0.6,
             };
         });
+    }
 
+    // Keep the overlay full-screen and the title centered when the window is
+    // resized mid-load. Re-sampling is only safe while the text is still static
+    // ('showing'); once it's dissolving we leave the in-flight particles alone
+    // (a resize during the ~1 s dissolve is unlikely and not worth a re-layout).
+    function onResize() {
+        canvas.width  = window.innerWidth;
+        canvas.height = window.innerHeight;
+        if (textReady && state === 'showing') sampleParticles();
+    }
+    window.addEventListener('resize', onResize);
+
+    // Sample "Unstil Life" glyph pixels after the Google Font is guaranteed loaded.
+    document.fonts.ready.then(() => {
+        sampleParticles();
         showStartMs = performance.now();
         textReady   = true;
         maybeStartDissolve();
@@ -131,6 +149,7 @@ export function createLoadingScreen(totalAssets, onDone) {
                 setTimeout(() => {
                     overlay.remove();
                     cancelAnimationFrame(animId);
+                    window.removeEventListener('resize', onResize);
                 }, 1200);
                 onDone();
             }

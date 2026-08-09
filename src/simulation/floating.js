@@ -1,3 +1,7 @@
+import * as THREE from 'three';
+
+const _skinV = new THREE.Vector3(); // scratch for the one-time teddy grounding
+
 // Floating motion described by (see architecture.md):
 //
 //   P(t) = P_initial + p · (H + A ⊙ sin(ω t))
@@ -95,16 +99,62 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
         // moment floating begins. Divisor < 1 reaches full standing pose
         // before p hits 1, so the transition finishes early.
         if (obj.legBones) {
-            // Legs unfold from sitting → straight, beginning almost immediately
-            // (p = 0.02) so they're already extending by the time the bear lifts
-            // off, and fully straight by p ≈ 0.42. Driven by raw p (not floatP)
-            // so the motion starts before the float proper — the bear begins
-            // straightening its legs as the scene first stirs, rather than
-            // snapping straight only once airborne.
+            // Legs drop from sitting → hanging almost as soon as the scene stirs.
+            // The bear leaves the surface VERY early (the table starts rising at
+            // p = 0, so it's already airborne by p ≈ 0.03), and legs still folded
+            // in a sitting pose while floating look wrong — there's nothing left
+            // to sit on. The old range (0.02 → 0.42) left them only ~2.5%
+            // unfolded at p = 0.03, i.e. still fully tucked. This finishes the
+            // drop by p = 0.03 instead. Driven by raw p, not floatP, so it isn't
+            // gated behind FLOAT_START. smoothstep keeps the short move from
+            // snapping — the legs fall rather than teleport.
             const { bR, bL, sitR, sitL, straightR, straightL } = obj.legBones;
-            const boneT = Math.min(1, Math.max(0, (p - 0.02) / 0.4));
+            // Starts at 0.036, not ~0: unfolding while the bear is still down on
+            // the tabletop swung its legs THROUGH the table surface. 0.036 is
+            // late enough that it has cleared the top, so the legs drop in open
+            // air. (End = start + 0.044, a quick but not instant fall.)
+            const LEG_DROP_START = 0.036, LEG_DROP_END = 0.08;
+            const raw   = (p - LEG_DROP_START) / (LEG_DROP_END - LEG_DROP_START);
+            const bt    = Math.min(1, Math.max(0, raw));
+            const boneT = bt * bt * (3 - 2 * bt); // smoothstep
             bR.quaternion.slerpQuaternions(sitR, straightR, boneT);
             bL.quaternion.slerpQuaternions(sitL, straightL, boneT);
+        }
+
+        // ── Grounding of the sitting bear ──────────────────────────────────
+        // The bear is placed at load from its STANDING (bind-pose) box, but the
+        // SIT pose lifts its real low point well above that — so it floated
+        // above the table. While it's at rest, measure the actual skinned-vertex
+        // low point (applyBoneTransform = the skinning maths raycasting uses, so
+        // it reflects the POSED geometry) and set restY so that point lands on
+        // the table. The sit pose takes a few frames to fully propagate into the
+        // bone world-matrices, so instead of measuring once we re-measure each
+        // frame and only LOCK the result once it stops changing — robust to how
+        // fast the pose settles or the framerate.
+        if (obj.skinnedMesh && !obj.grounded && p < 0.1) {
+            // Let the sit pose fully propagate into the bone world-matrices first
+            // (it takes a few dozen frames), THEN measure once and lock. restY is
+            // held fixed until the lock so the measurement isn't chasing a moving
+            // position (matrixWorld lags the position by a frame). Grounding runs
+            // while the bear is hidden behind the intro, so the settle is unseen.
+            obj._grFrames = (obj._grFrames || 0) + 1;
+            if (obj._grFrames >= 45) {
+                const sk = obj.skinnedMesh;
+                sk.skeleton.update();
+                const posAttr = sk.geometry.getAttribute('position');
+                let minY = Infinity;
+                for (let i = 0; i < posAttr.count; i += 2) { // stride 2: fast, matches the rendered low point
+                    _skinV.fromBufferAttribute(posAttr, i);
+                    sk.applyBoneTransform(i, _skinV);
+                    _skinV.applyMatrix4(sk.matrixWorld);
+                    if (_skinV.y < minY) minY = _skinV.y;
+                }
+                const surfaceY = tableState.floorY + tableState.topOffset;
+                // pivot that puts the measured low point on the surface, minus a
+                // 2 cm embed so it reads as sitting ON the table, never hovering.
+                obj.restY = surfaceY - (minY - obj.mesh.position.y) - 0.02;
+                obj.grounded = true;
+            }
         }
     }
 

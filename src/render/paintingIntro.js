@@ -20,7 +20,7 @@ import { NOISE_GLSL } from './noise.js';
 // this "the drawing's pixel color merging into the actual scene's pixel
 // color" rather than a discard/alpha trick.
 
-const REVEAL_DURATION = 5.0; // seconds the dot-soak dissolve takes once the viewer triggers it
+const REVEAL_DURATION = 5.0; // seconds the cross-dissolve takes once the viewer triggers it
 const MAX_DT = 0.1; // clamp any single frame's contribution to the reveal timer
 
 // A single stalled/throttled frame (backgrounded tab, GPU stall, breakpoint)
@@ -30,25 +30,30 @@ const MAX_DT = 0.1; // clamp any single frame's contribution to the reveal timer
 
 const uPaintingProgress = { value: 0.0 };
 
-// Halftone-style dot grid: the painting is represented as a field of round
-// dots, one per grid cell. Each dot shrinks away over time — staggered per
-// cell via noise, so they don't all shrink in lockstep — revealing the real
-// scene underneath through the gap, like ink dots soaking into canvas.
-const DOT_GRID = 46; // dots across the shorter axis
-
-function injectPaintingMerge(material, progressUniform, sceneTexture, resolutionUniform, aspectUniform) {
+function injectPaintingMerge(material, progressUniform, sceneTexture, resolutionUniform, aspectUniform, paintAspectUniform) {
     material.onBeforeCompile = (shader) => {
-        shader.uniforms.uProgress   = progressUniform;
-        shader.uniforms.uSceneTex   = { value: sceneTexture };
-        shader.uniforms.uResolution = resolutionUniform;
-        shader.uniforms.uAspect     = aspectUniform;
+        shader.uniforms.uProgress    = progressUniform;
+        shader.uniforms.uSceneTex    = { value: sceneTexture };
+        shader.uniforms.uResolution  = resolutionUniform;
+        shader.uniforms.uAspect      = aspectUniform;
+        shader.uniforms.uPaintAspect = paintAspectUniform;
 
         shader.fragmentShader = `${NOISE_GLSL}
             uniform float     uProgress;
             uniform sampler2D uSceneTex;
             uniform vec2      uResolution;
-            uniform float     uAspect;
+            uniform float     uAspect;       // plane/screen aspect (w/h)
+            uniform float     uPaintAspect;  // painting image aspect (w/h)
             varying vec2      vFadeUv;
+            // Cover-fit the painting into the screen without distortion: keep its
+            // aspect and crop the overflow, instead of stretching a 16:10 image to
+            // fill a differently-shaped window.
+            vec2 coverUv(vec2 uv){
+                vec2 c = uv - 0.5;
+                if (uAspect > uPaintAspect) c.y *= uPaintAspect / uAspect; // screen wider → crop top/bottom
+                else                        c.x *= uAspect / uPaintAspect; // screen narrower → crop sides
+                return c + 0.5;
+            }
         ` + shader.fragmentShader;
 
         shader.vertexShader = shader.vertexShader.replace(
@@ -64,14 +69,7 @@ function injectPaintingMerge(material, progressUniform, sceneTexture, resolution
         shader.fragmentShader = shader.fragmentShader.replace(
             '#include <map_fragment>',
             `#ifdef USE_MAP
-                // Square grid cells regardless of the plane's aspect ratio —
-                // without the *uAspect scale, cells would stretch into ellipses.
-                vec2  grid   = vec2(vFadeUv.x * uAspect, vFadeUv.y) * float(${DOT_GRID});
-                vec2  cellId = floor(grid);
-                vec2  cellUv = fract(grid) - 0.5; // -0.5..0.5, 0 at the dot's center
-                float dist   = length(cellUv);
-
-                vec3  paintColor = texture2D( map, vFadeUv ).rgb;
+                vec3 paintColor = texture2D( map, coverUv(vFadeUv) ).rgb;
 
                 // The actual rendered scene, captured this same frame into
                 // uSceneTex by render() below (plane hidden for that pass) —
@@ -79,27 +77,18 @@ function injectPaintingMerge(material, progressUniform, sceneTexture, resolution
                 vec2 screenUv   = gl_FragCoord.xy / uResolution;
                 vec3 sceneColor = texture2D( uSceneTex, screenUv ).rgb;
 
-                // Per-cell stagger so dots don't all shrink in lockstep — an
-                // organic soak rather than a uniform wipe. halfRange keeps the
-                // swept threshold far enough past snoise3's ±1 output range
-                // that every dot is fully present at progress=0 and fully
-                // gone at progress=1.
-                float n         = snoise3(vec3(cellId * 0.15, 0.0));
-                float band      = 0.8;
-                float halfRange = 1.0 + band + 0.1;
+                // Smooth, fluid cross-dissolve: every pixel's colour melts from the
+                // painting to the live scene. A low-frequency noise field staggers
+                // WHEN each region crosses over (large soft flowing patches, not
+                // dots), and a WIDE soft band makes each pixel's paint→scene blend
+                // gradual — so it reads as colours dissolving into one another.
+                float n         = snoise3(vec3(vFadeUv * vec2(uAspect, 1.0) * 2.5, 0.0)); // -1..1, big soft blobs
+                float band      = 0.7;
+                float halfRange = 1.0 + band;
                 float threshold = mix(-halfRange, halfRange, uProgress);
-                float dotAlive  = smoothstep(threshold, threshold + band, n); // 1 = still a dot, 0 = fully soaked in
+                float paintAmt  = smoothstep(threshold, threshold + band, n); // 1 = painting, 0 = scene
 
-                // maxRadius 0.8 > the cell half-diagonal (~0.707): at progress=0
-                // (dotAlive≈1) each "dot" more than fills its cell, so the painting
-                // shows SOLID — a clean image, not a halftone screen. As progress
-                // rises the dots shrink past the cell, gaps open, and it breaks
-                // into the soaking dot pattern before revealing the live scene.
-                float maxRadius = 0.8;
-                float dotRadius = maxRadius * dotAlive;
-                float inDot     = 1.0 - smoothstep(dotRadius - 0.06, dotRadius, dist);
-
-                diffuseColor = vec4(mix(sceneColor, paintColor, inDot), 1.0);
+                diffuseColor = vec4(mix(sceneColor, paintColor, paintAmt), 1.0);
             #endif`
         );
     };
@@ -119,25 +108,39 @@ export function createPaintingIntro(renderer, scene, camera, imageUrl) {
     // Offscreen capture of the real scene, sized to the renderer's actual
     // drawing-buffer resolution (not CSS size) so it lines up pixel-for-pixel
     // with gl_FragCoord in the shader above.
+    // No MSAA (samples) on this offscreen target: while the intro painting is
+    // held on screen, render() draws the whole scene into this target AND to the
+    // screen every frame, and multisampling that target roughly doubled the
+    // offscreen pass cost — a real framerate hit for the whole time the viewer
+    // sits on the intro. The cone looks marginally softer in the target during
+    // the ~5 s cross-dissolve; not worth the cost.
     const sceneRenderTarget = new THREE.WebGLRenderTarget(
         renderer.domElement.width || 1,
         renderer.domElement.height || 1
     );
     const uResolution = { value: new THREE.Vector2(renderer.domElement.width, renderer.domElement.height) };
-    const uAspect     = { value: initialAspect }; // plane's own aspect, for square (not stretched) dots
+    const uAspect     = { value: initialAspect }; // plane/screen aspect — cover-fits the painting + shapes the noise field
+    // Painting image aspect (w/h) — set once the texture loads. Defaults to the
+    // screen aspect so there's no crop until the real value is known.
+    const uPaintAspect = { value: initialAspect };
 
     let imageFailed = false;
-    const texture = new THREE.TextureLoader().load(imageUrl, undefined, undefined, () => {
-        imageFailed = true;
-        console.warn(`Painting intro: couldn't load "${imageUrl}" — skipping straight to the interactive scene.`);
-    });
+    const texture = new THREE.TextureLoader().load(
+        imageUrl,
+        (tex) => { if (tex.image) uPaintAspect.value = tex.image.width / tex.image.height; },
+        undefined,
+        () => {
+            imageFailed = true;
+            console.warn(`Painting intro: couldn't load "${imageUrl}" — skipping straight to the interactive scene.`);
+        }
+    );
 
     // Opaque: the shader itself decides the final color (a full mix of paint
     // vs. real scene), so there's no blending or discard left for the GPU to
     // do — no more depthWrite/renderOrder interactions to worry about, unlike
     // the earlier alpha-based version.
     const material = new THREE.MeshBasicMaterial({ map: texture });
-    injectPaintingMerge(material, uPaintingProgress, sceneRenderTarget.texture, uResolution, uAspect);
+    injectPaintingMerge(material, uPaintingProgress, sceneRenderTarget.texture, uResolution, uAspect, uPaintAspect);
 
     const plane = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
     plane.position.set(0, 0, -distance);
@@ -170,7 +173,7 @@ export function createPaintingIntro(renderer, scene, camera, imageUrl) {
         armed = true;
     }
 
-    // Triggered by the GUI button — begins the dot-soak dissolve. Returns false
+    // Triggered by the GUI button — begins the cross-dissolve. Returns false
     // if there's nothing to dissolve (no painting, or already under way / done),
     // so the caller can leave the button alone in that case.
     function beginDissolve() {

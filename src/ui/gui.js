@@ -1,5 +1,57 @@
 import GUI from 'lil-gui';
 import { flowState } from '../render/skyboxFlow.js';
+import { scrollSmoothing } from '../simulation/phaseMachine.js';
+import { lightBoost } from '../render/lighting.js';
+
+// A small centered modal — readable padding/typography, a dimmed backdrop, and
+// up to two buttons. Used instead of the browser's cramped alert() for the
+// custom-background instructions (which need real structure: what's needed,
+// how to name the files, and what size/order). Returns nothing; buttons close
+// it and fire their callback.
+function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Cancel' }) {
+    const backdrop = document.createElement('div');
+    Object.assign(backdrop.style, {
+        position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.55)',
+        zIndex: '10000', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    });
+
+    const box = document.createElement('div');
+    Object.assign(box.style, {
+        background: '#f7f4ef', color: '#2a2622', width: 'min(90vw, 460px)',
+        maxHeight: '85vh', overflowY: 'auto', borderRadius: '10px',
+        padding: '26px 28px', boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
+        font: "15px/1.55 'Cormorant Garamond', Garamond, Georgia, serif",
+    });
+    box.innerHTML = `
+        <h2 style="margin:0 0 12px;font-size:22px;font-weight:600;letter-spacing:0.3px;">${title}</h2>
+        <div style="font-size:15px;">${bodyHTML}</div>`;
+
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '22px' });
+    const mkBtn = (label, primary) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        Object.assign(b.style, {
+            padding: '9px 18px', borderRadius: '6px', cursor: 'pointer',
+            border: primary ? 'none' : '1px solid #bdb4a6',
+            background: primary ? '#3d2f22' : 'transparent',
+            color: primary ? '#f7f4ef' : '#5a5145',
+            font: "600 14px 'Cormorant Garamond', Garamond, serif", letterSpacing: '0.4px',
+        });
+        return b;
+    };
+    const close = () => backdrop.remove();
+    if (cancelLabel) { const c = mkBtn(cancelLabel, false); c.onclick = close; row.appendChild(c); }
+    if (confirmLabel) {
+        const ok = mkBtn(confirmLabel, true);
+        ok.onclick = () => { close(); onConfirm?.(); };
+        row.appendChild(ok);
+    }
+    box.appendChild(row);
+    backdrop.appendChild(box);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+    document.body.appendChild(backdrop);
+}
 
 // Builds the lil-gui debug panel. Hidden during the loading screen; call
 // `show()` once it's gone. `onDissolveClick` is invoked when the user presses
@@ -9,10 +61,9 @@ import { flowState } from '../render/skyboxFlow.js';
 export function createDebugGUI({
     uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor,
     onRevealPainting,
-    ambientLight, directionalLight,
+    ambientLight, directionalLight, lightAngle, onLightAngleChange,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
-    stoneOptions, defaultStone, stoneCustomLabel, onStoneChange, onCustomStoneFile,
     roomSoundOptions, defaultRoomSound, spaceSoundOptions, defaultSpaceSound,
     dissolveSoundOptions, defaultDissolveSound, soundCustomLabel,
     onRoomSoundChange, onCustomRoomSoundFile, roomSoundVolume,
@@ -34,6 +85,10 @@ export function createDebugGUI({
     const revealController = gui.add(revealActions, 'reveal').name('▶ Reveal Scene (dissolve painting)');
 
     gui.add(uProgress,      'value', 0, 1, 0.01).name('Progress (p)').listen();
+    // Scroll feel: how much the scene trails the wheel. Higher = objects drift
+    // and coast (floaty); lower = they track the wheel closely (snappy, but the
+    // float/bob gets swamped and reads as dragging). See scrollSmoothing.
+    gui.add(scrollSmoothing, 'tau', 0.08, 0.6, 0.01).name('Scroll Drift (float ⇢)');
     gui.add(uDissolveEdge,  'value', 0, 0.8, 0.01).name('Dissolve Edge');
     gui.add(uNoiseFreq,     'value', 0.1, 1.5, 0.01).name('Noise Frequency');
     gui.add(uDissolveEdgeColor.value, 'r', 0, 1, 0.01).name('Edge R');
@@ -48,9 +103,36 @@ export function createDebugGUI({
         .onChange((hex) => uParticleColor.value.set(hex));
 
     const lightFolder = gui.addFolder('Lighting');
-    lightFolder.add(ambientLight, 'intensity', 0, 3, 0.05).name('Ambient');
-    lightFolder.add(directionalLight, 'intensity', 0, 10, 0.1).name('Directional');
-    lightFolder.close();
+    // Multipliers on top of the current room/space preset, NOT absolute values.
+    // Writing straight to ambientLight.intensity did nothing, because
+    // updateLighting() overwrites it from the preset every frame — see lightBoost.
+    lightFolder.add(lightBoost, 'ambient', 0, 4, 0.05).name('Ambient × (fill)');
+    lightFolder.add(lightBoost, 'directional', 0, 4, 0.05).name('Directional × (key)');
+
+    // Key-light direction. Elevation is the one to drag to answer "how does it
+    // look lit from straight above": 90° puts the light directly overhead. The
+    // range stops at 0° on purpose — below the horizon the shadows are thrown
+    // up onto the wall instead of down, which looks wrong.
+    const elevCtrl = lightFolder.add(lightAngle, 'elevation', 0, 90, 1)
+        .name('↕ Elevation (0=side, 90=top)').onChange(onLightAngleChange);
+    const azimCtrl = lightFolder.add(lightAngle, 'azimuth', -180, 180, 1)
+        .name('↻ Azimuth (direction)').onChange(onLightAngleChange);
+
+    // One-click presets so the top-down look can be compared against the
+    // original raking light without hunting for the exact numbers again.
+    const lightPresets = {
+        topDown: () => {
+            lightAngle.elevation = 90; lightAngle.azimuth = 0;
+            elevCtrl.updateDisplay(); azimCtrl.updateDisplay(); onLightAngleChange();
+        },
+        reset: () => {
+            lightAngle.elevation = 42; lightAngle.azimuth = -50;
+            elevCtrl.updateDisplay(); azimCtrl.updateDisplay(); onLightAngleChange();
+        },
+    };
+    lightFolder.add(lightPresets, 'topDown').name('☀ Light from top (90°)');
+    lightFolder.add(lightPresets, 'reset').name('↺ Reset to original angle');
+    lightFolder.open(); // opened so the angle sliders are easy to find
 
     // Skybox picker — swaps the cubemap live. Add new folder names to
     // skyboxOptions (geometry/environment.js) to list them here.
@@ -80,15 +162,30 @@ export function createDebugGUI({
                 // display means picking it always re-fires and re-opens the picker.
                 skyboxSettings.cubemap = lastSkybox;
                 skyboxCtrl.updateDisplay();
-                alert(
-                    'A custom background needs a cube map (skybox): 6 images, one for ' +
-                    'each side of a box around the scene — not a single picture.\n\n' +
-                    'In the next dialog pick the FOLDER that contains the 6 images. Each ' +
-                    'file must be named for its face — right, left, top, bot, front, back ' +
-                    '(also accepted: east/west/up/down/north/south, posx/negx…, px/nx…), ' +
-                    'e.g. "myscene_right.png".'
-                );
-                skyboxFileInput.click();
+                showModal({
+                    title: 'Custom background (cube map)',
+                    bodyHTML: `
+                        <p style="margin:0 0 12px;">The background is a <b>box around the whole
+                        scene</b>, so it needs <b>6 images</b> — one per side — not a single
+                        picture.</p>
+                        <p style="margin:0 0 6px;"><b>Name each file for its face</b> (the
+                        name just has to <i>contain</i> the word):</p>
+                        <ul style="margin:0 0 12px;padding-left:20px;">
+                          <li><code>right</code> &amp; <code>left</code> — the two sides</li>
+                          <li><code>top</code> &amp; <code>bot</code> — up &amp; down</li>
+                          <li><code>front</code> &amp; <code>back</code> — ahead &amp; behind</li>
+                        </ul>
+                        <p style="margin:0 0 12px;font-size:14px;color:#6a6155;">Also accepted:
+                        east/west, up/down, north/south, posx/negx…, px/nx… — e.g.
+                        <code>myscene_right.png</code>.</p>
+                        <p style="margin:0 0 4px;"><b>Size:</b> all 6 the <b>same square size</b>
+                        (e.g. 1024×1024 or 2048×2048). Non-square images are center-cropped, so
+                        very wide/tall ones lose their edges.</p>
+                        <p style="margin:8px 0 0;">Next, pick the <b>folder</b> that contains the
+                        6 images.</p>`,
+                    confirmLabel: 'Choose folder…',
+                    onConfirm: () => skyboxFileInput.click(),
+                });
                 return;
             }
             lastSkybox = folderName;
@@ -100,10 +197,17 @@ export function createDebugGUI({
         if (!files || files.length === 0) return;
         const ok = onCustomSkyboxFiles(files);
         if (!ok) {
-            alert(
-                'Could not find all 6 cube faces in that folder. It needs one image per ' +
-                'face, each filename containing one of: right, left, top, bot, front, back.'
-            );
+            showModal({
+                title: "Couldn't read all 6 faces",
+                bodyHTML: `
+                    <p style="margin:0 0 10px;">That folder didn't have one image for each of
+                    the six faces.</p>
+                    <p style="margin:0;">Make sure there are 6 images and that each filename
+                    contains one of: <code>right</code>, <code>left</code>, <code>top</code>,
+                    <code>bot</code>, <code>front</code>, <code>back</code>.</p>`,
+                confirmLabel: 'Got it',
+                cancelLabel: null,
+            });
         }
         skyboxFileInput.value = '';
     });
@@ -161,32 +265,6 @@ export function createDebugGUI({
     addTexturePicker('Roughness…',      'roughnessMap');
     addTexturePicker('Bump…',           'bumpMap');
     tableMatFolder.close();
-
-    // Stone picker — same pattern as Table: preset options swap the asset
-    // live, "Custom GLB…" opens a hidden file input.
-    const stoneFileInput = document.createElement('input');
-    stoneFileInput.type = 'file';
-    stoneFileInput.accept = '.glb,.gltf';
-    stoneFileInput.style.display = 'none';
-    document.body.appendChild(stoneFileInput);
-
-    const stoneSettings = { stone: defaultStone };
-    gui.add(stoneSettings, 'stone', stoneOptions)
-        .name('Stone')
-        .onChange((label) => {
-            if (label === stoneCustomLabel) {
-                stoneFileInput.click();
-                return;
-            }
-            onStoneChange(label);
-        });
-
-    stoneFileInput.addEventListener('change', () => {
-        const file = stoneFileInput.files[0];
-        if (!file) return;
-        onCustomStoneFile(file);
-        stoneFileInput.value = '';
-    });
 
     // Sound picker + volume — same pattern as the Table picker: preset
     // options switch immediately, "Custom audio…" opens a hidden file input

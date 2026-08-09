@@ -9,7 +9,12 @@ import { injectSkyboxFlow, uFlowStrength } from '../render/skyboxFlow.js';
 // handled directly below — no folder/textures involved.
 export const SKYBOX_NONE         = 'None (white)';
 export const SKYBOX_CUSTOM_LABEL = 'Custom images…';
-export const SKYBOX_OPTIONS      = ['skybox_blue', SKYBOX_NONE, SKYBOX_CUSTOM_LABEL];
+export const SKYBOX_OPTIONS      = ['skybox_blue', 'skybox_red', SKYBOX_NONE, SKYBOX_CUSTOM_LABEL];
+
+// Face filenames aren't uniform across packs: skybox_blue ships bkg1_*.png while
+// skybox_red ships bkg3_*.png. Rather than rename the assets, each folder
+// declares its prefix here (default 'bkg1_' keeps existing folders working).
+const SKYBOX_FILE_PREFIX = { skybox_blue: 'bkg1_', skybox_red: 'bkg3_' };
 
 // Ambient/directional tint the room lighting eases toward as it enters
 // 'space' (see render/lighting.js updateLighting) — keyed by the same names
@@ -20,12 +25,38 @@ export const SKYBOX_OPTIONS      = ['skybox_blue', SKYBOX_NONE, SKYBOX_CUSTOM_LA
 // skybox option is added above.
 export const LIGHTING_PRESETS = {
     skybox_blue: {
-        // Deep space: ambient fades to ~nothing, the directional "sun" does
-        // all the work — moody, high-contrast.
-        ambientColor:         [0.05, 0.08, 0.22],
-        ambientIntensity:     0.0,
+        // Deep space, lit BY the nebula.
+        //
+        // KEY: hard, pure white and strong. In vacuum there's no atmosphere to
+        // scatter, tint or soften sunlight, so it arrives at full energy and
+        // uncoloured. Its DIRECTION is matched to the skybox texture — sampling
+        // the six faces puts the nebula's brightest region at azimuth ≈ −50°,
+        // elevation ≈ 55°, which is where render/lighting.js aims it and where
+        // the visible sun sits.
+        //
+        // FILL: ambient used to be 0.0 here, which is why every surface facing
+        // away from the key light went pure black — there was no fill in space at
+        // all. At 0.7 against the 5.4 key the contrast is ~7.7:1: lit sides read
+        // as sunstruck while shadowed sides keep their shape.
+        //
+        // ambientColor is only a FALLBACK. buildSkybox() measures the average
+        // colour of the loaded cube map and overrides it (see selectBackground in
+        // main.js), so the fill always matches the background actually on screen
+        // — including user-supplied custom ones.
+        ambientColor:         [0.34, 0.45, 0.72],
+        ambientIntensity:     0.7,
         directionalColor:     [1.00, 1.00, 1.00],
-        directionalIntensity: 3.5,
+        directionalIntensity: 5.4,
+    },
+    skybox_red: {
+        // Same deep-space treatment as skybox_blue — hard white key light, dim
+        // fill. The fill COLOUR isn't specified by hand: buildSkybox() samples
+        // the red nebula's own average and overrides ambientColor, so shadowed
+        // sides pick up that warm red rather than this fallback blue.
+        ambientColor:         [0.34, 0.45, 0.72],
+        ambientIntensity:     0.7,
+        directionalColor:     [1.00, 1.00, 1.00],
+        directionalIntensity: 5.4,
     },
     [SKYBOX_NONE]: {
         // Plain white void: ambient light has no direction, so pushing it well
@@ -45,6 +76,78 @@ export const SKYBOX_FACES = ['right', 'left', 'top', 'bottom', 'front', 'back'];
 
 export function buildSkybox(scene) {
     const textureLoader = new THREE.TextureLoader();
+
+    // Loads one cube face and makes it robust to arbitrary user images:
+    //  • ClampToEdge + no mipmaps → no bright/wrong-colour seam lines where two
+    //    faces meet (the "edges" a custom cubemap showed with RepeatWrapping).
+    //  • center-crop to a SQUARE via the UV transform → a non-square photo is
+    //    cropped, not stretched, onto the square face (the "stretched textures").
+    // Square, equal-size faces still look best, but this keeps odd sizes usable.
+    function loadFaceTexture(url, revokeAfter = false, onReady = null) {
+        const tex = textureLoader.load(url, (t) => {
+            const w = t.image.width, h = t.image.height;
+            if (w > h)      { t.repeat.set(h / w, 1); t.offset.set((1 - h / w) / 2, 0); }
+            else if (h > w) { t.repeat.set(1, w / h); t.offset.set(0, (1 - w / h) / 2); }
+            t.needsUpdate = true;
+            if (revokeAfter) URL.revokeObjectURL(url);
+            onReady?.(t.image);
+        }, undefined, () => onReady?.(null)); // count failures too, so we never hang
+        tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.generateMipmaps = false;
+        tex.minFilter = THREE.LinearFilter;
+        return tex;
+    }
+    // ── Ambient colour sampled FROM the background ──────────────────────────
+    // Averages the whole cube map into one colour: the mean light arriving from
+    // the environment. This is a cheap stand-in for image-based lighting — for a
+    // matte surface the correct ambient term really is the average of the
+    // surrounding radiance, so this is principled rather than a trick, and it
+    // means ANY background (including a user's custom cube map) automatically
+    // gets a matching fill light instead of needing a hand-written preset.
+    //
+    // Every pixel is averaged, not a random subset: drawing each face into a
+    // 32×32 canvas makes the GPU box-filter it, so those 6×1024 pixels already
+    // ARE the average of the full 2048² images. It costs a few ms once per
+    // skybox change, so there's no reason to sample randomly.
+    //
+    // IMPORTANT: only the HUE is taken, not the brightness. A starfield averages
+    // to nearly black (measured mean luminance ≈ 9/255), so feeding the raw mean
+    // in as a colour would light nothing at all. Scaling the brightest channel to
+    // 1 keeps the colour cast and leaves overall strength to ambientIntensity —
+    // which is what the GUI's "Ambient ×" slider then scales.
+    function averageFaceColor(images) {
+        const S = 32;
+        const c = document.createElement('canvas');
+        c.width = c.height = S;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        let R = 0, G = 0, B = 0, n = 0;
+        for (const img of images) {
+            if (!img) continue;
+            ctx.clearRect(0, 0, S, S);
+            ctx.drawImage(img, 0, 0, S, S);
+            const d = ctx.getImageData(0, 0, S, S).data;
+            for (let i = 0; i < d.length; i += 4) { R += d[i]; G += d[i + 1]; B += d[i + 2]; n++; }
+        }
+        if (!n) return null;
+        R /= n; G /= n; B /= n;
+        const max = Math.max(R, G, B);
+        if (max < 1) return [1, 1, 1]; // essentially black sky → neutral fill
+        return [R / max, G / max, B / max];
+    }
+
+    // Wires the 6 per-face load callbacks up to one "all faces in" notification.
+    function collectFaces(onAverage) {
+        const images = new Array(6).fill(null);
+        let remaining = 6;
+        return (i) => (img) => {
+            images[i] = img;
+            if (--remaining === 0) {
+                const avg = averageFaceColor(images);
+                if (avg) onAverage?.(avg);
+            }
+        };
+    }
+
     const skybox = new THREE.Mesh(
         new THREE.BoxGeometry(1000, 1000, 1000),
         SKYBOX_FACES.map((face) => {
@@ -58,18 +161,21 @@ export function buildSkybox(scene) {
     // Swaps all 6 face textures live, or switches to a flat white background.
     // Disposes previous textures so switching repeatedly in the GUI doesn't
     // leak GPU memory.
-    function loadSkybox(folderName) {
+    function loadSkybox(folderName, onAverageColor) {
         if (folderName === SKYBOX_NONE) {
             skybox.visible   = false;
             scene.background = new THREE.Color(0xffffff);
+            onAverageColor?.([1, 1, 1]); // plain white void → white fill
             return;
         }
         scene.background = null; // let the skybox mesh show through again
         skybox.visible    = true;
+        const face$ = collectFaces(onAverageColor);
         skybox.material.forEach((mat, i) => {
             const face = SKYBOX_FACES[i];
             const oldMap = mat.map;
-            mat.map = textureLoader.load(`asset/${folderName}/bkg1_${face}.png`);
+            const prefix = SKYBOX_FILE_PREFIX[folderName] ?? 'bkg1_';
+            mat.map = loadFaceTexture(`asset/${folderName}/${prefix}${face}.png`, false, face$(i));
             mat.needsUpdate = true;
             if (oldMap) oldMap.dispose();
         });
@@ -111,17 +217,18 @@ export function buildSkybox(scene) {
     // Loads a user-supplied cube map from 6 local image files. Returns true
     // on success, false if the files couldn't be matched to the 6 faces —
     // in that case the background is left unchanged.
-    function loadCustomSkybox(files) {
+    function loadCustomSkybox(files, onAverageColor) {
         const matched = matchFaceFiles(files);
         if (!matched) return false;
 
         scene.background = null;
         skybox.visible   = true;
+        const face$ = collectFaces(onAverageColor);
         skybox.material.forEach((mat, i) => {
             const face = SKYBOX_FACES[i];
             const url  = URL.createObjectURL(matched[face]);
             const oldMap = mat.map;
-            mat.map = textureLoader.load(url, () => URL.revokeObjectURL(url));
+            mat.map = loadFaceTexture(url, true, face$(i));
             mat.needsUpdate = true;
             if (oldMap) oldMap.dispose();
         });

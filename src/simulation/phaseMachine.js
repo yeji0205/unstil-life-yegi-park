@@ -1,5 +1,25 @@
 import { uProgress } from '../render/dissolve.js';
 
+// How heavily the smoothed uProgress trails the raw scroll target, as an
+// exponential time constant in SECONDS: after `tau` it has covered ~63% of the
+// remaining distance. This is a FEEL knob, exposed in the GUI:
+//
+//   higher (0.3–0.5) — objects drift and keep coasting after the wheel stops;
+//                      the gentle bob/sway stays visible, so the motion reads
+//                      as floating. Too high and input feels laggy.
+//   lower  (~0.1)    — p tracks the wheel closely, so objects snap to the
+//                      scroll position. That swamps the bob and looks like the
+//                      objects are being DRAGGED rather than floating.
+//
+// 0.28 sits just barely snappier than the original hand-tuned value (a flat
+// 0.05 per frame ≈ tau 0.33 at 60 fps), keeping the floaty character.
+//
+// Unlike the original, this is applied per SECOND rather than per FRAME, so the
+// feel no longer changes with the framerate — the old version took 1.5 s to
+// settle at 60 fps but over 3 s at 20 fps, i.e. it felt laggiest exactly when
+// the scene was already struggling.
+export const scrollSmoothing = { tau: 0.28 };
+
 // 'room'       — room visible, scroll controls uProgress
 // 'space'      — room gone, zoom active, waiting for the dissolve button
 // 'dissolving' — objects dissolving automatically, scroll blocked
@@ -13,20 +33,21 @@ import { uProgress } from '../render/dissolve.js';
 // (fully dissolved / invisible). Scrolling back toward the room then drives
 // their uProgress from 1 → 0 (see the reverse-dissolve block in update), so the
 // exact same objects re-materialize by playing the dissolve effect backwards.
-export function createPhaseMachine({ scene, camera, cameraControls, tableState, stageObjects, dissolveController, getTime, onObjectDissolveStart }) {
+export function createPhaseMachine({ scene, camera, cameraControls, tableState, stageObjects, dissolveController, getTime, onObjectsDissolved }) {
     const { controls, zoomState, applyControlMode } = cameraControls;
     const ROOM_RETURN_DIST = 5.5; // kept in sync with simulation/cameraControls.js
 
+    const MAX_DT = 0.1; // ignore huge frame gaps (tab backgrounded, GPU stall)
+
     let phase         = 'room';
-    let targetP       = 0;   // raw scroll destination; uProgress.value lerps toward this
+    let targetP       = 0;   // raw scroll destination; uProgress.value eases toward this
+    let lastUpdateT   = null; // for the frame-rate-independent smoothing above
     let phaseStart    = 0;   // clock time when current phase began
     let scrollBlocked = false;
     // True from when a dissolve finishes until the objects have fully
     // re-materialized back in the room. While set, the objects' dissolve amount
     // tracks the scroll (p) so returning to the room reverses the dissolve.
     let objectsDissolved = false;
-    // One-shot guard so the table's dissolve whoosh fires once per dissolve.
-    let tableDissolveSoundFired = false;
     // False until the painting intro (if any) finishes dissolving away —
     // see main.js, which calls enableInteraction() once that completes.
     let interactionEnabled = false;
@@ -77,17 +98,20 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
         phase         = 'dissolving';
         phaseStart    = getTime();
         scrollBlocked = true;
-        tableDissolveSoundFired = false; // re-arm the table whoosh for this run
         dissolveController.disable();
-        return true; // caller uses this to fire the one-shot dissolve sound
+        return true; // caller plays the single dissolve sound when this returns true
     }
 
     // Advances uProgress toward targetP and runs the phase transitions. Called
     // once per frame; returns the values other simulation/render modules need.
     function update(t) {
-        // Lerp uProgress.value toward targetP — absorbs trackpad deltaY spikes.
-        // Snap when within 0.001 so it actually reaches 0 and 1 exactly.
-        uProgress.value += (targetP - uProgress.value) * 0.05;
+        // Ease uProgress.value toward targetP — absorbs trackpad deltaY spikes and
+        // gives the objects their drifting, floaty motion. Frame-rate independent:
+        // the fraction covered comes from elapsed time, so the feel is identical
+        // at 20 or 144 fps. Snap when within 0.001 so it reaches 0 and 1 exactly.
+        const dt = lastUpdateT === null ? 1 / 60 : Math.min(t - lastUpdateT, MAX_DT);
+        lastUpdateT = t;
+        uProgress.value += (targetP - uProgress.value) * (1 - Math.exp(-dt / scrollSmoothing.tau));
         if (Math.abs(targetP - uProgress.value) < 0.001) uProgress.value = targetP;
         const p    = uProgress.value; // smooth — drives all visuals and shaders
         const rawP = targetP;         // instant — used only for state-machine thresholds
@@ -107,41 +131,31 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
 
         if (phase === 'dissolving') {
             const elapsed = t - phaseStart;
-            // Objects dissolve sequentially, 5s apart: vase 0s, tulip 5s,
-            // stone 10s, dummy 15s, teddy 20s (each over 3s → a ~2s beat between).
+            // Everything — all objects AND the table — dissolves together over 3s.
+            const d = Math.min(1.0, Math.max(0.0, elapsed / 3.0));
             for (const obj of stageObjects) {
-                const objElapsed = elapsed - obj.dissolveStart;
-                // Fire the one-shot dissolve sound the moment THIS object begins
-                // dissolving, so each object gets its own whoosh in sequence
-                // rather than a single sound at button-press.
-                if (objElapsed >= 0 && !obj.dissolveSoundFired) {
-                    obj.dissolveSoundFired = true;
-                    onObjectDissolveStart?.();
-                }
-                obj.uProgress.value = Math.min(1.0, Math.max(0.0, objElapsed / 3.0));
+                obj.uProgress.value = d;
                 if (obj.uProgress.value >= 1.0 && !obj.shadowsKilled) {
                     obj.mesh.traverse(c => { if (c.isMesh) c.castShadow = false; });
                     obj.shadowsKilled = true;
                 }
             }
-            // Table dissolves last, after teddy finishes (~23s): starts at 25s,
-            // ends at 28s. Give it a whoosh too, the moment it starts.
-            if (elapsed >= 25.0 && !tableDissolveSoundFired) {
-                tableDissolveSoundFired = true;
-                onObjectDissolveStart?.();
-            }
-            tableState.uProgress.value = Math.min(1.0, Math.max(0.0, (elapsed - 25.0) / 3.0));
+            tableState.uProgress.value = d;
             if (tableState.uProgress.value >= 1.0 && tableState.object && !tableState.object.userData.shadowsKilled) {
                 tableState.object.traverse(c => { if (c.isMesh) c.castShadow = false; });
                 tableState.object.userData.shadowsKilled = true;
             }
-            if (elapsed >= 28.0) {
+            if (elapsed >= 3.2) {
                 phase         = 'done';
                 scrollBlocked = false;
                 // Keep the objects (now fully dissolved / invisible at uProgress=1)
                 // so they can reverse-dissolve back on the way home. objectsDissolved
                 // hands control of their uProgress to the reverse block below.
                 objectsDissolved = true;
+                // Everything is invisible right now — the one safe moment to swap
+                // models. The replacements are what re-materialize in the room, so
+                // the still life that comes back isn't the one that left.
+                onObjectsDissolved?.();
             }
         }
 
@@ -166,7 +180,6 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
                 }
                 for (const obj of stageObjects) {
                     obj.uProgress.value = 0;
-                    obj.dissolveSoundFired = false;
                     if (obj.shadowsKilled) {
                         obj.mesh.traverse(c => { if (c.isMesh) c.castShadow = true; });
                         obj.shadowsKilled = false;

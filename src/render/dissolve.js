@@ -123,6 +123,7 @@ export const objectParticleVertexShader = /* glsl */`
     uniform float   uFreq;
     uniform float   uScale;      // mesh scaleFactor — normalizes blob size (see injectDissolve)
     uniform float   uFreqScale;  // matches the material's freqScale so particles sit on the dissolve edge
+    uniform float   uStreamStrength; // 1 = coherent "flow into background" (objects); low = disperse (table)
     uniform float   uTime;
     varying float   vAlpha;
     ${NOISE_GLSL}
@@ -154,15 +155,15 @@ export const objectParticleVertexShader = /* glsl */`
         // (aVelocity is already scale-compensated when the buffer is built).
         float invScale = 1.0 / uScale;
 
-        // Flow is now mostly DIRECTIONAL — a coherent stream drifting up and back
-        // into the background — with only a little per-particle radial spread.
-        // Linear t (not t·t) makes it a steady drift rather than an accelerating
-        // rush, so it reads as flowing rather than fast. Travels ~4.5 units toward
-        // the sky over the (now longer) window.
+        // Two blended motions: a per-particle spread (aVelocity) and a shared
+        // directional flow into the background (streamDir). uStreamStrength scales
+        // the directional part: at 1.0 the coherent stream dominates (objects
+        // flowing into the sky); low values let the per-particle spread win so the
+        // particles DISPERSE instead of drifting off as one clump (the table).
         vec3 streamDir = normalize(vec3(0.15, 1.0, 0.4));
         vec3 pos = position
-                 + aVelocity * t * 0.7                 // gentle radial spread
-                 + streamDir * t * 4.5 * invScale;     // steady flow into the background
+                 + aVelocity * t * 0.7                                   // per-particle spread
+                 + streamDir * t * 4.5 * invScale * uStreamStrength;     // shared flow into the background
 
         // Slow, gentle swirl so the stream curls softly as it flows outward.
         pos.x += sin(position.y * 2.0 + uTime * 1.1) * 0.15 * t * invScale;
@@ -203,7 +204,7 @@ export const objectParticleFragmentShader = /* glsl */`
     }
 `;
 
-export function makeParticleMaterial(progressUniform, timeUniform, { freqScale = 4.0, scaleUniform = { value: 1.0 } } = {}) {
+export function makeParticleMaterial(progressUniform, timeUniform, { freqScale = 4.0, scaleUniform = { value: 1.0 }, streamStrength = 1.0 } = {}) {
     return new THREE.ShaderMaterial({
         uniforms: {
             uObjectProgress: progressUniform,
@@ -211,6 +212,7 @@ export function makeParticleMaterial(progressUniform, timeUniform, { freqScale =
             uFreq:           uNoiseFreq,
             uScale:          scaleUniform,
             uFreqScale:      { value: freqScale },
+            uStreamStrength: { value: streamStrength },
             uParticleColor,
             uTime:           timeUniform,
         },

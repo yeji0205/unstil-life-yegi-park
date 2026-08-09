@@ -61,8 +61,16 @@ export function injectSkyboxFlow(material, cacheKey) {
         shader.fragmentShader = shader.fragmentShader.replace(
             '#include <map_fragment>',
             `#ifdef USE_MAP
+                // Only pay for the curl-noise warp (4 expensive snoise3 calls per
+                // pixel) when the flow is actually on. When it's off — the default
+                // — uFlowStrength eases to ~0 and we skip straight to a plain
+                // texture read, which is a big fill-rate saving over the whole
+                // background every frame.
+                vec2 flowUv = vMapUv;
                 float flowAmount = uFlowStrength * flowEdgeFade(vMapUv);
-                vec2 flowUv = vMapUv + curlFlow(vMapUv * 2.0) * 0.025 * flowAmount;
+                if (flowAmount > 0.001) {
+                    flowUv += curlFlow(vMapUv * 2.0) * 0.025 * flowAmount;
+                }
                 vec4 sampledDiffuseColor = texture2D( map, flowUv );
                 diffuseColor *= sampledDiffuseColor;
             #endif`

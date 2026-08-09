@@ -20,8 +20,13 @@ export const ROOM_SOUND_OPTIONS     = ['Café ambience', SOUND_NONE, SOUND_CUSTO
 export const SPACE_SOUND_OPTIONS    = ['Space ambience', SOUND_NONE, SOUND_CUSTOM_LABEL];
 export const DISSOLVE_SOUND_OPTIONS = ['Slowly Whoosh', 'Spooky Air', SOUND_NONE, SOUND_CUSTOM_LABEL];
 
-const ROOM_SOUND_URLS     = { 'Café ambience':  'asset/sound/cafe.mp3' };
-const SPACE_SOUND_URLS    = { 'Space ambience': 'asset/sound/space-ambient.wav' };
+// AAC (.m4a) rather than the original mp3/wav: the café loop was a 9.0 MB mp3
+// and the space bed a 5.5 MB wav, and the room ambience simply couldn't start
+// until enough of that had arrived. Re-encoded at 64 kbps they're 3.3 MB and
+// 169 KB — same audio, a fraction of the wait. The originals are still in
+// asset/sound/ if a higher-quality master is ever needed.
+const ROOM_SOUND_URLS     = { 'Café ambience':  'asset/sound/cafe.m4a' };
+const SPACE_SOUND_URLS    = { 'Space ambience': 'asset/sound/space-ambient.m4a' };
 const DISSOLVE_SOUND_URLS = { 'Slowly Whoosh': 'asset/sound/slowly-whoosh.mp3', 'Spooky Air': 'asset/sound/spooky-air.wav' };
 
 // One shared AudioContext + gesture-unlock, reused by every track created
@@ -48,15 +53,39 @@ function createSoundSystem() {
         pendingStarts.forEach(fn => fn());
         pendingStarts.length = 0;
     }
+
+    // Runs fn now if the context is already unlocked, otherwise queues it for
+    // the first accepted gesture.
+    function whenStarted(fn) {
+        if (started) fn();
+        else pendingStarts.push(fn);
+    }
     window.addEventListener('pointerdown', onGesture);
     window.addEventListener('keydown', onGesture);
     window.addEventListener('wheel', onGesture);
 
     // urlMap: preset label -> asset URL. defaultLabel: which preset plays
     // initially. gainOf(p): this track's own volume curve across scroll progress.
+    // Looping ambience STREAMS through an <audio> element rather than being
+    // fetched and decoded up front.
+    //
+    // The old path was fetch(whole file) → decodeAudioData(whole file) →
+    // start(), so nothing could be heard until every byte had arrived AND been
+    // decoded to PCM. For the 9 MB café loop that's a long wait twice over: the
+    // download, plus decoding ~9 minutes of audio into a few hundred MB of raw
+    // samples. That's why the room ambience came in seconds late.
+    //
+    // An <audio> element begins playing as soon as it has buffered enough to
+    // start, and keeps fetching in the background — so the room sound now starts
+    // essentially immediately. Routing it through createMediaElementSource keeps
+    // it inside the same gain graph, so the p-driven crossfade and the volume
+    // sliders behave exactly as before. Trade-off: element looping isn't
+    // sample-accurate like an AudioBufferSourceNode, but these tracks are minutes
+    // long and broadband, so a loop seam is a non-issue in practice.
     function createTrack({ urlMap, defaultLabel, gainOf }) {
         let gainNode = null;
-        let source   = null; // current looping AudioBufferSourceNode
+        let el        = null; // current <audio> element
+        let mediaNode = null; // its MediaElementAudioSourceNode
         let desiredUrl = urlMap[defaultLabel];
 
         // Guards against async races: if the user switches sounds while an
@@ -68,46 +97,48 @@ function createSoundSystem() {
         const volume = { value: 0.5 }; // object so lil-gui can bind a slider to .value directly
 
         function stopCurrent() {
-            if (source) {
-                try { source.stop(); } catch { /* already stopped */ }
-                source.disconnect();
-                source = null;
-            }
+            if (el) { el.pause(); el.removeAttribute('src'); el.load(); el = null; }
+            if (mediaNode) { mediaNode.disconnect(); mediaNode = null; }
         }
 
-        async function load(url) {
+        function load(url) {
             ensureContext();
             if (!gainNode) {
                 gainNode = ctx.createGain();
                 gainNode.gain.value = 0; // update() takes over from the next frame
                 gainNode.connect(ctx.destination);
             }
-            const generation = ++loadGeneration;
-            try {
-                const res = await fetch(url);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const buffer = await ctx.decodeAudioData(await res.arrayBuffer());
-                if (generation !== loadGeneration) return; // a newer load superseded this one
-                stopCurrent();
-                source = ctx.createBufferSource();
-                source.buffer = buffer;
-                source.loop = true;
-                source.connect(gainNode);
-                source.start();
-            } catch (err) {
+            loadGeneration++; // invalidate any earlier pending play
+            const generation = loadGeneration;
+            stopCurrent();
+
+            const audio = new Audio();
+            audio.src     = url;
+            audio.loop    = true;
+            audio.preload = 'auto';
+            audio.addEventListener('error', () => {
                 if (generation === loadGeneration) {
-                    console.warn(`Ambient sound: couldn't load "${url}" — staying silent.`, err);
+                    console.warn(`Ambient sound: couldn't load "${url}" — staying silent.`);
                 }
-            }
+            });
+            el = audio;
+            // A MediaElementSource can only be created once per element, which is
+            // why each load builds a fresh one.
+            mediaNode = ctx.createMediaElementSource(audio);
+            mediaNode.connect(gainNode);
+
+            // play() is rejected until the page has an accepted user gesture, so
+            // defer it to whenStarted rather than letting it throw. Buffering
+            // still proceeds in the meantime (preload='auto'), so by the time the
+            // gesture lands the track is ready to sound instantly.
+            whenStarted(() => {
+                if (generation !== loadGeneration) return; // superseded by a newer load
+                audio.play().catch(() => { /* still not permitted; next gesture retries */ });
+            });
         }
 
-        // Preload eagerly at creation — fetch + decode + queue the looping
-        // source right away, on the still-suspended context. Previously the
-        // fetch/decode only began on the first user gesture, so the ~9 MB café
-        // track came in audibly late; now it's fully ready and starts the
-        // instant onGesture resumes the context (a queued source plays from the
-        // top on resume). gain stays 0 until update() ramps it, so nothing is
-        // heard before the gesture regardless.
+        // Start buffering at creation, on the still-suspended context. gain stays
+        // 0 until update() ramps it, so nothing is audible before the gesture.
         if (desiredUrl) load(desiredUrl);
 
         // GUI dropdown: switch to a named preset, or silence.
@@ -119,20 +150,21 @@ function createSoundSystem() {
                 return;
             }
             desiredUrl = urlMap[label] ?? desiredUrl;
-            if (started) load(desiredUrl);
+            load(desiredUrl); // safe pre-gesture: buffers now, plays via whenStarted
         }
 
         // GUI "Custom audio…": play a user-picked local file (any format the
         // browser can decode — mp3/wav/ogg/m4a). Object URL is revoked after
         // decode; the decoded buffer lives in memory independently of it.
         function setCustomFile(file) {
+            // The object URL is NOT revoked here: unlike a decoded buffer, the
+            // streaming element reads from it for as long as it plays.
             const url = URL.createObjectURL(file);
             desiredUrl = url;
-            const doLoad = async () => { await load(url); URL.revokeObjectURL(url); };
-            if (started) { doLoad(); return; }
+            load(url);
             // Picking a file involved clicks (a real activation), so resuming
             // should succeed here even if the viewer never clicked the canvas.
-            onGesture().then(() => { if (started) doLoad(); });
+            onGesture();
         }
 
         // Called once per frame with the smoothed scroll progress and the

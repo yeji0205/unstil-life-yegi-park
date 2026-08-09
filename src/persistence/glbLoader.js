@@ -95,17 +95,15 @@ export const stageObjects = [];
 // Separation instead comes purely from H: 2.5 vs 2.2 (~14% faster) means the
 // flowers steadily pull UP out of the vase (rise = floatP·H is linear, so the
 // H ratio IS the speed ratio) — a clean "lighter object rises a bit faster"
-// read with no false late start. dissolveStart values are spaced a full 5s
-// apart: each object dissolves over 3s (the /3.0 in phaseMachine's dissolving
-// step), so a 5s spacing means one finishes before the next starts, with a ~2s beat
-// between — the old 0/1.5/3/5/10 values were uneven AND closer than the 3s
-// dissolve, so consecutive objects visibly overlapped.
+// read with no false late start. dissolveStart is 0 for every object so they
+// all dissolve simultaneously the moment the Dissolve button is pressed (the
+// table follows just after — see phaseMachine).
 export const OBJECT_DEFS = [
-    { file: 'asset/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0, dissolveStart:  0 },
-    { file: 'asset/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart:  5 },
-    { file: 'asset/agate.glb',        label: 'stone', targetHeight: 0.55,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.15, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart: 10, recenterXZ: true },
-    { file: 'asset/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart: 15 },
-    { file: 'asset/bear_skeleton.glb',label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 20 },
+    { file: 'asset/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0, dissolveStart: 0 },
+    { file: 'asset/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart: 0 },
+    { file: 'asset/agate.glb',        label: 'stone', targetHeight: 0.55,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.15, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart: 0, recenterXZ: true },
+    { file: 'asset/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart: 0 },
+    { file: 'asset/bear_skeleton.glb',label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 0 },
 ];
 
 // ─── Table geometry options ───────────────────────────────────────────────────
@@ -126,22 +124,16 @@ export function tableKindForLabel(label) {
     return TABLE_KIND_BY_LABEL[label] ?? 'glb';
 }
 
-// ─── Stone geometry options ────────────────────────────────────────────────────
-// Selectable from the debug GUI's "Stone" dropdown (mirrors Table/Skybox).
-// Unlike the table swap (which repositions existing stage objects), swapping
-// the stone means unloading and reloading just that one stage object — see
-// setStone() below.
-export const STONE_CUSTOM_LABEL = 'Custom GLB…';
-export const STONE_OPTIONS = ['Agate', 'Quartz Biface', STONE_CUSTOM_LABEL];
-
-const STONE_URL_BY_LABEL = {
-    'Agate':          'asset/agate.glb',
-    'Quartz Biface':  'asset/quartz_biface.glb',
+// ─── Objects that come BACK from space ────────────────────────────────────────
+// The journey changes the still life: after the objects dissolve away in space,
+// the ones that re-materialize on the way home are not the ones that left. Each
+// entry replaces that slot's GLB while keeping the slot's placement and timing
+// (position, height, float params) — see applyReturnObjects().
+const RETURN_OBJECT_FILES = {
+    teddy: 'asset/bear_skeleton2.glb',
+    stone: 'asset/quartz_biface.glb',
+    tulip: 'asset/daffodil.glb',
 };
-
-// Template def for the stone stage object — file swaps per selection, every
-// other placement/timing param (position, height, dissolve timing) stays.
-const STONE_DEF = OBJECT_DEFS.find((d) => d.label === 'stone');
 
 const TABLE_MATERIAL_COLOR = 0x8a5a34; // matches the room's warm wood tones
 
@@ -210,36 +202,72 @@ function disposeTable(scene) {
 function buildParticlesFromGeometry(root, count, { radial = false, velocityCompensation = 1.0 } = {}) {
     root.updateWorldMatrix(true, true);
     const worldInverse = new THREE.Matrix4().copy(root.matrixWorld).invert();
-    const rawPositions = [];
+
+    // Collect every triangle (in root-local space) with a running cumulative
+    // area, so particles can be sampled UNIFORMLY across the surface rather
+    // than AT the vertices. Vertex sampling clusters wherever a mesh is sparsely
+    // tessellated — a CylinderGeometry's side has vertices only on its top and
+    // bottom rings, and its caps only at centre + rim, so vertex-sampled
+    // particles bunched into rings (the cylinder's "grouped" particles). Picking
+    // a random triangle weighted by area, then a uniform point inside it, spreads
+    // the particles evenly no matter how the shape happens to be tessellated.
+    const tris  = [];   // flat [ax,ay,az, bx,by,bz, cx,cy,cz] per triangle
+    const cumul = [];   // cumulative area up to and including each triangle
+    let totalArea = 0;
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
 
     root.traverse((child) => {
         if (!child.isMesh || !child.geometry?.getAttribute('position')) return;
-        const posAttr = child.geometry.getAttribute('position');
+        const geom    = child.geometry;
+        const posAttr = geom.getAttribute('position');
+        const index   = geom.getIndex();
         const toLocal = new THREE.Matrix4().multiplyMatrices(worldInverse, child.matrixWorld);
-        const v = new THREE.Vector3();
-        for (let i = 0; i < posAttr.count; i++) {
-            v.fromBufferAttribute(posAttr, i).applyMatrix4(toLocal);
-            rawPositions.push(v.x, v.y, v.z);
+        const triCount = (index ? index.count : posAttr.count) / 3;
+        for (let t = 0; t < triCount; t++) {
+            const i0 = index ? index.getX(t * 3)     : t * 3;
+            const i1 = index ? index.getX(t * 3 + 1) : t * 3 + 1;
+            const i2 = index ? index.getX(t * 3 + 2) : t * 3 + 2;
+            a.fromBufferAttribute(posAttr, i0).applyMatrix4(toLocal);
+            b.fromBufferAttribute(posAttr, i1).applyMatrix4(toLocal);
+            c.fromBufferAttribute(posAttr, i2).applyMatrix4(toLocal);
+            const area = e1.subVectors(b, a).cross(e2.subVectors(c, a)).length() * 0.5;
+            if (area <= 0) continue;
+            totalArea += area;
+            tris.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+            cumul.push(totalArea);
         }
     });
 
-    if (rawPositions.length === 0) return null; // guard: geometry had no vertices
+    if (tris.length === 0) return null; // guard: geometry had no triangles
 
     const positions  = new Float32Array(count * 3);
     const velocities = new Float32Array(count * 3);
-    const vertexCount = rawPositions.length / 3;
 
     for (let i = 0; i < count; i++) {
-        const src = Math.floor(Math.random() * vertexCount) * 3;
-        const px = rawPositions[src], py = rawPositions[src + 1], pz = rawPositions[src + 2];
+        // Area-weighted triangle pick (binary search the cumulative areas),
+        // then a uniformly random barycentric point within that triangle.
+        const target = Math.random() * totalArea;
+        let lo = 0, hi = cumul.length - 1;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (cumul[mid] < target) lo = mid + 1; else hi = mid; }
+        const o = lo * 9;
+        let u = Math.random(), w = Math.random();
+        if (u + w > 1) { u = 1 - u; w = 1 - w; } // reflect into the triangle
+        const px = tris[o]     + u * (tris[o + 3] - tris[o])     + w * (tris[o + 6] - tris[o]);
+        const py = tris[o + 1] + u * (tris[o + 4] - tris[o + 1]) + w * (tris[o + 7] - tris[o + 1]);
+        const pz = tris[o + 2] + u * (tris[o + 5] - tris[o + 2]) + w * (tris[o + 8] - tris[o + 2]);
         positions[i * 3] = px; positions[i * 3 + 1] = py; positions[i * 3 + 2] = pz;
 
         if (radial) {
             // Radial length prevents division by zero at the exact center.
+            // Large radial magnitudes so the table's particles burst OUTWARD and
+            // disperse (paired with the table's low streamStrength) instead of
+            // drifting off together as one clump.
             const r = Math.sqrt(px * px + pz * pz) || 1;
-            velocities[i * 3]     = (px / r) * (Math.random() * 1.2 + 0.4);
-            velocities[i * 3 + 1] = Math.random() * 2.0 + 0.3;
-            velocities[i * 3 + 2] = (pz / r) * (Math.random() * 1.2 + 0.4);
+            const spread = Math.random() * 4.0 + 2.5; // 2.5–6.5
+            velocities[i * 3]     = (px / r) * spread;
+            velocities[i * 3 + 1] = Math.random() * 3.0 + 0.5;
+            velocities[i * 3 + 2] = (pz / r) * spread;
         } else {
             // Random spread angle instead of radial — avoids thin objects (tulip stem) clustering
             const angle = Math.random() * Math.PI * 2;
@@ -300,7 +328,10 @@ function setupTableObject(tableObject, scene) {
     // ── Build particle positions from the table's own geometry ───────────
     const particleGeom = buildParticlesFromGeometry(tableObject, TABLE_PARTICLE_COUNT, { radial: true });
     if (particleGeom) {
-        const particleMat = makeParticleMaterial(uTableProgress, uTableTime);
+        // streamStrength 0.4: the table disperses its particles outward instead
+        // of drifting them off together as a clump (unlike the objects, which
+        // keep the full directional "flow into the background").
+        const particleMat = makeParticleMaterial(uTableProgress, uTableTime, { streamStrength: 0.4 });
         // Attach as child so particles inherit the table's position/rotation automatically.
         tableObject.add(new THREE.Points(particleGeom, particleMat));
     }
@@ -341,17 +372,21 @@ export function setTable(scene, kind, opts = {}) {
     });
 }
 
-// Swaps the stone stage object live: unloads whichever GLB currently fills
-// that slot and loads the chosen one in its place, keeping the same table
-// position/height/floating/dissolve timing (STONE_DEF) — only the file
-// differs. Unlike setTable, this touches exactly one stage object, not all
-// of them, since a stone swap has no effect on the other objects' placement.
-export function setStone(scene, label, opts = {}) {
-    const { customUrl, onObjectReady } = opts;
-    const url = label === STONE_CUSTOM_LABEL ? customUrl : STONE_URL_BY_LABEL[label];
-    if (!url) return;
+// Replaces ONE stage object's model in place: unloads whichever GLB currently
+// fills that slot and loads the given one instead, keeping the slot's table
+// position, height, float and dissolve timing (its OBJECT_DEFS entry) — only the
+// file differs. Unlike setTable this touches a single object, since swapping one
+// model has no effect on where the others sit.
+//
+// initialProgress seeds the new object's dissolve amount. That matters when
+// swapping while everything is dissolved away: a fresh object defaults to 0
+// (fully solid), so without this it would pop into view for a frame before the
+// reverse-dissolve took over.
+function replaceStageObject(scene, label, file, { onObjectReady, initialProgress = 0 } = {}) {
+    const def = OBJECT_DEFS.find((d) => d.label === label);
+    if (!def || !file) return;
 
-    const oldIndex = stageObjects.findIndex((e) => e.label === 'stone');
+    const oldIndex = stageObjects.findIndex((e) => e.label === label);
     if (oldIndex !== -1) {
         const old = stageObjects[oldIndex];
         scene.remove(old.mesh);
@@ -367,18 +402,35 @@ export function setStone(scene, label, opts = {}) {
     }
 
     const surfaceY = tableState.floorY + tableState.topOffset;
-    loadStageObject({ ...STONE_DEF, file: url }, surfaceY, scene, {
+    loadStageObject({ ...def, file, initialProgress }, surfaceY, scene, {
         onAssetLoaded: () => {},
-        onAssetFailed: (err) => console.error(`Failed to load stone asset "${url}":`, err),
+        onAssetFailed: (err) => console.error(`Failed to load "${file}":`, err),
         onObjectReady,
     });
+}
+
+// Swaps in the "returned" versions of the objects (see RETURN_OBJECT_FILES).
+// Called once, at the moment everything has finished dissolving in space — while
+// the objects are invisible — so the replacements are what reverse-dissolve back
+// into the room. initialProgress: 1 keeps them fully dissolved until the
+// reverse-dissolve drives them back in step with everything else.
+let returnObjectsApplied = false;
+export function applyReturnObjects(scene, { onObjectReady } = {}) {
+    if (returnObjectsApplied) return; // one-way change; later trips keep these
+    returnObjectsApplied = true;
+    for (const [label, file] of Object.entries(RETURN_OBJECT_FILES)) {
+        replaceStageObject(scene, label, file, { onObjectReady, initialProgress: 1 });
+    }
 }
 
 // Called once per entry in OBJECT_DEFS, after the table surface Y is known.
 // Loads the GLB, applies dissolve shader + particle system, and registers the
 // object in stageObjects so the simulation loop can drive its floating + dissolve.
 function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, onObjectReady }) {
-    const uObjProgress = { value: 0.0 };
+    // Normally 0 (solid). Set to 1 when an object is swapped in while the scene
+    // is dissolved away, so it starts invisible instead of flashing solid — see
+    // replaceStageObject().
+    const uObjProgress = { value: def.initialProgress ?? 0.0 };
     const uObjTime     = { value: 0.0 };
 
     gltfLoader.load(def.file, (gltf) => {
@@ -418,23 +470,34 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             child.material = mat;
         });
 
-        // ── Scale to target height and position on table ───────────────────
-        mesh.scale.setScalar(scaleFactor);
-
-        // After scaling, recompute box to find the scaled bottom vertex
-        const box1 = new THREE.Box3().setFromObject(mesh);
-        // Horizontal placement: normally the mesh pivot goes to offsetX/offsetZ.
-        // But some GLBs (e.g. the quartz scan) have geometry far from their pivot,
-        // so the pivot-based placement puts the visible mesh way off (behind the
-        // table). For recenterXZ objects — the swappable stone slot, which must
-        // work with arbitrary models — offset by the geometry's own XZ center so
-        // the VISIBLE mesh (not the pivot) lands on offsetX/offsetZ. box1 was
-        // measured with the mesh still at the origin, so box1.center is exactly
-        // that pivot→geometry offset.
-        const cx = def.recenterXZ ? box1.getCenter(new THREE.Vector3()).x : 0;
-        const cz = def.recenterXZ ? box1.getCenter(new THREE.Vector3()).z : 0;
-        // Place so bottom of mesh sits exactly on the table surface, plus optional offsetY
-        mesh.position.set(def.offsetX - cx, surfaceY - box1.min.y + (def.offsetY ?? 0), def.offsetZ - cz);
+        // ── Scale + place on the table ──────────────────────────────────────
+        // obj3d is the node that floats/rotates (and becomes entry.mesh). For
+        // most objects that's the mesh itself. For recenterXZ objects — the
+        // swappable stone, whose scan geometry can sit FAR from its own pivot —
+        // we wrap the mesh in a group and shift the mesh so its geometry is
+        // centered on the group's origin. The group then carries the scale and
+        // placement, so rotation during float spins the stone IN PLACE instead
+        // of orbiting a distant pivot and flinging it off the table (the quartz
+        // fly-away). The old fix moved the pivot to offsetX/Z, which fixed the
+        // resting position but left that orbiting-on-spin behaviour.
+        let obj3d;
+        if (def.recenterXZ) {
+            const c = box0.getCenter(new THREE.Vector3()); // unscaled geometry center (mesh at origin)
+            mesh.position.set(-c.x, -box0.min.y, -c.z);    // XZ-centered on origin; bottom at group-local y=0
+            const group = new THREE.Group();
+            scene.remove(mesh);
+            group.add(mesh);
+            group.scale.setScalar(scaleFactor);
+            scene.add(group);
+            obj3d = group;
+        } else {
+            mesh.scale.setScalar(scaleFactor);
+            obj3d = mesh;
+        }
+        obj3d.updateWorldMatrix(true, true);
+        // Recompute box on the placed node; place its bottom on the surface (+offsetY).
+        const box1 = new THREE.Box3().setFromObject(obj3d);
+        obj3d.position.set(def.offsetX, surfaceY - box1.min.y + (def.offsetY ?? 0), def.offsetZ);
 
         // Particle count scales with the object's actual world size (bounding
         // diagonal) so a small object emits proportionally fewer particles.
@@ -465,17 +528,13 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
         const sphereCenterLocalY = sphere.center.y; // Y of sphere centre in mesh-local space
 
         const entry = {
-            mesh,
+            mesh:         obj3d, // the node that floats/rotates (group for recenterXZ, else the mesh)
             label:        def.label,
             uProgress:    uObjProgress,
             uTime:        uObjTime,
-            restY:        mesh.position.y,
-            // Rest = the ACTUAL placed pivot position (matters for recenterXZ
-            // objects, whose pivot ≠ offsetX/Z); floating drifts around this, so
-            // using the raw offset here would snap a recentered stone back to the
-            // wrong spot the moment it started floating.
-            restX:        mesh.position.x,
-            restZ:        mesh.position.z,
+            restY:        obj3d.position.y,
+            restX:        obj3d.position.x,
+            restZ:        obj3d.position.z,
             H:            def.H,
             phaseOffset:  def.phaseOffset,
             dissolveStart: def.dissolveStart,
@@ -526,7 +585,10 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             // above, about the same X axis — so the legs hang straight when
             // floating. LEG_STRAIGHTEN_DEG is the only knob; raise it if they
             // should extend more, lower it (0 = back to rest pose) if too much.
-            const LEG_STRAIGHTEN_DEG = 25;
+            // 5° (was 25°): at 25 the legs read as ~20° OVER-extended — hyper-
+            // straightened past a natural hang. 5 keeps just a hint of unfold
+            // past the GLB's rest pose so they don't look half-folded in mid-air.
+            const LEG_STRAIGHTEN_DEG = 5;
             const straighten = new THREE.Quaternion().setFromAxisAngle(
                 new THREE.Vector3(1, 0, 0), (LEG_STRAIGHTEN_DEG * Math.PI) / 180
             );
@@ -537,22 +599,29 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             bR.quaternion.copy(sitR);
             bL.quaternion.copy(sitL);
 
-            // Position: raise the mesh so the body sits ON the table rather than
-            // sinking into it. box1.min.y is the foot Y when mesh is at origin
-            // (negative = below pivot). 30% of that distance lifts the bear just
-            // enough so the butt geometry clears the table surface.
-            mesh.position.y = surfaceY + Math.abs(box1.min.y) * 0.1;
+            // Rough initial Y from the STANDING (bind-pose) foot — just a
+            // starting estimate. The bind-pose box can't know how far the SIT
+            // pose (applied above) lifts the visible bottom, so floating.js
+            // measures the actual posed low point once and grounds the bear on
+            // the table surface (see the one-time grounding block there). That
+            // self-corrects regardless of pose, instead of a hand-tuned factor.
+            mesh.position.y = surfaceY + Math.abs(box1.min.y) * 0.55;
             entry.restY = mesh.position.y;
+            entry.skinnedMesh = child; // for the runtime grounding measurement
 
             legBones = { bR, bL, standR, standL, sitR, sitL, straightR, straightL };
         });
         entry.legBones = legBones; // null for non-skeleton objects
 
-        onAssetLoaded(); // this object is ready
-        onObjectReady(def.label, entry, scaleFactor);
+        // Optional: these run at the very END of a successful load, so a missing
+        // (or throwing) callback used to look exactly like a failed GLB — the
+        // error surfaced through GLTFLoader's onError and the object was quietly
+        // lost even though it had loaded fine.
+        onAssetLoaded?.(); // this object is ready
+        onObjectReady?.(def.label, entry, scaleFactor);
     }, undefined, (err) => {
         console.error(`Failed to load ${def.file}:`, err);
-        onAssetFailed(err);
+        onAssetFailed?.(err);
     });
 }
 
