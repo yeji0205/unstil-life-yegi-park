@@ -38,11 +38,10 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     const ROOM_RETURN_DIST = 5.5; // kept in sync with simulation/cameraControls.js
 
     const MAX_DT = 0.1; // ignore huge frame gaps (tab backgrounded, GPU stall)
-    // How slowly the re-materialization trails the scroll on the way home.
-    // Much longer than the scroll's own smoothing (0.28) on purpose — this is
-    // what turns a snap back into the room into a gradual arrival.
-    const RETURN_TAU = 1.1;
-    let returnEase = 1; // dissolve amount actually applied during the return
+    // Smoothing time constant for the journey home, replacing scrollSmoothing.tau
+    // while p is falling from space. Longer than the normal 0.28 so the arrival
+    // is gradual, but not so long that the scroll feels disconnected.
+    const RETURN_TAU = 0.75;
 
     let phase         = 'room';
     let targetP       = 0;   // raw scroll destination; uProgress.value eases toward this
@@ -116,7 +115,19 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
         // at 20 or 144 fps. Snap when within 0.001 so it reaches 0 and 1 exactly.
         const dt = lastUpdateT === null ? 1 / 60 : Math.min(t - lastUpdateT, MAX_DT);
         lastUpdateT = t;
-        uProgress.value += (targetP - uProgress.value) * (1 - Math.exp(-dt / scrollSmoothing.tau));
+
+        // The long trip home from space is eased harder than ordinary scrolling.
+        // Crucially this eases uProgress ITSELF, so the room, the camera dolly,
+        // the lighting blend and the objects' re-materialization all arrive
+        // together. An earlier attempt eased only the objects, which left them
+        // lagging ~1 s behind a room that had already snapped into place — the
+        // scene arrived in two stages, which is what read as sudden.
+        //
+        // Gated to p > 0.3 so it only affects the return from space; small
+        // adjustments near the room keep the responsive feel of scrollSmoothing.
+        const returning = targetP < uProgress.value && uProgress.value > 0.3;
+        const tau = returning ? RETURN_TAU : scrollSmoothing.tau;
+        uProgress.value += (targetP - uProgress.value) * (1 - Math.exp(-dt / tau));
         if (Math.abs(targetP - uProgress.value) < 0.001) uProgress.value = targetP;
         const p    = uProgress.value; // smooth — drives all visuals and shaders
         const rawP = targetP;         // instant — used only for state-machine thresholds
@@ -157,7 +168,6 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
                 // so they can reverse-dissolve back on the way home. objectsDissolved
                 // hands control of their uProgress to the reverse block below.
                 objectsDissolved = true;
-                returnEase       = 1; // start the trailing return from fully dissolved
                 // Everything is invisible right now — the one safe moment to swap
                 // models. The replacements are what re-materialize in the room, so
                 // the still life that comes back isn't the one that left.
@@ -169,22 +179,14 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
         // they re-materialize as the viewer scrolls home — the dissolve effect
         // played backwards, while floating back down onto the table.
         //
-        // This TRAILS the scroll rather than tracking it. Tied directly to p, a
-        // few quick flicks of the wheel snapped the whole still life back into
-        // existence at once, which felt abrupt after a slow journey out. Easing
-        // toward p with its own (long) time constant means the objects keep
-        // re-forming for a moment after the scrolling stops, so the arrival is
-        // gradual however fast the viewer scrolls.
+        // Driven by p, the SAME value the room and camera use, so everything
+        // re-forms in step. The gradualness comes from RETURN_TAU easing p itself
+        // (see the top of update), not from a second ease layered on here.
         if (objectsDissolved && phase !== 'dissolving') {
-            returnEase += (p - returnEase) * (1 - Math.exp(-dt / RETURN_TAU));
-            if (Math.abs(p - returnEase) < 0.002) returnEase = p;
+            tableState.uProgress.value = p;
+            for (const obj of stageObjects) obj.uProgress.value = p;
 
-            tableState.uProgress.value = returnEase;
-            for (const obj of stageObjects) obj.uProgress.value = returnEase;
-
-            // Gate on BOTH: the viewer is home (p) and the materialization has
-            // actually finished catching up (returnEase).
-            if (p <= 0.02 && returnEase <= 0.02) {
+            if (p <= 0.02) {
                 // Fully home: solidify, restore shadows, and leave the dissolved
                 // state so a later scroll-up just floats them (and Dissolve can
                 // run fresh — including re-firing each object's whoosh).

@@ -90,27 +90,25 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
         obj.mesh.rotation.z = Math.sin(t * 0.42 + obj.phaseOffset) * 0.06 * floatP;
         obj.mesh.rotation.x = Math.sin(t * 0.31 + obj.phaseOffset * 1.3) * 0.04 * floatP;
 
-        // Skeleton leg animation: sitting → standing as the room→space
-        // progress (p / uProgress) rises 0 → 1, so legs start folding the
-        // moment floating begins. Divisor < 1 reaches full standing pose
-        // before p hits 1, so the transition finishes early.
+        // Skeleton leg animation: the bear sits while it's on the table and lets
+        // its legs hang once it's airborne.
         if (obj.legBones) {
-            // Legs drop from sitting → hanging almost as soon as the scene stirs.
-            // The bear leaves the surface VERY early (the table starts rising at
-            // p = 0, so it's already airborne by p ≈ 0.03), and legs still folded
-            // in a sitting pose while floating look wrong — there's nothing left
-            // to sit on. The old range (0.02 → 0.42) left them only ~2.5%
-            // unfolded at p = 0.03, i.e. still fully tucked. This finishes the
-            // drop by p = 0.03 instead. Driven by raw p, not floatP, so it isn't
-            // gated behind FLOAT_START. smoothstep keeps the short move from
-            // snapping — the legs fall rather than teleport.
+            // Driven by floatP, NOT raw p — that's the whole point. Raw p starts
+            // moving immediately, but the bear does NOT leave the table then: the
+            // table itself rises from p = 0 and carries the objects with it, so
+            // for a long while the bear is still sitting on a surface that
+            // happens to be moving. Unfolding on raw p (the old 0.036 → 0.08)
+            // straightened the legs while the bear was still resting, and the
+            // straightened legs reached down THROUGH the tabletop — exactly the
+            // overlap in the second loop.
+            //
+            // floatP is zero until FLOAT_START and only then ramps, so tying the
+            // unfold to it means the legs cannot move before the bear has begun
+            // to rise under its own float. The 0.10 → 0.42 window lands the
+            // motion around the point it actually clears the table.
             const { bR, bL, sitR, sitL, straightR, straightL } = obj.legBones;
-            // Starts at 0.036, not ~0: unfolding while the bear is still down on
-            // the tabletop swung its legs THROUGH the table surface. 0.036 is
-            // late enough that it has cleared the top, so the legs drop in open
-            // air. (End = start + 0.044, a quick but not instant fall.)
-            const LEG_DROP_START = 0.036, LEG_DROP_END = 0.08;
-            const raw   = (p - LEG_DROP_START) / (LEG_DROP_END - LEG_DROP_START);
+            const LEG_DROP_START = 0.10, LEG_DROP_END = 0.42; // in floatP
+            const raw   = (floatP - LEG_DROP_START) / (LEG_DROP_END - LEG_DROP_START);
             const bt    = Math.min(1, Math.max(0, raw));
             const boneT = bt * bt * (3 - 2 * bt); // smoothstep
             bR.quaternion.slerpQuaternions(sitR, straightR, boneT);

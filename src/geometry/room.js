@@ -95,14 +95,19 @@ function loadPbrTextures(kind, w, h) {
 // Individual planes — FrontSide with inward-pointing normals so DirectionalLight works.
 // See architecture.md "Why not BoxGeometry" for the lighting reasoning.
 // Which edges of a plane get darkened, as (left, right, bottom, top) flags.
-// Walls skip the TOP edge: occlusion at a ceiling junction isn't what the eye
-// expects in a room lit from above, and darkening it just made the walls look
-// like they faded out before reaching the ceiling. Bottom and sides stay, since
-// those are the floor and corner junctions that actually needed softening.
+//
+// Only the FLOOR junction is shaded. Darkening the wall corners and the ceiling
+// line as well made the whole room feel closed-in and heavy — the shading read
+// as grime rather than occlusion. The wall/floor seam is the one that genuinely
+// needed it (that's where a real room has a shadow and where the two planes
+// meet at a hard line), so walls darken only along their BOTTOM edge and the
+// ceiling gets none at all. The floor keeps all four, since its whole perimeter
+// IS that same junction seen from the other side.
 // (Declared here, above roomParts, because roomParts reads them at module load —
 // a `const` below would be in its temporal dead zone and throw.)
-const EDGES_WALL = [1, 1, 1, 0];
-const EDGES_ALL  = [1, 1, 1, 1];
+const EDGES_WALL_BOTTOM = [0, 0, 1, 0];
+const EDGES_FLOOR       = [1, 1, 1, 1];
+const EDGES_NONE        = [0, 0, 0, 0];
 
 // `tex` picks a PBR set from SURFACE_TEXTURES; `edges` picks which sides get the
 // corner shading. Every surface is textured now — the plaster wraps all four
@@ -110,17 +115,17 @@ const EDGES_ALL  = [1, 1, 1, 1];
 // camera angle rather than only the default one.
 const roomParts = [
     // floor — weathered planks
-    { w: 14, h: 14, pos: [0, -3.5,  0], rx: -Math.PI / 2, ry: 0,            color: 0x2e1c0e, tex: 'floor', edges: EDGES_ALL },
+    { w: 14, h: 14, pos: [0, -3.5,  0], rx: -Math.PI / 2, ry: 0,            color: 0x2e1c0e, tex: 'floor', edges: EDGES_FLOOR },
     // ceiling — same plaster, mostly in darkness above the key light
-    { w: 14, h: 14, pos: [0,  3.5,  0], rx:  Math.PI / 2, ry: 0,            color: 0x1e1810, tex: 'wall',  edges: EDGES_ALL },
+    { w: 14, h: 14, pos: [0,  3.5,  0], rx:  Math.PI / 2, ry: 0,            color: 0x1e1810, tex: 'wall',  edges: EDGES_NONE },
     // wall the camera faces (the one you see behind the table)
-    { w: 14, h:  7, pos: [0,  0,   -7], rx: 0,            ry: 0,            color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL },
+    { w: 14, h:  7, pos: [0,  0,   -7], rx: 0,            ry: 0,            color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL_BOTTOM },
     // wall behind the camera
-    { w: 14, h:  7, pos: [0,  0,    7], rx: 0,            ry: Math.PI,      color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL },
+    { w: 14, h:  7, pos: [0,  0,    7], rx: 0,            ry: Math.PI,      color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL_BOTTOM },
     // left wall
-    { w: 14, h:  7, pos: [-7, 0,    0], rx: 0,            ry:  Math.PI / 2, color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL },
+    { w: 14, h:  7, pos: [-7, 0,    0], rx: 0,            ry:  Math.PI / 2, color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL_BOTTOM },
     // right wall
-    { w: 14, h:  7, pos: [ 7, 0,    0], rx: 0,            ry: -Math.PI / 2, color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL },
+    { w: 14, h:  7, pos: [ 7, 0,    0], rx: 0,            ry: -Math.PI / 2, color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL_BOTTOM },
 ];
 
 function makeRoomMaterial(hex, texSet, w, h, edges) {
@@ -270,6 +275,22 @@ export function setRoomTexture(kind, slotLabel, file) {
     });
 }
 
+// Puts a surface back to the textures it shipped with, undoing any uploads.
+// Restores colour and roughness too, since setRoomTexture whitens the tint when
+// an albedo map is applied and lifts roughness to 1 for a roughness map — reset
+// would otherwise leave a white, uniformly-rough wall wearing its old texture.
+export function resetRoomTextures(kind) {
+    surfaceRegistry[kind]?.forEach(({ mat, original }) => {
+        mat.map          = original.map;
+        mat.normalMap    = original.normalMap;
+        mat.roughnessMap = original.roughnessMap;
+        mat.bumpMap      = original.bumpMap;
+        mat.color.copy(original.color);
+        mat.roughness    = original.roughness;
+        mat.needsUpdate  = true;
+    });
+}
+
 // Room dissolve uses shader only — no particles on room walls (see architecture.md).
 export function buildRoom(scene) {
     // Cache PBR sets per (texture kind + surface size). The four walls are all
@@ -284,8 +305,24 @@ export function buildRoom(scene) {
     };
 
     roomParts.forEach(({ w, h, pos, rx, ry, color, tex, edges }) => {
-        const material = makeRoomMaterial(color, tex ? setFor(tex, w, h) : null, w, h, edges ?? EDGES_ALL);
-        if (tex) surfaceRegistry[tex].push({ mat: material, w, h, tile: SURFACE_TEXTURES[tex].tile });
+        const material = makeRoomMaterial(color, tex ? setFor(tex, w, h) : null, w, h, edges ?? EDGES_NONE);
+        if (tex) {
+            // Snapshot the built-in look BEFORE any upload can replace it, so
+            // "Reset" has something to put back. The texture objects are captured
+            // by reference and are still loading at this point — that's fine, the
+            // same objects finish loading and remain valid to restore later.
+            surfaceRegistry[tex].push({
+                mat: material, w, h, tile: SURFACE_TEXTURES[tex].tile,
+                original: {
+                    map:          material.map ?? null,
+                    normalMap:    material.normalMap ?? null,
+                    roughnessMap: material.roughnessMap ?? null,
+                    bumpMap:      material.bumpMap ?? null,
+                    color:        material.color.clone(),
+                    roughness:    material.roughness,
+                },
+            });
+        }
         const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
         mesh.position.set(...pos);
         mesh.rotation.x = rx;

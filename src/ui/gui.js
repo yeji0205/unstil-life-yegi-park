@@ -1,9 +1,8 @@
 import GUI from 'lil-gui';
 import { flowState } from '../render/skyboxFlow.js';
 import { scrollSmoothing } from '../simulation/phaseMachine.js';
-import { lightBoost } from '../render/lighting.js';
 import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../geometry/room.js';
-import { stoneOrientation } from '../persistence/glbLoader.js';
+import { stoneOrientation, primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../persistence/glbLoader.js';
 
 // A small centered modal — readable padding/typography, a dimmed backdrop, and
 // up to two buttons. Used instead of the browser's cramped alert() for the
@@ -63,10 +62,10 @@ function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Ca
 export function createDebugGUI({
     uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor,
     onRevealPainting,
-    ambientLight, directionalLight, lightAngle, onLightAngleChange,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
-    onRoomTextureFile, onStoneOrientationChange,
+    onRoomTextureFile, onRoomTextureReset, onStoneOrientationChange, onTableColorChange,
+    onStoneChange, onCustomStoneFile,
     roomSoundOptions, defaultRoomSound, spaceSoundOptions, defaultSpaceSound,
     dissolveSoundOptions, defaultDissolveSound, soundCustomLabel,
     onRoomSoundChange, onCustomRoomSoundFile, roomSoundVolume,
@@ -104,38 +103,6 @@ export function createDebugGUI({
     const particleColorProxy = { color: '#' + uParticleColor.value.getHexString() };
     gui.addColor(particleColorProxy, 'color').name('Particle Color')
         .onChange((hex) => uParticleColor.value.set(hex));
-
-    const lightFolder = gui.addFolder('Lighting');
-    // Multipliers on top of the current room/space preset, NOT absolute values.
-    // Writing straight to ambientLight.intensity did nothing, because
-    // updateLighting() overwrites it from the preset every frame — see lightBoost.
-    lightFolder.add(lightBoost, 'ambient', 0, 4, 0.05).name('Ambient × (fill)');
-    lightFolder.add(lightBoost, 'directional', 0, 4, 0.05).name('Directional × (key)');
-
-    // Key-light direction. Elevation is the one to drag to answer "how does it
-    // look lit from straight above": 90° puts the light directly overhead. The
-    // range stops at 0° on purpose — below the horizon the shadows are thrown
-    // up onto the wall instead of down, which looks wrong.
-    const elevCtrl = lightFolder.add(lightAngle, 'elevation', 0, 90, 1)
-        .name('↕ Elevation (0=side, 90=top)').onChange(onLightAngleChange);
-    const azimCtrl = lightFolder.add(lightAngle, 'azimuth', -180, 180, 1)
-        .name('↻ Azimuth (direction)').onChange(onLightAngleChange);
-
-    // One-click presets so the top-down look can be compared against the
-    // original raking light without hunting for the exact numbers again.
-    const lightPresets = {
-        topDown: () => {
-            lightAngle.elevation = 90; lightAngle.azimuth = 0;
-            elevCtrl.updateDisplay(); azimCtrl.updateDisplay(); onLightAngleChange();
-        },
-        reset: () => {
-            lightAngle.elevation = 42; lightAngle.azimuth = -50;
-            elevCtrl.updateDisplay(); azimCtrl.updateDisplay(); onLightAngleChange();
-        },
-    };
-    lightFolder.add(lightPresets, 'topDown').name('☀ Light from top (90°)');
-    lightFolder.add(lightPresets, 'reset').name('↺ Reset to original angle');
-    lightFolder.open(); // opened so the angle sliders are easy to find
 
     // Skybox picker — swaps the cubemap live. Add new folder names to
     // skyboxOptions (geometry/environment.js) to list them here.
@@ -231,9 +198,11 @@ export function createDebugGUI({
         .onChange((label) => {
             if (label === tableCustomLabel) {
                 fileInput.click();
+                syncTableMatVisibility(label);
                 return;
             }
             onTableChange(label);
+            syncTableMatVisibility(label);
         });
 
     fileInput.addEventListener('change', () => {
@@ -243,11 +212,22 @@ export function createDebugGUI({
         fileInput.value = ''; // reset so picking the same file again still fires 'change'
     });
 
-    // Table material — attach image textures to the Box/Cylinder tables so they
-    // get real material character. Several maps can be mixed (albedo + normal +
-    // roughness + bump); each picker opens an image dialog and the maps persist
-    // across Box↔Cylinder swaps (glbLoader keeps them).
+    // Table material — only meaningful for the Box/Cylinder plinths, since the
+    // GLB tables carry their own materials. A colour swatch for a plain painted
+    // plinth, plus the full set of PBR map slots for anything richer. Maps mix
+    // freely and persist across Box↔Cylinder swaps (glbLoader keeps them).
     const tableMatFolder = gui.addFolder('Table Material (Box/Cyl)');
+
+    // Colour applies only when no albedo map is loaded — a map is TINTED by
+    // colour, so the two would fight. glbLoader whitens the tint in that case.
+    tableMatFolder.addColor(primitiveTableColor, 'hex').name('Plinth Color')
+        .onChange(onTableColorChange);
+    tableMatFolder.add({ reset: () => {
+        primitiveTableColor.hex = '#e8e4dc'; // gallery-plinth off-white
+        tableMatFolder.controllers.forEach((c) => c.updateDisplay());
+        onTableColorChange(primitiveTableColor.hex);
+    } }, 'reset').name('↺ Reset to plinth white');
+
     const addTexturePicker = (name, type) => {
         const inp = document.createElement('input');
         inp.type = 'file';
@@ -266,8 +246,56 @@ export function createDebugGUI({
     addTexturePicker('Color / Albedo…', 'map');
     addTexturePicker('Normal…',         'normalMap');
     addTexturePicker('Roughness…',      'roughnessMap');
-    addTexturePicker('Bump…',           'bumpMap');
-    tableMatFolder.close();
+    addTexturePicker('Metalness…',      'metalnessMap');
+    addTexturePicker('Bump / Height…',  'bumpMap');
+
+    // Shown AND expanded the moment Box/Cylinder is picked, directly beneath the
+    // Table dropdown it belongs to. Left collapsed, the colour and texture
+    // controls were behind a disclosure arrow that nobody would think to click —
+    // the options may as well not have existed. Hidden entirely for the GLB
+    // tables, which carry their own materials and would ignore these.
+    const syncTableMatVisibility = (label) => {
+        if (label === 'Box' || label === 'Cylinder') {
+            tableMatFolder.show();
+            tableMatFolder.open();
+        } else {
+            tableMatFolder.hide();
+        }
+    };
+    syncTableMatVisibility(defaultTable);
+
+    // Stone picker — swap the gem on the table to see how each one sits with the
+    // rest of the still life. The same list drives the return-from-space cycle,
+    // so whatever is offered here is also what can come back (see STONE_VARIANTS).
+    const stoneFileInput = document.createElement('input');
+    stoneFileInput.type = 'file';
+    stoneFileInput.accept = '.glb,.gltf';
+    stoneFileInput.style.display = 'none';
+    document.body.appendChild(stoneFileInput);
+
+    const stoneSettings = { stone: STONE_OPTIONS[0] };
+    let lastStone = STONE_OPTIONS[0];
+    const stoneCtrl = gui.add(stoneSettings, 'stone', STONE_OPTIONS)
+        .name('Stone')
+        .onChange((label) => {
+            if (label === STONE_CUSTOM_LABEL) {
+                // Snap back to the last real choice so picking "Custom" twice in
+                // a row still re-opens the dialog — lil-gui only fires onChange
+                // when the value actually changes.
+                stoneSettings.stone = lastStone;
+                stoneCtrl.updateDisplay();
+                stoneFileInput.click();
+                return;
+            }
+            lastStone = label;
+            onStoneChange(label);
+        });
+
+    stoneFileInput.addEventListener('change', () => {
+        const file = stoneFileInput.files[0];
+        if (file) onCustomStoneFile(file);
+        stoneFileInput.value = '';
+    });
 
     // Stone orientation — trim on top of layFlat's automatic "rest on the
     // flattest face" alignment, for when a scanned rock's real resting face sits
@@ -308,6 +336,10 @@ export function createDebugGUI({
                 inp.value = '';
             });
         });
+        // Puts back the textures the scene ships with, so an experiment is never
+        // one-way — otherwise the only route back is a page reload.
+        sub.add({ reset: () => onRoomTextureReset(surface) }, 'reset')
+            .name('↺ Reset to original');
         sub.close();
     });
     roomTexFolder.close();

@@ -1,17 +1,17 @@
 import * as THREE from 'three';
 
 import { createRenderer, createCamera, setupResize } from './src/render/renderer.js';
-import { setupLighting, lightAngle } from './src/render/lighting.js';
+import { setupLighting } from './src/render/lighting.js';
 import { uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor } from './src/render/dissolve.js';
 import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
 import { createPaintingIntro } from './src/render/paintingIntro.js';
 
-import { buildRoom, setRoomTexture } from './src/geometry/room.js';
+import { buildRoom, setRoomTexture, resetRoomTextures } from './src/geometry/room.js';
 import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, LIGHTING_PRESETS } from './src/geometry/environment.js';
 
 import {
     loadScene, setTable, setTableTexture, applyReturnObjects,
-    tableState, stageObjects, LOADING_TOTAL, applyStoneOrientation,
+    tableState, stageObjects, LOADING_TOTAL, applyStoneOrientation, setTableColor, setStone,
     TABLE_OPTIONS, TABLE_CUSTOM_LABEL, tableKindForLabel,
 } from './src/persistence/glbLoader.js';
 
@@ -37,7 +37,7 @@ const { updateStars } = buildStars(scene);
 buildRoom(scene);
 
 // ─── Lighting ────────────────────────────────────────────────────────────────
-const { ambientLight, directionalLight, updateLighting, setSpacePreset, applyLightAngle } = setupLighting(scene);
+const { updateLighting, setSpacePreset } = setupLighting(scene);
 
 // Swaps the background AND its matching lighting tint together — the GUI's
 // "Skybox" dropdown is the only control needed; there's no separate lighting
@@ -107,8 +107,6 @@ const ambientSound = createAmbientSoundTracks();
 // ─── Debug GUI ───────────────────────────────────────────────────────────────
 const gui = createDebugGUI({
     uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor,
-    ambientLight, directionalLight,
-    lightAngle, onLightAngleChange: applyLightAngle,
     onRevealPainting: () => paintingIntro?.beginDissolve(),
     skyboxOptions: SKYBOX_OPTIONS, defaultSkybox: SKYBOX_OPTIONS[0], skyboxCustomLabel: SKYBOX_CUSTOM_LABEL,
     onSkyboxChange: selectBackground,
@@ -118,8 +116,19 @@ const gui = createDebugGUI({
     onCustomTableFile: selectCustomTable,
     onTableTextureFile: (file, type) => setTableTexture(scene, file, type),
     onRoomTextureFile: (surface, slotLabel, file) => setRoomTexture(surface, slotLabel, file),
+    onRoomTextureReset: (surface) => resetRoomTextures(surface),
     onStoneOrientationChange: applyStoneOrientation,
-    roomSoundOptions: ROOM_SOUND_OPTIONS, defaultRoomSound: ROOM_SOUND_OPTIONS[0],
+    onTableColorChange: (hex) => setTableColor(hex),
+    // Swapping the stone reloads just that one object, so it needs a fresh GUI
+    // folder — the old one is destroyed with the object it described.
+    onStoneChange: (label) => setStone(scene, label, {
+        onObjectReady: (l, entry, scaleFactor) => gui.addObjectFolder(l, entry, scaleFactor),
+    }),
+    onCustomStoneFile: (file) => setStone(scene, 'Custom GLB…', {
+        customUrl: URL.createObjectURL(file),
+        onObjectReady: (l, entry, scaleFactor) => gui.addObjectFolder(l, entry, scaleFactor),
+    }),
+     roomSoundOptions: ROOM_SOUND_OPTIONS, defaultRoomSound: ROOM_SOUND_OPTIONS[0],
     spaceSoundOptions: SPACE_SOUND_OPTIONS, defaultSpaceSound: SPACE_SOUND_OPTIONS[0],
     soundCustomLabel: SOUND_CUSTOM_LABEL,
     onRoomSoundChange: (label) => ambientSound.room.setSound(label),

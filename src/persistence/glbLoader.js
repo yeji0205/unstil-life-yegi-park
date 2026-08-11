@@ -41,7 +41,11 @@ export const tableState = {
 // Box↔Cylinder swaps (re-applied when those meshes are (re)built). The GLB/
 // custom tables keep their own textures and ignore these.
 const textureLoader = new THREE.TextureLoader();
-const primitiveTableMaps = { map: null, normalMap: null, roughnessMap: null, bumpMap: null };
+const primitiveTableMaps = { map: null, normalMap: null, roughnessMap: null, bumpMap: null, metalnessMap: null };
+
+// Base colour of the Box/Cylinder plinths, editable from the GUI colour picker.
+// Kept out of TABLE_MATERIAL_COLOR (the default) so "reset" is still possible.
+export const primitiveTableColor = { hex: '#e8e4dc' };
 
 // Copies every set map slot onto a primitive-table material (and whitens the
 // base color when an albedo map is present so its true colors show).
@@ -50,11 +54,17 @@ function applyPrimitiveMaps(mat) {
     mat.normalMap    = primitiveTableMaps.normalMap;
     mat.roughnessMap = primitiveTableMaps.roughnessMap;
     mat.bumpMap      = primitiveTableMaps.bumpMap;
-    mat.color.set(primitiveTableMaps.map ? 0xffffff : TABLE_MATERIAL_COLOR);
+    mat.metalnessMap = primitiveTableMaps.metalnessMap;
+    // An albedo map is TINTED by color, so white lets the image show as itself;
+    // without one, color IS the surface and takes the GUI value.
+    mat.color.set(primitiveTableMaps.map ? 0xffffff : primitiveTableColor.hex);
+    // metalness/roughness SCALE their maps, so lift them to 1 once a map exists.
+    if (primitiveTableMaps.metalnessMap) mat.metalness = 1.0;
+    if (primitiveTableMaps.roughnessMap) mat.roughness = 1.0;
 }
 
 // Sets one texture slot on the primitive tables from a user-picked image.
-// type: 'map' (albedo/color) | 'normalMap' | 'roughnessMap' | 'bumpMap'.
+// type: 'map' (albedo/color) | 'normalMap' | 'roughnessMap' | 'bumpMap' | 'metalnessMap'.
 // Applies live to the current Box/Cylinder and persists for future rebuilds.
 export function setTableTexture(scene, file, type = 'map') {
     if (!(type in primitiveTableMaps)) return;
@@ -65,6 +75,18 @@ export function setTableTexture(scene, file, type = 'map') {
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     primitiveTableMaps[type] = tex;
 
+    if ((tableState.kind === 'box' || tableState.kind === 'cylinder') && tableState.object) {
+        tableState.object.traverse((c) => {
+            if (!c.isMesh) return;
+            applyPrimitiveMaps(c.material);
+            c.material.needsUpdate = true;
+        });
+    }
+}
+
+// Repaints the Box/Cylinder plinths from the GUI colour picker.
+export function setTableColor(hex) {
+    primitiveTableColor.hex = hex;
     if ((tableState.kind === 'box' || tableState.kind === 'cylinder') && tableState.object) {
         tableState.object.traverse((c) => {
             if (!c.isMesh) return;
@@ -101,7 +123,7 @@ export const stageObjects = [];
 export const OBJECT_DEFS = [
     { file: 'asset/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0, dissolveStart: 0 },
     { file: 'asset/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart: 0 },
-    { file: 'asset/agate.glb',        label: 'stone', targetHeight: 0.55,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.15, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart: 0, recenterXZ: true },
+    { file: 'asset/fluorita_small.glb', label: 'stone', targetHeight: 0.28,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.02, rotYOffset: -2.11, H: 1.8, phaseOffset: 0.6, dissolveStart: 0, recenterXZ: true },
     { file: 'asset/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart: 0 },
     { file: 'asset/bear_ribbon.glb',  label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 0 },
 ];
@@ -135,19 +157,45 @@ export function tableKindForLabel(label) {
 // two different shapes. The agate is rounded and wants sinking 0.15 into the
 // tabletop so it reads as settled, but the quartz biface is flat-bottomed and the
 // same offset drove it THROUGH the table — it sits at 0.
+// ─── Stone options ────────────────────────────────────────────────────────────
+// One list serving two purposes: the GUI's "Stone" dropdown, and the stone
+// slot's return cycle. Keeping them the same means a stone picked by hand and a
+// stone that arrives back from space are described in exactly one place.
+//
+// `name` is the dropdown label; everything else overrides that variant's entry
+// in OBJECT_DEFS. Values not listed are inherited from the def — which is set up
+// for the fluorite, so the other two restate rotYOffset to cancel its rotation.
+const STONE_VARIANTS = [
+    { name: 'Fluorite', file: 'asset/fluorita_small.glb' },
+    { name: 'Agate',      file: 'asset/agate.glb',      targetHeight: 0.35, rotYOffset: 0, offsetY: -0.02 },
+    { name: 'Aventurine', file: 'asset/aventurina.glb', targetHeight: 0.32, rotYOffset: 0, offsetY: -0.02, layFlat: true },
+    // The biface arrives balanced upright on a narrow point, which reads as
+    // perched rather than placed. layFlat measures it and rests it on its
+    // largest face. targetHeight is THICKNESS once it's lying down, not stature:
+    // that value normalises height, so a flat slab would otherwise be scaled up
+    // until it stood tall again. 0.22 gives a ~0.56 × 0.49 footprint.
+    { name: 'Quartz Biface', file: 'asset/quartz_biface.glb',
+      layFlat: true, targetHeight: 0.22, rotYOffset: 0, offsetY: -0.02 },
+];
+
+export const STONE_CUSTOM_LABEL = 'Custom GLB…';
+export const STONE_OPTIONS = [...STONE_VARIANTS.map((v) => v.name), STONE_CUSTOM_LABEL];
+
+// Swaps the stone on demand from the GUI. A custom upload inherits the slot's
+// placement (position, float, dissolve timing) and gets recenterXZ + layFlat, so
+// an arbitrary model still lands on the table rather than wherever its pivot
+// happens to be — the same treatment the built-in scans need.
+export function setStone(scene, label, { customUrl, onObjectReady } = {}) {
+    const variant = label === STONE_CUSTOM_LABEL
+        ? { file: customUrl, layFlat: true, targetHeight: 0.32, offsetY: -0.02, rotYOffset: 0 }
+        : STONE_VARIANTS.find((v) => v.name === label);
+    if (!variant?.file) return;
+    replaceStageObject(scene, 'stone', variant, { onObjectReady });
+}
+
 const OBJECT_VARIANTS = {
     teddy: [{ file: 'asset/bear_ribbon.glb' },              { file: 'asset/bear_skeleton.glb' }],
-    stone: [
-        { file: 'asset/agate.glb', offsetY: -0.15 },
-        // The biface arrives balanced upright on a narrow point, which reads as
-        // perched rather than placed. layFlat measures it and rests it on its
-        // largest face. targetHeight drops with it: that value normalises HEIGHT,
-        // so a stone laid flat would otherwise be scaled up until it stood 0.55
-        // tall again — a huge slab. 0.40 keeps a low profile while giving it
-        // presence next to the agate. offsetY beds it very slightly into the
-        // surface so its irregular underside doesn't touch at a single point.
-        { file: 'asset/quartz_biface.glb', layFlat: true, targetHeight: 0.48, offsetY: -0.04 },
-    ],
+    stone: STONE_VARIANTS,
     tulip: [{ file: 'asset/tulip.glb' },                    { file: 'asset/daffodil.glb' }],
 };
 
@@ -422,7 +470,7 @@ export function setTable(scene, kind, opts = {}) {
 function replaceStageObject(scene, label, variant, { onObjectReady, initialProgress = 0 } = {}) {
     const def = OBJECT_DEFS.find((d) => d.label === label);
     if (!def || !variant?.file) return;
-    const { file, ...overrides } = variant; // e.g. a per-variant offsetY
+    const { file, name, ...overrides } = variant; // `name` is a GUI label, not a def field
 
     const oldIndex = stageObjects.findIndex((e) => e.label === label);
     if (oldIndex !== -1) {
@@ -483,7 +531,7 @@ export function applyStoneOrientation() {
 
     const group = entry.mesh;
     group.updateWorldMatrix(true, true);
-    const box = new THREE.Box3().setFromObject(group);
+    const box = new THREE.Box3().setFromObject(group, true);
     const surfaceY = tableState.floorY + tableState.topOffset;
     group.position.y += (surfaceY + entry.offsetY) - box.min.y;
     entry.restY = group.position.y;
@@ -560,13 +608,47 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
         // rotation.x/z every frame with the drift wobble.
         if (def.recenterXZ) {
             if (def.layFlat) {
+                // SEARCH for the orientation that genuinely lies flattest, rather
+                // than assuming the model's bounding box is aligned with its flat
+                // face. Snapping the thinnest BOX axis to vertical only works if
+                // the box happens to line up with the geometry — for a scanned
+                // rock it usually doesn't, which left the biface tipped up on an
+                // edge no matter which 90° turn was applied.
+                //
+                // Minimising the object's HEIGHT over candidate rotations is the
+                // same thing as resting it on its broadest face, and it needs no
+                // assumptions about the model at all. ~400 candidates over a few
+                // hundred sampled vertices is a few milliseconds, once, at load.
                 mesh.updateWorldMatrix(true, true);
-                const s = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3());
-                const HALF = Math.PI / 2;
-                // Smallest extent → vertical. X is thinnest: roll about Z. Z is
-                // thinnest: pitch about X. Y already thinnest: nothing to do.
-                if (s.x <= s.y && s.x <= s.z)      mesh.rotation.set(0, 0, HALF);
-                else if (s.z <= s.x && s.z <= s.y) mesh.rotation.set(HALF, 0, 0);
+                const pts = [];
+                mesh.traverse((c) => {
+                    if (!c.isMesh || !c.geometry) return;
+                    const pos = c.geometry.getAttribute('position');
+                    const step = Math.max(1, Math.floor(pos.count / 400)); // cap the sample
+                    const v = new THREE.Vector3();
+                    for (let i = 0; i < pos.count; i += step) {
+                        pts.push(v.fromBufferAttribute(pos, i).applyMatrix4(c.matrixWorld).clone());
+                    }
+                });
+
+                if (pts.length) {
+                    const q = new THREE.Quaternion(), e = new THREE.Euler(), t = new THREE.Vector3();
+                    let best = { h: Infinity, rx: 0, rz: 0 };
+                    const STEP = Math.PI / 20; // 9°, over a half-turn on each axis
+                    for (let rx = 0; rx < Math.PI; rx += STEP) {
+                        for (let rz = 0; rz < Math.PI; rz += STEP) {
+                            q.setFromEuler(e.set(rx, 0, rz));
+                            let lo = Infinity, hi = -Infinity;
+                            for (const p of pts) {
+                                const y = t.copy(p).applyQuaternion(q).y;
+                                if (y < lo) lo = y;
+                                if (y > hi) hi = y;
+                            }
+                            if (hi - lo < best.h) best = { h: hi - lo, rx, rz };
+                        }
+                    }
+                    mesh.rotation.set(best.rx, 0, best.rz);
+                }
                 // Remember the auto-aligned pose so the GUI trim below is always
                 // applied relative to it, not accumulated on each adjustment.
                 mesh.userData.baseRot = mesh.rotation.clone();
@@ -589,7 +671,7 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
         // dissolve shader is injected — the shader needs it (as uScale) to
         // normalize its blob size to world space (see injectDissolve).
         mesh.updateWorldMatrix(true, true);
-        const box0 = new THREE.Box3().setFromObject(mesh);
+        const box0 = new THREE.Box3().setFromObject(mesh, true);
         const scaleFactor = def.targetHeight / (box0.max.y - box0.min.y);
         const uScale = { value: scaleFactor };
 
@@ -611,6 +693,7 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
                     color: mat.color, map: mat.map, roughness: 0.8, metalness: 0.0,
                 });
             }
+
             mat.transparent = true;
 
             injectDissolve(mat, uObjProgress, { space: 'local', freqScale: OBJECT_FREQ_SCALE, scaleUniform: uScale });
@@ -644,7 +727,7 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
         }
         obj3d.updateWorldMatrix(true, true);
         // Recompute box on the placed node; place its bottom on the surface (+offsetY).
-        const box1 = new THREE.Box3().setFromObject(obj3d);
+        const box1 = new THREE.Box3().setFromObject(obj3d, true);
         obj3d.position.set(def.offsetX, surfaceY - box1.min.y + (def.offsetY ?? 0), def.offsetZ);
 
         // Particle count scales with the object's actual world size (bounding
@@ -784,6 +867,13 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             legBones = { bR, bL, standR, standL, sitR, sitL, straightR, straightL };
         });
         entry.legBones = legBones; // null for non-skeleton objects
+
+        // The mannequin's finish is part of the return cycle, but index 0 is its
+        // OPENING look — apply it here so the room starts dark-brown rather than
+        // waiting for the first trip back.
+        if (def.label === 'dummy') {
+            applyDummyFinish(DUMMY_FINISHES[returnCycle % DUMMY_FINISHES.length]);
+        }
 
         // Optional: these run at the very END of a successful load, so a missing
         // (or throwing) callback used to look exactly like a failed GLB — the
