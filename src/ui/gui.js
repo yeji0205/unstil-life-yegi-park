@@ -2,6 +2,8 @@ import GUI from 'lil-gui';
 import { flowState } from '../render/skyboxFlow.js';
 import { scrollSmoothing } from '../simulation/phaseMachine.js';
 import { lightBoost } from '../render/lighting.js';
+import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../geometry/room.js';
+import { stoneOrientation } from '../persistence/glbLoader.js';
 
 // A small centered modal — readable padding/typography, a dimmed backdrop, and
 // up to two buttons. Used instead of the browser's cramped alert() for the
@@ -64,6 +66,7 @@ export function createDebugGUI({
     ambientLight, directionalLight, lightAngle, onLightAngleChange,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
+    onRoomTextureFile, onStoneOrientationChange,
     roomSoundOptions, defaultRoomSound, spaceSoundOptions, defaultSpaceSound,
     dissolveSoundOptions, defaultDissolveSound, soundCustomLabel,
     onRoomSoundChange, onCustomRoomSoundFile, roomSoundVolume,
@@ -265,6 +268,49 @@ export function createDebugGUI({
     addTexturePicker('Roughness…',      'roughnessMap');
     addTexturePicker('Bump…',           'bumpMap');
     tableMatFolder.close();
+
+    // Stone orientation — trim on top of layFlat's automatic "rest on the
+    // flattest face" alignment, for when a scanned rock's real resting face sits
+    // a few degrees off its bounding box and it looks tilted. The stone re-seats
+    // itself on the table after every change. Note the stone only shows the
+    // quartz after a return trip; the room opens with the agate.
+    const stoneFolder = gui.addFolder('Stone Orientation');
+    ['xDeg', 'yDeg', 'zDeg'].forEach((axis) => {
+        stoneFolder.add(stoneOrientation, axis, -180, 180, 1)
+            .name(`Rotate ${axis[0].toUpperCase()} (°)`)
+            .onChange(onStoneOrientationChange);
+    });
+    stoneFolder.add({ reset: () => {
+        stoneOrientation.xDeg = stoneOrientation.yDeg = stoneOrientation.zDeg = 0;
+        stoneFolder.controllers.forEach((c) => c.updateDisplay());
+        onStoneOrientationChange();
+    } }, 'reset').name('↺ Reset to auto-flat');
+    stoneFolder.close();
+
+    // Room surfaces — one folder per surface, one picker per PBR map type, so a
+    // full texture set can be swapped in from disk without touching the code.
+    // Uploads tile at the same world scale as the built-in sets (see
+    // setRoomTexture), so they don't need to match any particular resolution.
+    const roomTexFolder = gui.addFolder('Room Textures');
+    ROOM_SURFACES.forEach((surface) => {
+        const sub = roomTexFolder.addFolder(surface === 'wall' ? 'Walls + Ceiling' : 'Floor');
+        Object.keys(ROOM_TEXTURE_SLOTS).forEach((slotLabel) => {
+            const inp = document.createElement('input');
+            inp.type = 'file';
+            inp.accept = 'image/*';
+            inp.style.display = 'none';
+            document.body.appendChild(inp);
+            const action = { pick: () => inp.click() };
+            sub.add(action, 'pick').name(`${slotLabel}…`);
+            inp.addEventListener('change', () => {
+                const file = inp.files[0];
+                if (file) onRoomTextureFile(surface, slotLabel, file);
+                inp.value = '';
+            });
+        });
+        sub.close();
+    });
+    roomTexFolder.close();
 
     // Sound picker + volume — same pattern as the Table picker: preset
     // options switch immediately, "Custom audio…" opens a hidden file input

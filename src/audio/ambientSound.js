@@ -113,9 +113,18 @@ function createSoundSystem() {
             stopCurrent();
 
             const audio = new Audio();
-            audio.src     = url;
-            audio.loop    = true;
+            // Order matters: preload must be set BEFORE src, because assigning
+            // src starts the browser's resource-selection algorithm and it reads
+            // preload at that moment. With src first, the tracks sat at
+            // readyState 0 (nothing buffered) until the first gesture, so the
+            // download only began when the viewer interacted — exactly the
+            // "sound starts late" symptom. load() then kicks fetching off
+            // immediately, so buffering happens while the loading screen is
+            // still on-screen and the track is ready the instant it's allowed.
             audio.preload = 'auto';
+            audio.loop    = true;
+            audio.src     = url;
+            audio.load();
             audio.addEventListener('error', () => {
                 if (generation === loadGeneration) {
                     console.warn(`Ambient sound: couldn't load "${url}" — staying silent.`);
@@ -239,15 +248,20 @@ function createSoundSystem() {
         return { setSound, setCustomFile, play, volume };
     }
 
-    return { createTrack, createOneShot };
+    return { createTrack, createOneShot, whenStarted };
 }
 
 // Seconds to wait after fully entering space (p reaches ~1) before the space
-// music begins, then how long it takes to fade in. The delay stops the space
-// track and the café track from overlapping: café fades out with (1−p) and is
-// silent by p=1, then a beat of quiet, then space fades in on its own.
-const SPACE_START_DELAY = 5.0;
-const SPACE_FADE_IN     = 3.0;
+// music begins, then how long it takes to fade in.
+//
+// The delay is 0: the space track is NOT loading late — like the café track it
+// streams and is playing (silently, at gain 0) from the moment audio unlocks, so
+// there's nothing to wait for. The lateness was this timer, deliberately set to
+// 5 s so the café track had a beat of silence before space came in. Starting the
+// fade the instant p reaches 1 means the music arrives with the destination.
+// The café is already silent by then anyway — its gain is (1 − p).
+const SPACE_START_DELAY = 0.0;
+const SPACE_FADE_IN     = 2.5;
 
 export function createAmbientSoundTracks() {
     const system = createSoundSystem();
@@ -269,6 +283,10 @@ export function createAmbientSoundTracks() {
     const dissolve = system.createOneShot({ urlMap: DISSOLVE_SOUND_URLS, defaultLabel: 'Slowly Whoosh' });
     return {
         room, space, dissolve,
+        // Fires once the AudioContext is actually running (i.e. the browser has
+        // accepted a user gesture and sound is now audible). The in-room "click
+        // to play sound" hint uses this to know when to take itself away.
+        onStarted: system.whenStarted,
         update(p, t) { room.update(p, t); space.update(p, t); },
     };
 }

@@ -34,6 +34,9 @@ export function createLoadingScreen(totalAssets, onDone) {
     let showStartMs    = 0;         // performance.now() when text first became visible
     let loadedCount    = 0;
 
+    // The title dissolves on its own once loading finishes — no click required.
+    // Audio can't start without a user gesture, but that prompt lives in the room
+    // itself now (see ui/soundHint.js) rather than gating the landing page.
     function maybeStartDissolve() {
         if (!textReady || !assetsReady || state !== 'showing') return;
         const waited = performance.now() - showStartMs;

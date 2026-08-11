@@ -6,16 +6,17 @@ import { uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColo
 import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
 import { createPaintingIntro } from './src/render/paintingIntro.js';
 
-import { buildRoom } from './src/geometry/room.js';
+import { buildRoom, setRoomTexture } from './src/geometry/room.js';
 import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, LIGHTING_PRESETS } from './src/geometry/environment.js';
 
 import {
     loadScene, setTable, setTableTexture, applyReturnObjects,
-    tableState, stageObjects, LOADING_TOTAL,
+    tableState, stageObjects, LOADING_TOTAL, applyStoneOrientation,
     TABLE_OPTIONS, TABLE_CUSTOM_LABEL, tableKindForLabel,
 } from './src/persistence/glbLoader.js';
 
 import { createLoadingScreen } from './src/ui/loadingScreen.js';
+import { createSoundHint } from './src/ui/soundHint.js';
 import { createDebugGUI } from './src/ui/gui.js';
 
 import { createAmbientSoundTracks, ROOM_SOUND_OPTIONS, SPACE_SOUND_OPTIONS, DISSOLVE_SOUND_OPTIONS, SOUND_CUSTOM_LABEL } from './src/audio/ambientSound.js';
@@ -116,6 +117,8 @@ const gui = createDebugGUI({
     onTableChange: selectTable,
     onCustomTableFile: selectCustomTable,
     onTableTextureFile: (file, type) => setTableTexture(scene, file, type),
+    onRoomTextureFile: (surface, slotLabel, file) => setRoomTexture(surface, slotLabel, file),
+    onStoneOrientationChange: applyStoneOrientation,
     roomSoundOptions: ROOM_SOUND_OPTIONS, defaultRoomSound: ROOM_SOUND_OPTIONS[0],
     spaceSoundOptions: SPACE_SOUND_OPTIONS, defaultSpaceSound: SPACE_SOUND_OPTIONS[0],
     soundCustomLabel: SOUND_CUSTOM_LABEL,
@@ -155,6 +158,9 @@ const phaseMachine = createPhaseMachine({
 // there's no intro image) does scroll/orbit interaction unlock.
 const loadingScreen = createLoadingScreen(LOADING_TOTAL, () => {
     gui.gui.show();
+    // Now that the room is visible, invite the click that unlocks audio. It
+    // removes itself as soon as sound is actually playing.
+    createSoundHint(ambientSound.onStarted);
     const startInteraction = () => {
         cameraControls.controls.enabled = true;
         phaseMachine.enableInteraction();

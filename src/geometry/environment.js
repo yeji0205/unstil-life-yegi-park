@@ -74,6 +74,10 @@ export const LIGHTING_PRESETS = {
 
 export const SKYBOX_FACES = ['right', 'left', 'top', 'bottom', 'front', 'back'];
 
+// How bright the background renders, as a multiplier on its own texture.
+// 1.0 = the raw image. Lower it to push the sky behind the still life.
+const SKYBOX_BRIGHTNESS = 0.45;
+
 export function buildSkybox(scene) {
     const textureLoader = new THREE.TextureLoader();
 
@@ -151,7 +155,17 @@ export function buildSkybox(scene) {
     const skybox = new THREE.Mesh(
         new THREE.BoxGeometry(1000, 1000, 1000),
         SKYBOX_FACES.map((face) => {
-            const mat = new THREE.MeshBasicMaterial({ side: THREE.BackSide }); // maps set by loadSkybox()
+            // color acts as a multiplier over the cube-map texture, so a value
+            // below white dims the whole background. The raw nebula images read
+            // far too bright behind a dim, candle-lit still life and flattened
+            // the contrast between the scene and its backdrop; SKYBOX_BRIGHTNESS
+            // pushes the sky back so the objects stay the brightest thing on
+            // screen. (The ambient light sampled from the sky is unaffected —
+            // that normalises hue separately, see averageFaceColor.)
+            const mat = new THREE.MeshBasicMaterial({
+                side: THREE.BackSide,                      // maps set by loadSkybox()
+                color: new THREE.Color().setScalar(SKYBOX_BRIGHTNESS),
+            });
             injectSkyboxFlow(mat, 'skybox_flow_' + face);
             return mat;
         })
@@ -262,9 +276,26 @@ const STAR_ROTATE_SPEED = 0.03;
 
 export function buildStars(scene) {
     const STAR_COUNT = 1000;
+    // Stars used to be scattered through a ±100 CUBE centred on the origin, which
+    // put a share of them inside the room — visible as bright specks floating in
+    // front of the walls and through the table. Spawning them on a spherical
+    // SHELL instead (well outside the 14 × 7 × 14 room) keeps the field looking
+    // the same from the centre while guaranteeing none can be indoors.
+    const STAR_MIN_RADIUS = 45;   // comfortably beyond the room's far corner (~10)
+    const STAR_MAX_RADIUS = 110;
     const starPositions = new Float32Array(STAR_COUNT * 3);
     const starColor = new Float32Array(STAR_COUNT * 3);
-    for (let i = 0; i < STAR_COUNT * 3; i++) starPositions[i] = (Math.random() - 0.5) * 200;
+    for (let i = 0; i < STAR_COUNT; i++) {
+        // Uniform direction: taking z uniformly in [-1,1] avoids the clustering
+        // at the poles you get from picking two angles at random.
+        const z     = Math.random() * 2 - 1;
+        const theta = Math.random() * Math.PI * 2;
+        const r     = Math.sqrt(1 - z * z);
+        const dist  = STAR_MIN_RADIUS + Math.random() * (STAR_MAX_RADIUS - STAR_MIN_RADIUS);
+        starPositions[i * 3]     = Math.cos(theta) * r * dist;
+        starPositions[i * 3 + 1] = z * dist;
+        starPositions[i * 3 + 2] = Math.sin(theta) * r * dist;
+    }
     for (let i = 0; i < STAR_COUNT * 3; i += 3) { starColor[i] = 1; starColor[i + 1] = 0.9; starColor[i + 2] = 0.8; }
 
     const starGeometry = new THREE.BufferGeometry();

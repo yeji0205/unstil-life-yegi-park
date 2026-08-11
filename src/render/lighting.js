@@ -162,19 +162,29 @@ export function setupLighting(scene) {
     directionalLight.castShadow = true;
     // Keep the map at 1024: 2048 quadruples the per-frame shadow-pass cost and
     // tanked the framerate for no visual gain worth it here.
+    //
+    // Instead of a bigger map, use the one we have more densely. The shadow
+    // camera was framing ±8 units — far wider than anything that casts a visible
+    // shadow — so most of its resolution fell on empty floor. Tightening it to
+    // ±5 puts ~2.5× more texels on the table and the objects standing on it, at
+    // zero runtime cost, which is what actually closes the gap between the agate
+    // and its contact shadow: a coarse shadow map needs a large normalBias to
+    // hide its own stair-stepping, and normalBias is precisely what pushes the
+    // shadow away from the object ("peter-panning").
+    //
+    // With the sharper map, normalBias can drop to a quarter of what it was and
+    // the shadow meets the stone where it touches the table. Keep the frustum
+    // wide enough for the table's shadow on the floor and the objects' shadows
+    // on the walls — anything outside it silently stops casting.
     directionalLight.shadow.mapSize.set(1024, 1024);
-    directionalLight.shadow.bias       = -0.001; // prevents shadow acne (self-shadowing stripes)
-    directionalLight.shadow.normalBias =  0.004; // normalBias pushes the shadow lookup along the
-                                                 // surface normal, which detaches the contact
-                                                 // shadow from small objects (the stone) — the
-                                                 // "peter-panning" gap. Lowered from 0.008 to
-                                                 // shrink that gap while staying acne-free at 1024.
+    directionalLight.shadow.bias       = -0.0006;
+    directionalLight.shadow.normalBias =  0.001;
     directionalLight.shadow.camera.near = 0.5;
-    directionalLight.shadow.camera.far  = 30;
-    directionalLight.shadow.camera.left = -8;
-    directionalLight.shadow.camera.right = 8;
-    directionalLight.shadow.camera.top  = 8;
-    directionalLight.shadow.camera.bottom = -8;
+    directionalLight.shadow.camera.far  = 26;
+    directionalLight.shadow.camera.left = -5;
+    directionalLight.shadow.camera.right = 5;
+    directionalLight.shadow.camera.top  = 5;
+    directionalLight.shadow.camera.bottom = -5;
     scene.add(directionalLight);
 
     // Converts the two angles above into the light's XYZ position. Called once

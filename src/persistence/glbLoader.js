@@ -103,7 +103,7 @@ export const OBJECT_DEFS = [
     { file: 'asset/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart: 0 },
     { file: 'asset/agate.glb',        label: 'stone', targetHeight: 0.55,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.15, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart: 0, recenterXZ: true },
     { file: 'asset/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart: 0 },
-    { file: 'asset/bear_skeleton.glb',label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 0 },
+    { file: 'asset/bear_ribbon.glb',  label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 0 },
 ];
 
 // ─── Table geometry options ───────────────────────────────────────────────────
@@ -125,17 +125,54 @@ export function tableKindForLabel(label) {
 }
 
 // ─── Objects that come BACK from space ────────────────────────────────────────
-// The journey changes the still life: after the objects dissolve away in space,
-// the ones that re-materialize on the way home are not the ones that left. Each
-// entry replaces that slot's GLB while keeping the slot's placement and timing
-// (position, height, float params) — see applyReturnObjects().
-const RETURN_OBJECT_FILES = {
-    teddy: 'asset/bear_skeleton2.glb',
-    stone: 'asset/quartz_biface.glb',
-    tulip: 'asset/daffodil.glb',
+// The journey changes the still life: the objects that re-materialize on the way
+// home are not the ones that left. Each slot cycles through this list — index 0
+// is what OBJECT_DEFS starts with, and every return advances one step and wraps
+// round — so repeated trips keep changing the arrangement instead of settling on
+// one fixed "after" state.
+//
+// `offsetY` overrides that variant's vertical placement: a fixed value can't suit
+// two different shapes. The agate is rounded and wants sinking 0.15 into the
+// tabletop so it reads as settled, but the quartz biface is flat-bottomed and the
+// same offset drove it THROUGH the table — it sits at 0.
+const OBJECT_VARIANTS = {
+    teddy: [{ file: 'asset/bear_ribbon.glb' },              { file: 'asset/bear_skeleton.glb' }],
+    stone: [
+        { file: 'asset/agate.glb', offsetY: -0.15 },
+        // The biface arrives balanced upright on a narrow point, which reads as
+        // perched rather than placed. layFlat measures it and rests it on its
+        // largest face. targetHeight drops with it: that value normalises HEIGHT,
+        // so a stone laid flat would otherwise be scaled up until it stood 0.55
+        // tall again — a huge slab. 0.40 keeps a low profile while giving it
+        // presence next to the agate. offsetY beds it very slightly into the
+        // surface so its irregular underside doesn't touch at a single point.
+        { file: 'asset/quartz_biface.glb', layFlat: true, targetHeight: 0.48, offsetY: -0.04 },
+    ],
+    tulip: [{ file: 'asset/tulip.glb' },                    { file: 'asset/daffodil.glb' }],
 };
 
-const TABLE_MATERIAL_COLOR = 0x8a5a34; // matches the room's warm wood tones
+// The mannequin has no second model, so it changes finish instead of shape —
+// same silhouette, clearly not the same object. Cycles alongside the models:
+// original wood → dark walnut → original → walnut …
+// `null` means "put the original material back", which is why the recolour has
+// to be reversible (see applyDummyFinish).
+const DUMMY_FINISHES = [null, 0x7a5334];
+
+// Manual rotation trim for the stone, in degrees, applied ON TOP of layFlat's
+// automatic alignment. Exposed in the GUI ("Stone Orientation") because
+// bounding-box alignment can only guarantee the flattest BOX face points down —
+// a scanned rock's real resting face is often a few degrees off that, which
+// reads as the stone lying at a slight tilt. Dial it in on screen, then paste the
+// numbers here as the new default.
+export const stoneOrientation = { xDeg: 0, yDeg: 0, zDeg: 0 };
+
+// Gallery-plinth white. The Box and Cylinder tables aren't meant to read as
+// furniture — they're the abstract pedestal a still life gets displayed ON, so
+// they take the off-white of a museum plinth rather than the room's wood tones.
+// Very slightly warm (not pure #fff) so it sits in the room's light instead of
+// glaring, and matte: a plinth is painted MDF, never glossy.
+const TABLE_MATERIAL_COLOR = 0xe8e4dc;
+const TABLE_MATERIAL_ROUGHNESS = 0.95;
 
 // Total height of the primitive tables. Sized to match the default table.glb's
 // surface height (its top sits ~1.88 above the floor): the primitives were only
@@ -147,7 +184,7 @@ const PRIMITIVE_TABLE_HEIGHT = 1.88;
 // Material for the primitive tables — carries the user-uploaded texture (if any)
 // so Box/Cylinder pick it up on every (re)build.
 function buildPrimitiveTableMaterial() {
-    const mat = new THREE.MeshStandardMaterial({ color: TABLE_MATERIAL_COLOR, roughness: 0.85, metalness: 0.0 });
+    const mat = new THREE.MeshStandardMaterial({ color: TABLE_MATERIAL_COLOR, roughness: TABLE_MATERIAL_ROUGHNESS, metalness: 0.0 });
     applyPrimitiveMaps(mat); // carry over any user-uploaded maps
     return mat;
 }
@@ -382,9 +419,10 @@ export function setTable(scene, kind, opts = {}) {
 // swapping while everything is dissolved away: a fresh object defaults to 0
 // (fully solid), so without this it would pop into view for a frame before the
 // reverse-dissolve took over.
-function replaceStageObject(scene, label, file, { onObjectReady, initialProgress = 0 } = {}) {
+function replaceStageObject(scene, label, variant, { onObjectReady, initialProgress = 0 } = {}) {
     const def = OBJECT_DEFS.find((d) => d.label === label);
-    if (!def || !file) return;
+    if (!def || !variant?.file) return;
+    const { file, ...overrides } = variant; // e.g. a per-variant offsetY
 
     const oldIndex = stageObjects.findIndex((e) => e.label === label);
     if (oldIndex !== -1) {
@@ -402,25 +440,91 @@ function replaceStageObject(scene, label, file, { onObjectReady, initialProgress
     }
 
     const surfaceY = tableState.floorY + tableState.topOffset;
-    loadStageObject({ ...def, file, initialProgress }, surfaceY, scene, {
+    loadStageObject({ ...def, file, ...overrides, initialProgress }, surfaceY, scene, {
         onAssetLoaded: () => {},
         onAssetFailed: (err) => console.error(`Failed to load "${file}":`, err),
         onObjectReady,
     });
 }
 
-// Swaps in the "returned" versions of the objects (see RETURN_OBJECT_FILES).
-// Called once, at the moment everything has finished dissolving in space — while
-// the objects are invisible — so the replacements are what reverse-dissolve back
-// into the room. initialProgress: 1 keeps them fully dissolved until the
+// Advances every cycling slot to its NEXT variant. Called at the moment
+// everything has finished dissolving in space — while the objects are invisible —
+// so the replacements are what reverse-dissolve back into the room and the change
+// is never seen happening. initialProgress: 1 keeps them fully dissolved until the
 // reverse-dissolve drives them back in step with everything else.
-let returnObjectsApplied = false;
+//
+// The counter persists, so each trip out and back shows a different arrangement
+// rather than one permanent "after" state.
+let returnCycle = 0;
 export function applyReturnObjects(scene, { onObjectReady } = {}) {
-    if (returnObjectsApplied) return; // one-way change; later trips keep these
-    returnObjectsApplied = true;
-    for (const [label, file] of Object.entries(RETURN_OBJECT_FILES)) {
-        replaceStageObject(scene, label, file, { onObjectReady, initialProgress: 1 });
+    returnCycle++;
+    for (const [label, variants] of Object.entries(OBJECT_VARIANTS)) {
+        replaceStageObject(scene, label, variants[returnCycle % variants.length],
+            { onObjectReady, initialProgress: 1 });
     }
+
+    applyDummyFinish(DUMMY_FINISHES[returnCycle % DUMMY_FINISHES.length]);
+}
+
+// Re-applies stoneOrientation to the stone that's currently on the table, and
+// re-seats it afterwards. Rotating changes which part of the model is lowest, so
+// without the re-seat a tilt leaves the stone hovering or buried.
+export function applyStoneOrientation() {
+    const entry = stageObjects.find((e) => e.label === 'stone');
+    const inner = entry?.innerMesh;
+    const base  = inner?.userData.baseRot;
+    if (!inner || !base) return;
+
+    inner.rotation.set(
+        base.x + THREE.MathUtils.degToRad(stoneOrientation.xDeg),
+        base.y + THREE.MathUtils.degToRad(stoneOrientation.yDeg),
+        base.z + THREE.MathUtils.degToRad(stoneOrientation.zDeg)
+    );
+
+    const group = entry.mesh;
+    group.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(group);
+    const surfaceY = tableState.floorY + tableState.topOffset;
+    group.position.y += (surfaceY + entry.offsetY) - box.min.y;
+    entry.restY = group.position.y;
+}
+
+// Recolour-in-place, no reload. The materials were already cloned per submesh in
+// loadStageObject, so tinting here can't leak into any other object.
+//
+// The recolour must be REVERSIBLE, and originally it wasn't: it overwrote
+// material.color and set map = null outright, which threw the original look away.
+// So when the cycle came back round to "original" there was nothing to restore —
+// the mannequin just kept whatever finish it was last given (and with a 3-entry
+// list it landed on the darker grey, which is why the third trip looked darker
+// still instead of returning to bare wood). Stashing the original colour and map
+// the first time makes `null` genuinely mean "undo".
+function applyDummyFinish(finish) {
+    const dummy = stageObjects.find((e) => e.label === 'dummy');
+    if (!dummy) return;
+
+    dummy.mesh.traverse((child) => {
+        if (!child.isMesh || !child.material) return;
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        mats.forEach((m) => {
+            if (!m) return;
+            // Stash once, before the first modification.
+            if (m.userData.origColor === undefined) {
+                m.userData.origColor = m.color ? m.color.clone() : null;
+                m.userData.origMap   = m.map ?? null;
+            }
+            if (finish === null) {
+                if (m.userData.origColor) m.color.copy(m.userData.origColor);
+                m.map = m.userData.origMap;
+            } else {
+                // A colour is multiplied OVER a texture, so the grain has to go —
+                // otherwise this only darkens the wood instead of restaining it.
+                m.map = null;
+                m.color?.set(finish);
+            }
+            m.needsUpdate = true;
+        });
+    });
 }
 
 // Called once per entry in OBJECT_DEFS, after the table surface Y is known.
@@ -436,10 +540,54 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
     gltfLoader.load(def.file, (gltf) => {
         const mesh = gltf.scene;
 
+        scene.add(mesh);
+
+        // Lay the model down before anything is measured.
+        //
+        // `layFlat` MEASURES the model and tips it so its thinnest dimension
+        // becomes the vertical one — i.e. it always comes to rest on its largest
+        // face, like a stone set down on a table. That's more reliable than a
+        // hardcoded angle: which way a scanned model happens to face is arbitrary
+        // (its node transforms can already rotate it), so guessing "90° about X"
+        // is right for one file and wrong for the next. Measuring can't guess
+        // wrong. `rotXDeg`/`rotZDeg` remain for tipping a model deliberately.
+        //
+        // This has to happen BEFORE box0, because rotating changes which
+        // dimension is "height" and therefore the scaleFactor. It's also applied
+        // to the INNER mesh, which only works for recenterXZ objects: those get
+        // wrapped in a group that carries the floating, so the mesh's own
+        // rotation survives. On any other object floating.js overwrites
+        // rotation.x/z every frame with the drift wobble.
+        if (def.recenterXZ) {
+            if (def.layFlat) {
+                mesh.updateWorldMatrix(true, true);
+                const s = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3());
+                const HALF = Math.PI / 2;
+                // Smallest extent → vertical. X is thinnest: roll about Z. Z is
+                // thinnest: pitch about X. Y already thinnest: nothing to do.
+                if (s.x <= s.y && s.x <= s.z)      mesh.rotation.set(0, 0, HALF);
+                else if (s.z <= s.x && s.z <= s.y) mesh.rotation.set(HALF, 0, 0);
+                // Remember the auto-aligned pose so the GUI trim below is always
+                // applied relative to it, not accumulated on each adjustment.
+                mesh.userData.baseRot = mesh.rotation.clone();
+                // Bounding-box alignment only guarantees the flattest BOX side is
+                // down; a scanned rock's actual resting face can still sit at an
+                // angle to its box. stoneOrientation is the manual trim on top,
+                // exposed in the GUI so the final pose can be eyeballed.
+                mesh.rotation.x += THREE.MathUtils.degToRad(stoneOrientation.xDeg);
+                mesh.rotation.y += THREE.MathUtils.degToRad(stoneOrientation.yDeg);
+                mesh.rotation.z += THREE.MathUtils.degToRad(stoneOrientation.zDeg);
+            } else if (def.rotXDeg || def.rotZDeg) {
+                mesh.rotation.set(
+                    THREE.MathUtils.degToRad(def.rotXDeg ?? 0), 0,
+                    THREE.MathUtils.degToRad(def.rotZDeg ?? 0)
+                );
+            }
+        }
+
         // Measure the source size FIRST so scaleFactor is known before the
         // dissolve shader is injected — the shader needs it (as uScale) to
         // normalize its blob size to world space (see injectDissolve).
-        scene.add(mesh);
         mesh.updateWorldMatrix(true, true);
         const box0 = new THREE.Box3().setFromObject(mesh);
         const scaleFactor = def.targetHeight / (box0.max.y - box0.min.y);
@@ -529,6 +677,10 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
 
         const entry = {
             mesh:         obj3d, // the node that floats/rotates (group for recenterXZ, else the mesh)
+            // The model inside that group. Rotating THIS is safe — floating.js
+            // drives the group, so an orientation tweak here isn't overwritten.
+            innerMesh:    def.recenterXZ ? mesh : null,
+            offsetY:      def.offsetY ?? 0, // needed to re-seat it after a rotation change
             label:        def.label,
             uProgress:    uObjProgress,
             uTime:        uObjTime,
@@ -599,15 +751,35 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             bR.quaternion.copy(sitR);
             bL.quaternion.copy(sitL);
 
-            // Rough initial Y from the STANDING (bind-pose) foot — just a
-            // starting estimate. The bind-pose box can't know how far the SIT
-            // pose (applied above) lifts the visible bottom, so floating.js
-            // measures the actual posed low point once and grounds the bear on
-            // the table surface (see the one-time grounding block there). That
-            // self-corrects regardless of pose, instead of a hand-tuned factor.
-            mesh.position.y = surfaceY + Math.abs(box1.min.y) * 0.55;
+            // Ground the bear on the table RIGHT NOW, in the sitting pose it was
+            // just put into. This used to be deferred to floating.js, which had to
+            // wait ~45 frames at p < 0.1 for the pose to settle — so the bear
+            // visibly hung above the tabletop and dropped into place a moment
+            // after every other object had already settled. Worse, a bear swapped
+            // in on the way home started that wait all over again.
+            //
+            // Forcing the matrices and skeleton up to date makes the measurement
+            // valid immediately: walk the skinned vertices through the CURRENT
+            // pose (applyBoneTransform is the same maths raycasting uses), find
+            // the true low point, and shift the mesh so it lands on the surface.
+            mesh.position.y = surfaceY + Math.abs(box1.min.y) * 0.55; // rough start
+            mesh.updateMatrixWorld(true);
+            child.skeleton.update();
+
+            const posAttr = child.geometry.getAttribute('position');
+            const v = new THREE.Vector3();
+            let minY = Infinity;
+            for (let i = 0; i < posAttr.count; i += 2) { // stride 2: plenty for a low point
+                v.fromBufferAttribute(posAttr, i);
+                child.applyBoneTransform(i, v);
+                v.applyMatrix4(child.matrixWorld);
+                if (v.y < minY) minY = v.y;
+            }
+            if (minY !== Infinity) {
+                // 2 cm embed so it reads as sitting ON the table, never hovering.
+                mesh.position.y += (surfaceY - minY) - 0.02;
+            }
             entry.restY = mesh.position.y;
-            entry.skinnedMesh = child; // for the runtime grounding measurement
 
             legBones = { bR, bL, standR, standL, sitR, sitL, straightR, straightL };
         });

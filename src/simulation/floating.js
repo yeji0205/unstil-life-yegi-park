@@ -1,7 +1,3 @@
-import * as THREE from 'three';
-
-const _skinV = new THREE.Vector3(); // scratch for the one-time teddy grounding
-
 // Floating motion described by (see architecture.md):
 //
 //   P(t) = P_initial + p · (H + A ⊙ sin(ω t))
@@ -121,41 +117,6 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
             bL.quaternion.slerpQuaternions(sitL, straightL, boneT);
         }
 
-        // ── Grounding of the sitting bear ──────────────────────────────────
-        // The bear is placed at load from its STANDING (bind-pose) box, but the
-        // SIT pose lifts its real low point well above that — so it floated
-        // above the table. While it's at rest, measure the actual skinned-vertex
-        // low point (applyBoneTransform = the skinning maths raycasting uses, so
-        // it reflects the POSED geometry) and set restY so that point lands on
-        // the table. The sit pose takes a few frames to fully propagate into the
-        // bone world-matrices, so instead of measuring once we re-measure each
-        // frame and only LOCK the result once it stops changing — robust to how
-        // fast the pose settles or the framerate.
-        if (obj.skinnedMesh && !obj.grounded && p < 0.1) {
-            // Let the sit pose fully propagate into the bone world-matrices first
-            // (it takes a few dozen frames), THEN measure once and lock. restY is
-            // held fixed until the lock so the measurement isn't chasing a moving
-            // position (matrixWorld lags the position by a frame). Grounding runs
-            // while the bear is hidden behind the intro, so the settle is unseen.
-            obj._grFrames = (obj._grFrames || 0) + 1;
-            if (obj._grFrames >= 45) {
-                const sk = obj.skinnedMesh;
-                sk.skeleton.update();
-                const posAttr = sk.geometry.getAttribute('position');
-                let minY = Infinity;
-                for (let i = 0; i < posAttr.count; i += 2) { // stride 2: fast, matches the rendered low point
-                    _skinV.fromBufferAttribute(posAttr, i);
-                    sk.applyBoneTransform(i, _skinV);
-                    _skinV.applyMatrix4(sk.matrixWorld);
-                    if (_skinV.y < minY) minY = _skinV.y;
-                }
-                const surfaceY = tableState.floorY + tableState.topOffset;
-                // pivot that puts the measured low point on the surface, minus a
-                // 2 cm embed so it reads as sitting ON the table, never hovering.
-                obj.restY = surfaceY - (minY - obj.mesh.position.y) - 0.02;
-                obj.grounded = true;
-            }
-        }
     }
 
     // ── Table floating ───────────────────────────────────────────────────────
