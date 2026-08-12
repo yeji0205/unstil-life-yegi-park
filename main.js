@@ -16,6 +16,7 @@ import {
 } from './src/persistence/glbLoader.js';
 
 import { createLoadingScreen } from './src/ui/loadingScreen.js';
+import { createPerfHud } from './src/ui/perfHud.js';
 import { createSoundHint } from './src/ui/soundHint.js';
 import { createDebugGUI } from './src/ui/gui.js';
 
@@ -40,7 +41,7 @@ const { updateStars } = buildStars(scene);
 buildRoom(scene);
 
 // ─── Lighting ────────────────────────────────────────────────────────────────
-const { updateLighting, setSpacePreset, setShadowQuality } = setupLighting(scene);
+const { updateLighting, setSpacePreset } = setupLighting(scene);
 
 // Swaps the background AND its matching lighting tint together — the GUI's
 // "Skybox" dropdown is the only control needed; there's no separate lighting
@@ -120,7 +121,6 @@ const ambientSound = createAmbientSoundTracks();
 // ─── Debug GUI ───────────────────────────────────────────────────────────────
 const gui = createDebugGUI({
     uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor,
-    onRevealPainting: () => paintingIntro?.beginDissolve(),
     skyboxOptions: SKYBOX_OPTIONS, defaultSkybox: SKYBOX_OPTIONS[0], skyboxCustomLabel: SKYBOX_CUSTOM_LABEL,
     onSkyboxChange: selectBackground,
     onCustomSkyboxFiles: selectCustomSkybox,
@@ -131,9 +131,6 @@ const gui = createDebugGUI({
     onRoomTextureFile: (surface, slotLabel, file) => setRoomTexture(surface, slotLabel, file),
     onRoomTextureReset: (surface) => resetRoomTextures(surface),
     onTableColorChange: (hex) => setTableColor(hex),
-    onRenderScaleChange: (v) => adaptiveQuality.setCeiling(v),
-    onShadowQualityChange: (size) => setShadowQuality(size),
-    onAdaptiveQualityToggle: (on) => adaptiveQuality.setEnabled(on),
     // Swapping the stone reloads just that one object, so it needs a fresh GUI
     // folder — the old one is destroyed with the object it described.
     onStoneChange: (label) => setStone(scene, label, {
@@ -191,14 +188,19 @@ const loadingScreen = createLoadingScreen(LOADING_TOTAL, () => {
         phaseMachine.enableInteraction();
     };
     if (paintingIntro) {
-        // Show the painting and wait — the viewer dissolves it with the GUI's
-        // "Reveal Scene" button (onRevealPainting), controlling the timing.
+        // Show the painting and wait. Note the GUI no longer carries a reveal
+        // button (SHOW_INTRO_PAINTING is off, so there's nothing to reveal) —
+        // re-enabling the intro means restoring one, or arming it on a click.
         paintingIntro.arm(startInteraction);
     } else {
         // Intro disabled — go straight into the interactive 3D scene.
         startInteraction();
     }
 });
+// Frame-time / GPU readout, bottom-left. Delete this line and the .update()
+// call in the loop to remove it.
+const perfHud = createPerfHud(renderer);
+
 loadScene(scene, {
     onAssetLoaded: () => loadingScreen.markAssetLoaded(),
     onAssetFailed: () => loadingScreen.markAssetLoaded(), // still advance so the loading screen doesn't hang
@@ -228,6 +230,7 @@ function animate() {
     gui.updateCameraDebug(camera.position);
 
     adaptiveQuality.update(dt);
+    perfHud.update();
     cameraControls.controls.update();
     // With the intro active, render() does its two-pass cross-dissolve; without
     // it, a single straight render at full performance.

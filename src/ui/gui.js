@@ -61,11 +61,9 @@ function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Ca
 // button returned here as `dissolveController`.
 export function createDebugGUI({
     uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor,
-    onRevealPainting,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
     onRoomTextureFile, onRoomTextureReset, onTableColorChange,
-    onRenderScaleChange, onAdaptiveQualityToggle, onShadowQualityChange,
     onStoneChange, onCustomStoneFile,
     roomSoundOptions, defaultRoomSound, spaceSoundOptions, defaultSpaceSound,
     dissolveSoundOptions, defaultDissolveSound, soundCustomLabel,
@@ -76,16 +74,6 @@ export function createDebugGUI({
 }) {
     const gui = new GUI({ title: 'Unstil Life Debug' });
     gui.hide(); // hidden during loading screen; shown once the loading dissolve completes
-
-    // Reveal button — the intro painting stays on screen until this is clicked,
-    // then it dissolves into the live scene. Lets the viewer control the timing.
-    // Disables itself after one use (there's nothing left to dissolve).
-    const revealActions = {
-        reveal: () => {
-            if (onRevealPainting?.()) revealController.disable();
-        },
-    };
-    const revealController = gui.add(revealActions, 'reveal').name('▶ Reveal Scene (dissolve painting)');
 
     // Button lives in the GUI panel. Disabled until phase === 'space'.
     const dissolveActions = { dissolve: () => onDissolveClick() };
@@ -117,7 +105,6 @@ export function createDebugGUI({
     // ending with the read-only camera readout — nothing to change there, so it
     // belongs at the bottom.
     const sceneFolder    = gui.addFolder('Scene');
-    const perfFolder     = gui.addFolder('Performance');
     const dissolveFolder = gui.addFolder('Dissolve Look');
     const contentFolder  = gui.addFolder('Scene Contents');
 
@@ -126,22 +113,6 @@ export function createDebugGUI({
     // and coast (floaty); lower = they track the wheel closely (snappy, but the
     // float/bob gets swamped and reads as dragging). See scrollSmoothing.
     sceneFolder.add(scrollSmoothing, 'tau', 0.08, 0.6, 0.01).name('Scroll Drift (float ⇢)');
-
-    // Sharpness vs speed. The scene is fill-bound, so cost rises with the SQUARE
-    // of this: 1.2 shades 44% more pixels than 1.0. Watch the fps readout while
-    // dragging and stop where it stops being worth it.
-    perfFolder.add({ q: 1.0 }, 'q', 0.55, 1.0, 0.05).name('Render Quality (max)')
-        .onChange(onRenderScaleChange);
-    // On by default: the piece lowers its own resolution on slow machines so it
-    // stays smooth on hardware we can't test. Turn off to pin the quality above.
-    perfFolder.add({ adaptive: true }, 'adaptive').name('Auto-adjust for fps')
-        .onChange(onAdaptiveQualityToggle);
-    // Shadow map resolution. Unlike render quality this is NOT auto-adjusted:
-    // changing it mid-scene would be a visible step in how sharp every shadow
-    // edge is, so it stays a deliberate choice. 2048 is the default; drop to
-    // 1024 on weak hardware (it's 4× cheaper), raise to 4096 for stills.
-    perfFolder.add({ shadows: 2048 }, 'shadows', [1024, 2048, 4096]).name('Shadow Detail')
-        .onChange(onShadowQualityChange);
 
     dissolveFolder.add(uDissolveEdge, 'value', 0, 0.8, 0.01).name('Dissolve Edge');
     dissolveFolder.add(uNoiseFreq,    'value', 0.1, 1.5, 0.01).name('Noise Frequency');
@@ -393,9 +364,13 @@ export function createDebugGUI({
     // full texture set can be swapped in from disk without touching the code.
     // Uploads tile at the same world scale as the built-in sets (see
     // setRoomTexture), so they don't need to match any particular resolution.
+    // Closed by default: five map slots × two surfaces is a very tall list, and
+    // it's a set-up control rather than one you reach for while looking at the scene.
     const roomTexFolder = gui.addFolder('Room Textures');
+    roomTexFolder.close();
     ROOM_SURFACES.forEach((surface) => {
         const sub = roomTexFolder.addFolder(surface === 'wall' ? 'Walls + Ceiling' : 'Floor');
+        sub.close();
         Object.keys(ROOM_TEXTURE_SLOTS).forEach((slotLabel) => {
             const inp = document.createElement('input');
             inp.type = 'file';
@@ -460,6 +435,7 @@ export function createDebugGUI({
     // loose folders appended to the very bottom of the panel — and so the
     // camera readout below stays last no matter when the models arrive.
     const objectsFolder = gui.addFolder('Objects');
+    objectsFolder.close();
 
     // Camera position display — read-only, updated every frame via
     // updateCameraDebug. Last in the panel: there's nothing to change here, it's

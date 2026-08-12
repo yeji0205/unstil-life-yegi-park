@@ -61,15 +61,27 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
     if (tableState.object && collisionStrengthY > 0) {
         const tableTopY = tableState.object.position.y + tableState.topOffset;
         for (const obj of stageObjects) {
-            const sphereBottomY = (obj._baseY + obj.repelY) + obj.sphereCenterLocalY - obj.radius;
-            if (sphereBottomY < tableTopY) {
-                obj.repelY += (tableTopY - sphereBottomY) * collisionStrengthY;
+            // The object's real underside, not a bounding sphere — see
+            // bottomLocalY in glbLoader for why that distinction is the whole
+            // shadow-gap bug.
+            const objBottomY = (obj._baseY + obj.repelY) + obj.bottomLocalY;
+            // Contact height honours the object's own offsetY, which is the
+            // second half of the gap. The rounded stones are placed 0.02 INTO the
+            // tabletop on purpose, so they read as settled rather than balanced;
+            // a collision that insisted on the bare surface lifted them back out
+            // of it the moment it engaged at p ≈ 0.15, and re-opened a small gap
+            // that looked permanent because it was there for the whole scroll.
+            // Using the same rule here as the initial seating means resting and
+            // moving agree.
+            const contactY = tableTopY + (obj.offsetY ?? 0);
+            if (objBottomY < contactY) {
+                obj.repelY += (contactY - objBottomY) * collisionStrengthY;
             }
         }
     }
 
     // Step 3b — vase + tulip lift together. The flowers sit ~0.68 up inside the
-    // vase, so only the VASE's collision sphere touches the table. Early in the
+    // vase, so only the VASE's underside touches the table. Early in the
     // rise the table floats up faster than the objects' own float, so the table
     // surface pushes the vase upward (repelY) while the free-floating tulip,
     // sitting above the surface, gets no such push — leaving it behind. THAT is
@@ -124,19 +136,22 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
             // stretch depends on how the two rises happen to line up.
             //
             // Clearance can't be wrong about it: measure how far the bear's
-            // collision sphere sits above the tabletop and unfold across that.
+            // underside sits above the tabletop and unfold across that.
             // Touching the table → folded. Well above it → straight. Table gone
             // (in space) → straight. No thresholds to re-tune, and it costs one
             // subtraction — this is the cheap arithmetic version of the raycast
             // idea, with no ray and no BVH.
             //
-            // Thresholds are in units of the bear's own collision radius so they
-            // hold if the model is ever rescaled.
+            // Thresholds are in units of the bear's own size (its bounding-sphere
+            // radius) so they hold if the model is ever rescaled.
             const { bR, bL, sitR, sitL, straightR, straightL } = obj.legBones;
             let boneT = 1; // no table underneath → nothing to overlap, hang free
             if (tableTopY !== null) {
-                const bottomY   = obj.mesh.position.y + obj.sphereCenterLocalY - obj.radius;
-                const clearance = (bottomY - tableTopY) / Math.max(obj.radius, 1e-4);
+                const bottomY   = obj.mesh.position.y + obj.bottomLocalY;
+                // Measured against the same contact height the collision uses, so
+                // "resting" reads as exactly zero clearance.
+                const contactY  = tableTopY + (obj.offsetY ?? 0);
+                const clearance = (bottomY - contactY) / Math.max(obj.radius, 1e-4);
                 const LEG_CLEAR_START = 0.15, LEG_CLEAR_END = 1.20; // in radii
                 const raw = (clearance - LEG_CLEAR_START) / (LEG_CLEAR_END - LEG_CLEAR_START);
                 const bt  = Math.min(1, Math.max(0, raw));

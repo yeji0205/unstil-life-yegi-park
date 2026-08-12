@@ -940,15 +940,30 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             mesh.add(new THREE.Points(particleGeom, particleMat));
         }
 
-        // Bounding sphere — used for collision detection.
-        // radius at 0.85× gives tighter fit than full diagonal, avoids jitter
-        // on very irregular shapes while still preventing visible overlap.
-        // sphereCenterLocalY is the sphere centre's Y offset from the mesh pivot
-        // (box1 was computed with mesh at y=0, so this offset is constant).
+        // ── Contact height, and why it is NOT the bounding sphere ───────────
+        // The table collision used to work from a bounding sphere, and that is
+        // the shadow gap under the stones. A sphere's radius is set by an
+        // object's WIDEST axis, so for anything flat and broad — which is every
+        // one of the rocks — the sphere reaches far below the object's actual
+        // underside. Resting that sphere on the tabletop therefore parks the rock
+        // in mid-air: for the quartz biface (≈0.56 × 0.49 footprint, 0.22 thick)
+        // the sphere bottom sits ~0.2 units below the stone itself, so the stone
+        // hovered that far up. With the key light at 55° elevation, a 0.2 hover
+        // throws its shadow 0.2/tan55° ≈ 0.14 to the side — the gap, appearing
+        // and disappearing with the collision strength as you scrolled.
+        //
+        // bottomLocalY is the lowest actual vertex instead (box1 was measured
+        // with the mesh at y = 0, so it's a constant offset from the pivot).
+        // Contact is a question about the underside, and this answers exactly
+        // that, for a flat slab and a round vase alike.
+        const bottomLocalY = box1.min.y;
+
+        // The sphere is still worth having, but only as a SIZE: the bear's leg
+        // unfold scales its thresholds by it, where "roughly how big is this
+        // object" is all that's wanted and the widest-axis bias is harmless.
         const sphere = new THREE.Sphere();
         box1.getBoundingSphere(sphere);
-        const radius             = sphere.radius * 0.85;
-        const sphereCenterLocalY = sphere.center.y; // Y of sphere centre in mesh-local space
+        const radius = sphere.radius * 0.85;
 
         const entry = {
             mesh:         obj3d, // the node that floats/rotates (group for recenterXZ, else the mesh)
@@ -968,8 +983,8 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             shadowsKilled: false,
             spinY:        0,                    // cumulative auto-rotation (driven by simulation loop)
             rotYOffset:   def.rotYOffset ?? 0, // initial facing direction baked from GUI
-            radius,                // sphere radius for collision detection
-            sphereCenterLocalY,    // sphere centre Y above mesh pivot (for table collision)
+            bottomLocalY,          // lowest vertex Y relative to the pivot (table contact)
+            radius,                // rough object size, for scaling the leg-unfold thresholds
             repelX:       0,       // accumulated repulsion offset, decays each frame
             repelY:       0,
             repelZ:       0,
