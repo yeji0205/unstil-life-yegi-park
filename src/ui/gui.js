@@ -155,9 +155,11 @@ export function createDebugGUI({
                           <li><code>top</code> &amp; <code>bot</code> — up &amp; down</li>
                           <li><code>front</code> &amp; <code>back</code> — ahead &amp; behind</li>
                         </ul>
-                        <p style="margin:0 0 12px;font-size:14px;color:#6a6155;">Also accepted:
-                        east/west, up/down, north/south, posx/negx…, px/nx… — e.g.
-                        <code>myscene_right.png</code>.</p>
+                        <p style="margin:0 0 12px;font-size:14px;color:#6a6155;">Most skybox packs
+                        are already named this way and will just work. Also accepted:
+                        <code>rt/lf/up/dn/ft/bk</code>, <code>posx/negx…</code>,
+                        <code>px/nx…</code>, east/west/north/south — with or without a prefix,
+                        e.g. <code>myscene_rt.png</code>.</p>
                         <p style="margin:0 0 4px;"><b>Size:</b> all 6 the <b>same square size</b>
                         (e.g. 1024×1024 or 2048×2048). Non-square images are center-cropped, so
                         very wide/tall ones lose their edges.</p>
@@ -175,16 +177,30 @@ export function createDebugGUI({
     skyboxFileInput.addEventListener('change', () => {
         const files = skyboxFileInput.files;
         if (!files || files.length === 0) return;
-        const ok = onCustomSkyboxFiles(files);
-        if (!ok) {
+        // true on success; otherwise an array naming the faces it couldn't find,
+        // which is far more actionable than "something was wrong with the folder".
+        const result = onCustomSkyboxFiles(files);
+        if (result !== true) {
+            const missing = Array.isArray(result) ? result : [];
             showModal({
                 title: "Couldn't read all 6 faces",
                 bodyHTML: `
-                    <p style="margin:0 0 10px;">That folder didn't have one image for each of
-                    the six faces.</p>
-                    <p style="margin:0;">Make sure there are 6 images and that each filename
-                    contains one of: <code>right</code>, <code>left</code>, <code>top</code>,
-                    <code>bot</code>, <code>front</code>, <code>back</code>.</p>`,
+                    ${missing.length ? `<p style="margin:0 0 10px;">No image found for:
+                    <strong>${missing.join(', ')}</strong>.</p>` : ''}
+                    <p style="margin:0 0 10px;">Each of the six images needs a filename that
+                    says which face it is. Any of these spellings work:</p>
+                    <table style="margin:0 0 10px;border-collapse:collapse;font-size:14px;">
+                      <tr><td style="padding:2px 14px 2px 0;"><strong>right</strong></td><td><code>right</code> · <code>rt</code> · <code>posx</code> · <code>px</code> · <code>east</code></td></tr>
+                      <tr><td style="padding:2px 14px 2px 0;"><strong>left</strong></td><td><code>left</code> · <code>lf</code> · <code>negx</code> · <code>nx</code> · <code>west</code></td></tr>
+                      <tr><td style="padding:2px 14px 2px 0;"><strong>top</strong></td><td><code>top</code> · <code>up</code> · <code>posy</code> · <code>py</code></td></tr>
+                      <tr><td style="padding:2px 14px 2px 0;"><strong>bottom</strong></td><td><code>bottom</code> · <code>bot</code> · <code>dn</code> · <code>down</code> · <code>negy</code> · <code>ny</code></td></tr>
+                      <tr><td style="padding:2px 14px 2px 0;"><strong>front</strong></td><td><code>front</code> · <code>ft</code> · <code>posz</code> · <code>pz</code> · <code>north</code></td></tr>
+                      <tr><td style="padding:2px 14px 2px 0;"><strong>back</strong></td><td><code>back</code> · <code>bk</code> · <code>negz</code> · <code>nz</code> · <code>south</code></td></tr>
+                    </table>
+                    <p style="margin:0;font-size:14px;opacity:0.75;">Prefixes and suffixes are fine
+                    — <code>myscene_rt.png</code> and <code>skyBK.jpg</code> both work. Files
+                    numbered <code>0</code>–<code>5</code> can't be matched, since there's no way
+                    to tell a face number from an image size.</p>`,
                 confirmLabel: 'Got it',
                 cancelLabel: null,
             });

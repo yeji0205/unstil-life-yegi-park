@@ -195,19 +195,31 @@ export function buildSkybox(scene) {
         });
     }
 
-    // Accepted filename tokens per cube face — covers the common skybox naming
-    // conventions (right/left/top/bot/front/back, compass, posx/negx, px/nx).
-    // Matched as whole tokens (filename split on non-alphanumeric), NOT
-    // substrings, so e.g. "cube_bot" can't also match "back" via a stray "_b".
+    // Accepted filename tokens per cube face. There is no standard here — every
+    // skybox pack invents its own — so the list covers the conventions actually
+    // in circulation rather than insisting on one:
+    //   • words:        right / left / top / bottom / front / back
+    //   • abbreviations: rt / lf / up / dn / ft / bk  (the Quake-era set, very
+    //                    common in game-asset packs and free skybox downloads)
+    //   • axis names:   posx / negx, xpos / xneg, px / nx, xp / xn
+    //   • compass:      east / west / north / south
+    // Deliberately NOT included: bare numbers (0–5, 1–6). They appear in plenty
+    // of packs, but there's no way to tell a face index from an image size or a
+    // version suffix, and guessing wrong would silently build a scrambled sky —
+    // worse than saying the files couldn't be read.
     const FACE_ALIASES = {
-        right:  ['right', 'east',  'posx', 'px'],
-        left:   ['left',  'west',  'negx', 'nx'],
-        top:    ['top',   'up',    'posy', 'py'],
-        bottom: ['bot',   'bottom','down', 'negy', 'ny'],
-        front:  ['front', 'north', 'posz', 'pz'],
-        back:   ['back',  'south', 'negz', 'nz'],
+        right:  ['right',  'rt', 'east',  'posx', 'xpos', 'px', 'xp'],
+        left:   ['left',   'lf', 'west',  'negx', 'xneg', 'nx', 'xn'],
+        top:    ['top',    'up', 'zenith', 'posy', 'ypos', 'py', 'yp'],
+        bottom: ['bottom', 'bot', 'dn', 'down', 'nadir', 'negy', 'yneg', 'ny', 'yn'],
+        front:  ['front',  'ft', 'north', 'posz', 'zpos', 'pz', 'zp'],
+        back:   ['back',   'bk', 'south', 'negz', 'zneg', 'nz', 'zn'],
     };
-    function faceKeyForName(name) {
+
+    // Whole-token match: the filename is split on non-alphanumeric characters, so
+    // "cube_bot" offers ['cube','bot'] and can't accidentally match 'back' through
+    // a stray letter. This is the strict pass and runs first for every file.
+    function faceByToken(name) {
         const tokens = name.toLowerCase().replace(/\.[^.]+$/, '').split(/[^a-z0-9]+/);
         for (const face of SKYBOX_FACES) {
             if (tokens.some(tok => FACE_ALIASES[face].includes(tok))) return face;
@@ -215,25 +227,50 @@ export function buildSkybox(scene) {
         return null;
     }
 
-    // Matches a set of user-picked files to the 6 cube faces by filename token
-    // (e.g. "myscene_right.png" -> right, "posx.png" -> right). Returns null if
-    // any of the 6 faces isn't covered — the caller tells the user what to fix.
-    function matchFaceFiles(files) {
-        const matched = {};
-        for (const f of Array.from(files)) {
-            const face = faceKeyForName(f.name);
-            if (face && !matched[face]) matched[face] = f;
+    // Fallback for names with no separator at all — "skyboxRT.png", "sky_up1.png"
+    // — where tokenising yields one unsplittable blob. Looser by nature (a file
+    // called "group.png" ends in "up"), so it only ever fills faces the strict
+    // pass left empty.
+    function faceBySuffix(name) {
+        const base = name.toLowerCase().replace(/\.[^.]+$/, '').replace(/[^a-z0-9]+$/, '');
+        for (const face of SKYBOX_FACES) {
+            if (FACE_ALIASES[face].some(a => base.endsWith(a))) return face;
         }
-        for (const face of SKYBOX_FACES) if (!matched[face]) return null;
-        return matched;
+        return null;
     }
 
-    // Loads a user-supplied cube map from 6 local image files. Returns true
-    // on success, false if the files couldn't be matched to the 6 faces —
-    // in that case the background is left unchanged.
+    // Matches a set of user-picked files to the 6 cube faces by filename
+    // (e.g. "myscene_right.png" -> right, "posx.png" -> right, "skyBK.png" -> back).
+    //
+    // Two passes, strict before loose, and that ordering is the point: a folder
+    // picker hands over EVERY file inside, including stray readme or preview
+    // images. Running the loose pass only on faces still unclaimed means a
+    // properly named file always wins its slot over an accidental suffix hit.
+    //
+    // Returns { matched, missing }. `missing` lets the caller name the faces it
+    // couldn't find instead of just refusing the whole folder.
+    function matchFaceFiles(files) {
+        const list = Array.from(files);
+        const matched = {};
+        for (const f of list) {
+            const face = faceByToken(f.name);
+            if (face && !matched[face]) matched[face] = f;
+        }
+        const claimed = new Set(Object.values(matched));
+        for (const f of list) {
+            if (claimed.has(f)) continue;
+            const face = faceBySuffix(f.name);
+            if (face && !matched[face]) { matched[face] = f; claimed.add(f); }
+        }
+        return { matched, missing: SKYBOX_FACES.filter(face => !matched[face]) };
+    }
+
+    // Loads a user-supplied cube map from 6 local image files. Returns true on
+    // success, or the list of face names it couldn't find — in that case the
+    // background is left unchanged and the caller can say exactly what's missing.
     function loadCustomSkybox(files, onAverageColor) {
-        const matched = matchFaceFiles(files);
-        if (!matched) return false;
+        const { matched, missing } = matchFaceFiles(files);
+        if (missing.length) return missing;
 
         scene.background = null;
         skybox.visible   = true;

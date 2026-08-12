@@ -66,10 +66,11 @@ function selectCustomSkybox(files) {
     // A user image has no preset, but it doesn't need one for colour any more:
     // the fill is sampled from their own images, so the lighting matches
     // whatever they upload. The preset only supplies the intensities.
-    const ok = loadCustomSkybox(files, (skyColor) =>
+    // true on success, otherwise the array of faces it couldn't find.
+    const result = loadCustomSkybox(files, (skyColor) =>
         setSpacePreset({ ...base, ambientColor: skyColor }));
-    if (ok) setSpacePreset(base);
-    return ok;
+    if (result === true) { setSpacePreset(base); return true; }
+    return result; // e.g. ['top', 'bottom'] — the GUI names them in its error
 }
 
 // ─── Camera controls ─────────────────────────────────────────────────────────

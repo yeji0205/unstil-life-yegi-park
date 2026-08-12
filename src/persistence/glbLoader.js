@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { injectDissolve, makeParticleMaterial } from '../render/dissolve.js';
+import { injectDissolve, makeParticleMaterial, uProgress } from '../render/dissolve.js';
 
 const TABLE_PARTICLE_COUNT  = 2000;
 
@@ -270,26 +270,39 @@ function buildCylinderTable() {
 // grey, which looks like dirt. Tinting toward the floor's own brown instead
 // reads as bounced light, which is what actually happens down there.
 //
-// Kept deliberately weak (0.16 over 0.2 units). On a surface this pale, anything
-// stronger stops looking like shadow and starts looking like a painted stripe.
-const PLINTH_BASE_MARGIN = 0.20; // world units the tint fades over
-const PLINTH_BASE_AMOUNT = 0.16; // blend toward the floor colour at the very base
+// The falloff is EXPONENTIAL, not a smoothstep. smoothstep reaches exactly zero
+// at its second edge, and the eye finds that terminating line easily — which is
+// the "sort of line" the first version showed: not a shading artefact, just the
+// place where the gradient stopped. Real occlusion has no such boundary; it
+// thins out with distance and is merely too faint to see long before it's
+// actually zero. exp(-3d) is 5% at the nominal reach, so there's nothing to
+// terminate. The reach is also much longer now (0.55 vs 0.20 units), which is
+// what makes it read as a gradient rather than as an edge treatment.
+const PLINTH_BASE_REACH  = 0.55; // world units; where the tint is ~5% of peak
+const PLINTH_BASE_AMOUNT = 0.24; // blend toward the floor colour at the contact line
 const PLINTH_BASE_TINT   = new THREE.Color(0x2e1c0e); // matches the floor plane's base colour
+// Above this p the effect is fully gone. It's a lie about a floor that no longer
+// exists once the table is on its way up, and a dark band at the base of an
+// object floating in space would read as a material flaw rather than as contact.
+const PLINTH_BASE_FADE_END = 0.30;
 
 function injectPlinthBaseShading(mat, height) {
     // Wrap rather than replace: injectDissolve already owns this hook.
     const previous = mat.onBeforeCompile;
     const uBaseY      = { value: -height / 2 };
-    const uBaseMargin = { value: PLINTH_BASE_MARGIN };
+    const uBaseReach  = { value: PLINTH_BASE_REACH };
     const uBaseAmount = { value: PLINTH_BASE_AMOUNT };
     const uBaseTint   = { value: PLINTH_BASE_TINT };
 
     mat.onBeforeCompile = (shader) => {
         previous?.(shader);
         shader.uniforms.uBaseY      = uBaseY;
-        shader.uniforms.uBaseMargin = uBaseMargin;
+        shader.uniforms.uBaseReach  = uBaseReach;
         shader.uniforms.uBaseAmount = uBaseAmount;
         shader.uniforms.uBaseTint   = uBaseTint;
+        // Shared scroll progress — the same object the whole scene reads, so the
+        // fade tracks the transition with nothing to update per frame.
+        shader.uniforms.uRoomP      = uProgress;
 
         // Local Y, not world Y: the table is repositioned to stand on the floor,
         // so its local base is a fixed constant while its world base is not.
@@ -300,17 +313,60 @@ function injectPlinthBaseShading(mat, height) {
         );
 
         shader.fragmentShader =
-            'uniform float uBaseY;\nuniform float uBaseMargin;\nuniform float uBaseAmount;\nuniform vec3 uBaseTint;\nvarying float vPlinthY;\n' +
+            'uniform float uBaseY;\nuniform float uBaseReach;\nuniform float uBaseAmount;\nuniform vec3 uBaseTint;\nuniform float uRoomP;\nvarying float vPlinthY;\n' +
             shader.fragmentShader.replace(
                 '#include <dithering_fragment>',
                 `#include <dithering_fragment>
                 {
-                    // 0 at the base, 1 once further up than the margin.
-                    float up = smoothstep(uBaseY, uBaseY + uBaseMargin, vPlinthY);
-                    gl_FragColor.rgb = mix(gl_FragColor.rgb, uBaseTint, (1.0 - up) * uBaseAmount);
+                    float d    = max(0.0, (vPlinthY - uBaseY) / uBaseReach);
+                    float fade = 1.0 - smoothstep(0.0, ${PLINTH_BASE_FADE_END.toFixed(2)}, uRoomP);
+                    gl_FragColor.rgb = mix(gl_FragColor.rgb, uBaseTint,
+                                           exp(-3.0 * d) * uBaseAmount * fade);
                 }`
             );
     };
+}
+
+// ─── Normalising a user-supplied table ───────────────────────────────────────
+// Custom table GLBs were being used at their authored scale and pivot, and that
+// is what made everything vanish. A model exported from Blender in millimetres,
+// or with its origin left at the world centre rather than the object, arrives
+// hundreds of units tall or wildly off to one side. setupTableObject faithfully
+// stands whatever it's given on the floor and then reports the top of it as the
+// surface height — so a 300-unit-tall table puts the surface 300 units up, and
+// every stage object is dutifully placed there, far outside the camera's view.
+// Nothing errored; the scene was intact, just mostly in outer space.
+//
+// The built-in table.glb happens to be authored at the right size, so this never
+// came up. The fix is to stop relying on that: measure the model and scale it to
+// the same height the Box/Cylinder plinths use, and centre it in XZ so an
+// off-origin pivot doesn't slide it out of the light. This is the same treatment
+// custom STONE uploads already get, for the same reason.
+function normalizeCustomTable(root) {
+    root.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(root);
+    // No geometry at all (an empty or camera/light-only file) — nothing to
+    // measure. Reject rather than divide by zero; the caller keeps the old table.
+    if (box.isEmpty()) throw new Error('the GLB contains no visible geometry');
+    const size = box.getSize(new THREE.Vector3());
+    if (size.y < 1e-6) throw new Error('the GLB has no measurable height');
+
+    const center = box.getCenter(new THREE.Vector3());
+    const k = PRIMITIVE_TABLE_HEIGHT / size.y;
+
+    // Scale about the model's own origin, then translate so the box's bottom
+    // lands at y=0 and its centre at x=z=0. Both terms carry the k factor
+    // because the offsets are measured PRE-scale but applied POST-scale.
+    root.scale.multiplyScalar(k);
+    root.position.multiplyScalar(k)
+        .sub(new THREE.Vector3(center.x, box.min.y, center.z).multiplyScalar(k));
+
+    // Returned inside a wrapper deliberately: setupTableObject calls
+    // scale.setScalar(1) on whatever it's handed, which would undo the work if
+    // the scale lived on the object it touches. On the wrapper's CHILD it's safe.
+    const wrapper = new THREE.Group();
+    wrapper.add(root);
+    return wrapper;
 }
 
 // Resolves a table "kind" into a loaded root Object3D. Box/Cylinder are
@@ -326,7 +382,12 @@ function loadTableGeometry(kind, customUrl) {
     return new Promise((resolve, reject) => {
         gltfLoader.load(url, (gltf) => {
             if (kind === 'custom') URL.revokeObjectURL(url); // safe once onLoad fires — the .glb is fully parsed by then
-            resolve(gltf.scene);
+            if (kind !== 'custom') { resolve(gltf.scene); return; }
+            // normalizeCustomTable throws on unusable files; route that to the
+            // promise's reject path so the existing error handling picks it up
+            // instead of it escaping as an unhandled exception inside onLoad.
+            try { resolve(normalizeCustomTable(gltf.scene)); }
+            catch (err) { reject(err); }
         }, undefined, (err) => {
             if (kind === 'custom') URL.revokeObjectURL(url);
             reject(err);
