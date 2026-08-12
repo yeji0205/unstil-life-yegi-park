@@ -26,12 +26,20 @@ export const ROOM_RETURN_DIST = 5.5; // orbit radius from new camera (~3.8 units
 // waited until p=0.5, leaving a stretch where objects rose with no
 // compensating pull-back and drifted out of frame.
 const ZOOM_OUT_START = FLOAT_START;
-// Extra orbit distance added by p = 1. The camera keeps its ROOM position and
-// gaze; it only dollies straight back along its original view direction so the
-// whole rising still-life fits on screen. (Bumped from 5.5 to 8.0 to compensate
-// for no longer raising the camera / tilting the gaze up — pure pull-back needs
-// more distance to keep the floating objects framed.)
+// Extra orbit distance added by p = 1: the camera dollies straight back along
+// its original view direction so the whole rising still-life fits on screen.
+// 8.0 was chosen while the gaze stayed fixed at the room's height, where the
+// only way to keep the risen objects in frame was to back off far enough to
+// catch them near the top edge. GAZE_RISE now handles the vertical part, so
+// this is doing less work than it was sized for — if the still life reads as
+// too small once centred, this is the number to bring down, not the framing.
 const ZOOM_OUT_EXTRA = 8.0;
+
+// How far the gaze lifts, in world units, by the time the transition finishes.
+// Derived rather than eyeballed: at p = 1 the table top sits at ≈ −0.12 and the
+// objects float around ≈ +0.6, so the centre of interest is ~1.3 above the
+// room-framing target of −0.69. See setGazeHeight at the call site.
+const GAZE_RISE = 1.4;
 
 export function createCameraControls(camera, domElement) {
     const controls = new OrbitControls(camera, domElement);
@@ -92,6 +100,19 @@ export function createCameraControls(camera, domElement) {
     // scrolling and the camera stops where it is.
     const LIMIT_RELEASE_START = 0.6;   // fully room-limited at or below this p
     const LIMIT_RELEASE_END   = 0.95;  // fully free at or above (unchanged)
+    // Moves camera and target together by the same amount, so the frame shifts
+    // vertically while the viewing angle, the orbit radius and the azimuth all
+    // stay exactly as they were. OrbitControls derives its offset from
+    // (position − target) at the top of every update(), so translating both is
+    // invisible to it — nothing to fight over, and the distance the dolly logic
+    // measures is unchanged.
+    function setGazeHeight(y) {
+        const dy = y - controls.target.y;
+        if (Math.abs(dy) < 1e-6) return;
+        controls.target.y += dy;
+        camera.position.y += dy;
+    }
+
     function applyControlMode(progressValue) {
         const t = THREE.MathUtils.smoothstep(progressValue, LIMIT_RELEASE_START, LIMIT_RELEASE_END);
         if (t >= 1) {
@@ -150,6 +171,9 @@ export function createCameraControls(camera, domElement) {
         //   • p ≥ 0.999           → fully in space: OrbitControls takes over for
         //     manual orbit/zoom, starting from the finished transition pose.
         if (p <= ZOOM_OUT_START) {
+            // Back in the room: the still life is on the table at eye level, so
+            // the gaze returns to where it started.
+            setGazeHeight(initialTargetY);
             // Still free-looking in the room: remember the current orbit distance
             // so the dolly-back begins from exactly here (no jump).
             activeDist = camera.position.distanceTo(controls.target);
@@ -163,6 +187,23 @@ export function createCameraControls(camera, domElement) {
         // camera into motion the instant scrolling crossed ZOOM_OUT_START.
         const rawZoomT = Math.max(0, (p - ZOOM_OUT_START) / (1 - ZOOM_OUT_START));
         const zoomT  = rawZoomT * rawZoomT * (3 - 2 * rawZoomT);
+
+        // Lift the gaze along with the pull-back, so the still life stays centred.
+        //
+        // Pulling straight back keeps the camera aimed at where the table stood,
+        // but the subject doesn't stay there: objects rise by their own H (≈2.2)
+        // while the table rises 1.5, so by p = 1 the interesting part of the frame
+        // has moved to roughly y = +0.6 while the gaze was still fixed at −0.69.
+        // Everything worth looking at ended up in the top third, with the table's
+        // pedestal filling the middle and empty space below it.
+        //
+        // GAZE_RISE closes that ≈1.3-unit gap. It is not a tilt: camera and target
+        // move together, so the viewing ANGLE and the orbit radius are untouched
+        // and the dolly logic below still measures the distance it expects. A tilt
+        // would also work optically but would change the perspective on the table,
+        // and the flat-on view is part of the still-life read.
+        setGazeHeight(initialTargetY + GAZE_RISE * zoomT);
+
         const baselineDist = activeDist + ZOOM_OUT_EXTRA * zoomT;
 
         // Second half of the same jump. In space the viewer can ZOOM, so by the
