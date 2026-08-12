@@ -11,7 +11,7 @@ import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, LIGHTING_
 
 import {
     loadScene, setTable, setTableTexture, applyReturnObjects,
-    tableState, stageObjects, LOADING_TOTAL, applyStoneOrientation, setTableColor, setStone,
+    tableState, stageObjects, LOADING_TOTAL, setTableColor, setStone,
     TABLE_OPTIONS, TABLE_CUSTOM_LABEL, tableKindForLabel,
 } from './src/persistence/glbLoader.js';
 
@@ -121,7 +121,6 @@ const gui = createDebugGUI({
     onTableTextureFile: (file, type) => setTableTexture(scene, file, type),
     onRoomTextureFile: (surface, slotLabel, file) => setRoomTexture(surface, slotLabel, file),
     onRoomTextureReset: (surface) => resetRoomTextures(surface),
-    onStoneOrientationChange: applyStoneOrientation,
     onTableColorChange: (hex) => setTableColor(hex),
     onRenderScaleChange: (v) => adaptiveQuality.setCeiling(v),
     onAdaptiveQualityToggle: (on) => adaptiveQuality.setEnabled(on),

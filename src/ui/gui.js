@@ -2,7 +2,7 @@ import GUI from 'lil-gui';
 import { flowState } from '../render/skyboxFlow.js';
 import { scrollSmoothing } from '../simulation/phaseMachine.js';
 import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../geometry/room.js';
-import { stoneOrientation, primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../persistence/glbLoader.js';
+import { primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../persistence/glbLoader.js';
 
 // A small centered modal — readable padding/typography, a dimmed backdrop, and
 // up to two buttons. Used instead of the browser's cramped alert() for the
@@ -64,7 +64,7 @@ export function createDebugGUI({
     onRevealPainting,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
-    onRoomTextureFile, onRoomTextureReset, onStoneOrientationChange, onTableColorChange,
+    onRoomTextureFile, onRoomTextureReset, onTableColorChange,
     onRenderScaleChange, onAdaptiveQualityToggle,
     onStoneChange, onCustomStoneFile,
     roomSoundOptions, defaultRoomSound, spaceSoundOptions, defaultSpaceSound,
@@ -307,24 +307,6 @@ export function createDebugGUI({
         stoneFileInput.value = '';
     });
 
-    // Stone orientation — trim on top of layFlat's automatic "rest on the
-    // flattest face" alignment, for when a scanned rock's real resting face sits
-    // a few degrees off its bounding box and it looks tilted. The stone re-seats
-    // itself on the table after every change. Note the stone only shows the
-    // quartz after a return trip; the room opens with the agate.
-    const stoneFolder = gui.addFolder('Stone Orientation');
-    ['xDeg', 'yDeg', 'zDeg'].forEach((axis) => {
-        stoneFolder.add(stoneOrientation, axis, -180, 180, 1)
-            .name(`Rotate ${axis[0].toUpperCase()} (°)`)
-            .onChange(onStoneOrientationChange);
-    });
-    stoneFolder.add({ reset: () => {
-        stoneOrientation.xDeg = stoneOrientation.yDeg = stoneOrientation.zDeg = 0;
-        stoneFolder.controllers.forEach((c) => c.updateDisplay());
-        onStoneOrientationChange();
-    } }, 'reset').name('↺ Reset to auto-flat');
-    stoneFolder.close();
-
     // Room surfaces — one folder per surface, one picker per PBR map type, so a
     // full texture set can be swapped in from disk without touching the code.
     // Uploads tile at the same world scale as the built-in sets (see
@@ -404,9 +386,8 @@ export function createDebugGUI({
     const bgMotionController = gui.add(bgMotionAction, 'toggle').name('🌀 Animate Background');
 
     // Camera position display — read-only, updated every frame via updateCameraDebug.
-    // Only meaningful when inside the room (p < 0.95); numbers freeze in space mode.
     const cameraDebug = { x: 0, y: 0, z: 0 };
-    const cameraFolder = gui.addFolder('Camera position (room)');
+    const cameraFolder = gui.addFolder('Camera position');
     cameraFolder.add(cameraDebug, 'x').name('Cam X').listen().disable();
     cameraFolder.add(cameraDebug, 'y').name('Cam Y').listen().disable();
     cameraFolder.add(cameraDebug, 'z').name('Cam Z').listen().disable();

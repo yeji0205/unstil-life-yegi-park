@@ -23,18 +23,11 @@ export function createPerfHud(renderer) {
 
     // The GPU string is only exposed through this debug extension.
     let gpu = 'unknown';
-    // Actual MSAA sample count of the drawing buffer. `antialias: true` is only
-    // a REQUEST — the browser may hand back a context without it, so asking the
-    // context what it really got is the only way to know. >1 means MSAA is live;
-    // 1 (or 0) means it isn't, whatever we asked for.
-    let samples = 0;
     try {
         const gl = renderer.getContext();
         const dbg = gl.getExtension('WEBGL_debug_renderer_info');
         if (dbg) gpu = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);
-        samples = gl.getParameter(gl.SAMPLES) || 0;
     } catch { /* extension blocked — leave as unknown */ }
-    const aa = samples > 1 ? `MSAA ${samples}×` : 'MSAA off';
     const software = /swiftshader|software|llvmpipe|basic render/i.test(gpu);
 
     let frames = 0, acc = 0, worst = 0, last = performance.now();
@@ -50,7 +43,7 @@ export function createPerfHud(renderer) {
             const avg = acc / frames;
             el.textContent =
                 `${(1000 / avg).toFixed(0)} fps   ${avg.toFixed(1)} ms  (worst ${worst.toFixed(0)})\n` +
-                `${renderer.domElement.width}×${renderer.domElement.height} @ dpr ${renderer.getPixelRatio().toFixed(2)}   ${aa}\n` +
+                `${renderer.domElement.width}×${renderer.domElement.height}\n` +
                 `calls ${renderer.info.render.calls}  tris ${renderer.info.render.triangles}\n` +
                 `${software ? '⚠ SOFTWARE RENDERER — ' : ''}${gpu}`;
             el.style.color = software ? '#ffb3b3' : '#cfe8ff';

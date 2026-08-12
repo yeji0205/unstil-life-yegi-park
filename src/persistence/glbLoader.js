@@ -123,7 +123,7 @@ export const stageObjects = [];
 export const OBJECT_DEFS = [
     { file: 'asset/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0, dissolveStart: 0 },
     { file: 'asset/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart: 0 },
-    { file: 'asset/fluorita_small.glb', label: 'stone', targetHeight: 0.28,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.02, rotYOffset: -2.11, H: 1.8, phaseOffset: 0.6, dissolveStart: 0, recenterXZ: true },
+    { file: 'asset/agate.glb', label: 'stone', targetHeight: 0.35,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.02, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart: 0, recenterXZ: true },
     { file: 'asset/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart: 0 },
     { file: 'asset/bear_ribbon.glb',  label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 0 },
 ];
@@ -158,16 +158,15 @@ export function tableKindForLabel(label) {
 // tabletop so it reads as settled, but the quartz biface is flat-bottomed and the
 // same offset drove it THROUGH the table — it sits at 0.
 // ─── Stone options ────────────────────────────────────────────────────────────
-// One list serving two purposes: the GUI's "Stone" dropdown, and the stone
-// slot's return cycle. Keeping them the same means a stone picked by hand and a
-// stone that arrives back from space are described in exactly one place.
+// Everything the stone slot can hold. `name` is the dropdown label; everything
+// else overrides that variant's entry in OBJECT_DEFS (which carries the agate's
+// values, since that's what the room opens with).
 //
-// `name` is the dropdown label; everything else overrides that variant's entry
-// in OBJECT_DEFS. Values not listed are inherited from the def — which is set up
-// for the fluorite, so the other two restate rotYOffset to cancel its rotation.
+// Order matters twice over: the first entry is what the GUI dropdown shows on
+// load, and the first two are the pair that cycles (see STONE_CYCLE).
 const STONE_VARIANTS = [
-    { name: 'Fluorite', file: 'asset/fluorita_small.glb' },
-    { name: 'Agate',      file: 'asset/agate.glb',      targetHeight: 0.35, rotYOffset: 0, offsetY: -0.02 },
+    { name: 'Agate',      file: 'asset/agate.glb',          targetHeight: 0.35, rotYOffset: 0,     offsetY: -0.02 },
+    { name: 'Fluorite',   file: 'asset/fluorita_small.glb', targetHeight: 0.28, rotYOffset: -2.11, offsetY: -0.02 },
     { name: 'Aventurine', file: 'asset/aventurina.glb', targetHeight: 0.32, rotYOffset: 0, offsetY: -0.02, layFlat: true },
     // The biface arrives balanced upright on a narrow point, which reads as
     // perched rather than placed. layFlat measures it and rests it on its
@@ -180,6 +179,14 @@ const STONE_VARIANTS = [
 
 export const STONE_CUSTOM_LABEL = 'Custom GLB…';
 export const STONE_OPTIONS = [...STONE_VARIANTS.map((v) => v.name), STONE_CUSTOM_LABEL];
+
+// The stone slot's return cycle is deliberately NARROWER than the dropdown:
+// agate → fluorite → agate → … The piece is about the same still life recurring
+// slightly changed, and two alternating stones read as a change; four rotating
+// through read as a slideshow of rocks. The other variants stay available in the
+// GUI so a different stone can be auditioned in the scene — and, if one turns
+// out to work better, promoted into this pair by moving it up in STONE_VARIANTS.
+const STONE_CYCLE = STONE_VARIANTS.slice(0, 2);
 
 // Swaps the stone on demand from the GUI. A custom upload inherits the slot's
 // placement (position, float, dissolve timing) and gets recenterXZ + layFlat, so
@@ -195,7 +202,7 @@ export function setStone(scene, label, { customUrl, onObjectReady } = {}) {
 
 const OBJECT_VARIANTS = {
     teddy: [{ file: 'asset/bear_ribbon.glb' },              { file: 'asset/bear_skeleton.glb' }],
-    stone: STONE_VARIANTS,
+    stone: STONE_CYCLE,
     tulip: [{ file: 'asset/tulip.glb' },                    { file: 'asset/daffodil.glb' }],
 };
 
@@ -237,12 +244,73 @@ function buildPrimitiveTableMaterial() {
     return mat;
 }
 
+// isPlinth marks a mesh as one of these two primitives, so setupTableObject
+// knows it can reason about the geometry's local Y (both are built centred on
+// the origin, so the base sits at exactly -height/2) and add the contact
+// shading below. A loaded GLB table has no such guarantee, and gets skipped.
 function buildBoxTable() {
-    return new THREE.Mesh(new THREE.BoxGeometry(1.6, PRIMITIVE_TABLE_HEIGHT, 1.6), buildPrimitiveTableMaterial());
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.6, PRIMITIVE_TABLE_HEIGHT, 1.6), buildPrimitiveTableMaterial());
+    mesh.userData.isPlinth = true;
+    return mesh;
 }
 
 function buildCylinderTable() {
-    return new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, PRIMITIVE_TABLE_HEIGHT, 32), buildPrimitiveTableMaterial());
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, PRIMITIVE_TABLE_HEIGHT, 32), buildPrimitiveTableMaterial());
+    mesh.userData.isPlinth = true;
+    return mesh;
+}
+
+// ─── Contact shading where the plinth meets the floor ────────────────────────
+// Same idea as the room's edge shading: a plinth standing on a floor traps light
+// in the crease where the two meet, and without that the plinth reads as pasted
+// on top of the floor rather than resting on it.
+//
+// The difference is what it darkens TOWARD. The room walls just lose brightness,
+// but this plinth is nearly white — take brightness out of white and it turns
+// grey, which looks like dirt. Tinting toward the floor's own brown instead
+// reads as bounced light, which is what actually happens down there.
+//
+// Kept deliberately weak (0.16 over 0.2 units). On a surface this pale, anything
+// stronger stops looking like shadow and starts looking like a painted stripe.
+const PLINTH_BASE_MARGIN = 0.20; // world units the tint fades over
+const PLINTH_BASE_AMOUNT = 0.16; // blend toward the floor colour at the very base
+const PLINTH_BASE_TINT   = new THREE.Color(0x2e1c0e); // matches the floor plane's base colour
+
+function injectPlinthBaseShading(mat, height) {
+    // Wrap rather than replace: injectDissolve already owns this hook.
+    const previous = mat.onBeforeCompile;
+    const uBaseY      = { value: -height / 2 };
+    const uBaseMargin = { value: PLINTH_BASE_MARGIN };
+    const uBaseAmount = { value: PLINTH_BASE_AMOUNT };
+    const uBaseTint   = { value: PLINTH_BASE_TINT };
+
+    mat.onBeforeCompile = (shader) => {
+        previous?.(shader);
+        shader.uniforms.uBaseY      = uBaseY;
+        shader.uniforms.uBaseMargin = uBaseMargin;
+        shader.uniforms.uBaseAmount = uBaseAmount;
+        shader.uniforms.uBaseTint   = uBaseTint;
+
+        // Local Y, not world Y: the table is repositioned to stand on the floor,
+        // so its local base is a fixed constant while its world base is not.
+        shader.vertexShader = 'varying float vPlinthY;\n' + shader.vertexShader.replace(
+            '#include <begin_vertex>',
+            `#include <begin_vertex>
+            vPlinthY = position.y;`
+        );
+
+        shader.fragmentShader =
+            'uniform float uBaseY;\nuniform float uBaseMargin;\nuniform float uBaseAmount;\nuniform vec3 uBaseTint;\nvarying float vPlinthY;\n' +
+            shader.fragmentShader.replace(
+                '#include <dithering_fragment>',
+                `#include <dithering_fragment>
+                {
+                    // 0 at the base, 1 once further up than the margin.
+                    float up = smoothstep(uBaseY, uBaseY + uBaseMargin, vPlinthY);
+                    gl_FragColor.rgb = mix(gl_FragColor.rgb, uBaseTint, (1.0 - up) * uBaseAmount);
+                }`
+            );
+    };
 }
 
 // Resolves a table "kind" into a loaded root Object3D. Box/Cylinder are
@@ -388,6 +456,8 @@ function setupTableObject(tableObject, scene) {
             || (mat.opacity ?? 1) < 1 || !!mat.alphaMap;
         mat.transparent = true;
         injectDissolve(mat, uTableProgress, { space: 'local', freqScale: 4.0 });
+        // After the dissolve, so it wraps that hook instead of clobbering it.
+        if (child.userData.isPlinth) injectPlinthBaseShading(mat, PRIMITIVE_TABLE_HEIGHT);
         // Unique key per submesh prevents Three.js from reusing another mesh's
         // compiled shader program (which would skip our onBeforeCompile injection).
         mat.customProgramCacheKey = () => 'table_dissolve_' + child.uuid;

@@ -63,17 +63,55 @@ export function createCameraControls(camera, domElement) {
     // whole time, so the viewer keeps orbiting freely even mid-scroll.
     let activeDist = initialOrbitDist;
 
+    // Bookkeeping for the return trip: `leftSpace` marks that the camera was
+    // last under manual control in space (so its distance is whatever the viewer
+    // zoomed to, not what the transition formula expects), and `reentryOffset`
+    // holds the resulting discrepancy while it's eased away. See updateAutoZoomOut.
+    let leftSpace = false;
+    let reentryOffset = 0;
+
     // Armed once the user zooms out past ROOM_RETURN_DIST after entering space.
     // Prevents the room from immediately re-appearing when the room first dissolves
     // (camera starts inside the threshold).
     const zoomState = { hasZoomedOut: false };
 
+    // The orbit limits EASE between room and space instead of switching.
+    //
+    // They used to flip at p = 0.95. Going out that's harmless, but coming back
+    // it was the single most jarring thing in the piece: in space you can orbit
+    // anywhere, so if you'd swung round to look at the objects from behind
+    // (azimuth ~180°), the frame p crossed 0.95 the limit snapped to ±30° and
+    // OrbitControls teleported the camera the whole way round to obey it. That's
+    // the sudden jump in the x/y/z readout — not the room appearing, the camera
+    // being yanked back inside the room's allowed cone in one frame.
+    //
+    // Interpolating the LIMIT instead of the camera fixes it without any extra
+    // animation machinery: OrbitControls already clamps to whatever the limit is
+    // each frame, so a limit that closes gradually sweeps the camera home
+    // gradually. Scroll speed sets the pace, and it stays interruptible — stop
+    // scrolling and the camera stops where it is.
+    const LIMIT_RELEASE_START = 0.6;   // fully room-limited at or below this p
+    const LIMIT_RELEASE_END   = 0.95;  // fully free at or above (unchanged)
     function applyControlMode(progressValue) {
-        const inSpace = progressValue >= 0.95;
-        controls.minAzimuthAngle = inSpace ? -Infinity : ROOM_LIMITS.minAzimuth;
-        controls.maxAzimuthAngle = inSpace ?  Infinity : ROOM_LIMITS.maxAzimuth;
-        controls.minPolarAngle   = inSpace ?  0        : ROOM_LIMITS.minPolar;
-        controls.maxPolarAngle   = inSpace ?  Math.PI  : ROOM_LIMITS.maxPolar;
+        const t = THREE.MathUtils.smoothstep(progressValue, LIMIT_RELEASE_START, LIMIT_RELEASE_END);
+        if (t >= 1) {
+            // Genuinely unbounded, so the viewer can keep spinning past 180°
+            // without hitting a wall.
+            controls.minAzimuthAngle = -Infinity;
+            controls.maxAzimuthAngle =  Infinity;
+            controls.minPolarAngle   = 0;
+            controls.maxPolarAngle   = Math.PI;
+        } else {
+            // Widening to ±180° means the finite limit is a no-op the instant it
+            // engages (OrbitControls reports azimuth wrapped into ±180°), so the
+            // hand-off from "unbounded" costs nothing — and from there the cone
+            // narrows smoothly back to the room's ±30°.
+            const az = THREE.MathUtils.lerp(ROOM_AZIMUTH, Math.PI, t);
+            controls.minAzimuthAngle = -az;
+            controls.maxAzimuthAngle =  az;
+            controls.minPolarAngle   = THREE.MathUtils.lerp(ROOM_LIMITS.minPolar, 0,       t);
+            controls.maxPolarAngle   = THREE.MathUtils.lerp(ROOM_LIMITS.maxPolar, Math.PI, t);
+        }
         controls.minDistance = 2;
         controls.maxDistance = 200;
         // enableZoom managed every frame by updateZoom()
@@ -115,15 +153,36 @@ export function createCameraControls(camera, domElement) {
             // Still free-looking in the room: remember the current orbit distance
             // so the dolly-back begins from exactly here (no jump).
             activeDist = camera.position.distanceTo(controls.target);
+            reentryOffset = 0;
+            leftSpace = false;
             return;
         }
-        if (p >= 0.999) return;
+        if (p >= 0.999) { leftSpace = true; return; }
         // smoothstep-eased so the pull-back starts and ends gently, matching the
         // eased object float (simulation/floating.js) — a linear ramp jerked the
         // camera into motion the instant scrolling crossed ZOOM_OUT_START.
         const rawZoomT = Math.max(0, (p - ZOOM_OUT_START) / (1 - ZOOM_OUT_START));
         const zoomT  = rawZoomT * rawZoomT * (3 - 2 * rawZoomT);
-        const desiredDist = activeDist + ZOOM_OUT_EXTRA * zoomT;
+        const baselineDist = activeDist + ZOOM_OUT_EXTRA * zoomT;
+
+        // Second half of the same jump. In space the viewer can ZOOM, so by the
+        // time they scroll back the camera may be 3 units from the target while
+        // this formula, at zoomT ≈ 1, wants activeDist + 8 ≈ 14. The old code
+        // wrote that straight in on the first frame back — an instant 11-unit
+        // dolly out, which is the other half of what read as "sudden".
+        //
+        // Rather than fight it, absorb it: measure the discrepancy once on the
+        // way back in and carry it as an offset that's scaled by zoomT. At the
+        // hand-off (zoomT ≈ 1) the offset exactly cancels the formula, so the
+        // camera doesn't move at all; as p falls the offset shrinks with zoomT
+        // and it lands on the correct room distance by ZOOM_OUT_START. Free of
+        // any timer, so it stays in step with the scroll however fast it's done.
+        if (leftSpace) {
+            leftSpace = false;
+            const currentDist = camera.position.distanceTo(controls.target);
+            reentryOffset = (currentDist - baselineDist) / Math.max(zoomT, 0.05);
+        }
+        const desiredDist = Math.max(controls.minDistance, baselineDist + reentryOffset * zoomT);
 
         // Enforce only the DISTANCE — rescale the current camera→target offset to
         // desiredDist, preserving its DIRECTION. OrbitControls (which runs right
