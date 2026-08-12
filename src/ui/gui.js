@@ -62,6 +62,7 @@ function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Ca
 export function createDebugGUI({
     uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
+    skyboxNoneLabel, voidColor, onVoidColorChange,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
     onRoomTextureFile, onRoomTextureReset, onTableColorChange,
     onStoneChange, onCustomStoneFile,
@@ -185,7 +186,26 @@ export function createDebugGUI({
             }
             lastSkybox = folderName;
             onSkyboxChange(folderName);
+            syncVoidColorVisibility(folderName);
         });
+
+    // Background colour, for the solid-colour option only. Shown and hidden with
+    // the dropdown rather than always present: with a cube map selected there's
+    // nothing for it to affect — the skybox mesh covers the background entirely —
+    // and a control that visibly does nothing is worse than an absent one. Same
+    // pattern as Table Material below, which appears only for Box/Cylinder.
+    const voidColorCtrl = contentFolder.addColor(voidColor, 'hex').name('Background Color')
+        .onChange(onVoidColorChange);
+    const voidResetCtrl = contentFolder.add({ reset: () => {
+        voidColor.hex = '#ffffff';
+        voidColorCtrl.updateDisplay();
+        onVoidColorChange(voidColor.hex);
+    } }, 'reset').name('↺ Reset to white');
+    const syncVoidColorVisibility = (label) => {
+        if (label === skyboxNoneLabel) { voidColorCtrl.show(); voidResetCtrl.show(); }
+        else                           { voidColorCtrl.hide(); voidResetCtrl.hide(); }
+    };
+    syncVoidColorVisibility(defaultSkybox);
 
     skyboxFileInput.addEventListener('change', () => {
         const files = skyboxFileInput.files;

@@ -7,7 +7,7 @@ import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
 import { createPaintingIntro } from './src/render/paintingIntro.js';
 
 import { buildRoom, setRoomTexture, resetRoomTextures } from './src/geometry/room.js';
-import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, LIGHTING_PRESETS } from './src/geometry/environment.js';
+import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, SKYBOX_NONE, LIGHTING_PRESETS, voidColor } from './src/geometry/environment.js';
 
 import {
     loadScene, setTable, setTableTexture, applyReturnObjects,
@@ -36,7 +36,7 @@ const scene    = new THREE.Scene();
 setupResize(camera, renderer);
 
 // ─── Geometry ────────────────────────────────────────────────────────────────
-const { loadSkybox, loadCustomSkybox } = buildSkybox(scene);
+const { loadSkybox, loadCustomSkybox, setVoidColor } = buildSkybox(scene);
 const { updateStars } = buildStars(scene);
 buildRoom(scene);
 
@@ -56,6 +56,15 @@ function selectBackground(name) {
     loadSkybox(name, (skyColor) => setSpacePreset({ ...preset, ambientColor: skyColor }));
 }
 selectBackground(SKYBOX_OPTIONS[0]);
+
+// Repaints the flat background when SKYBOX_NONE is showing, and re-tints the
+// fill light to match — the same pairing selectBackground does for a cube map,
+// so there is one rule for "the light comes from whatever is behind the objects"
+// rather than a special case per background type.
+function selectVoidColor(hex) {
+    const preset = LIGHTING_PRESETS[SKYBOX_NONE];
+    setVoidColor(hex, (c) => setSpacePreset({ ...preset, ambientColor: c }));
+}
 
 // Custom cube map upload: 6 user-picked images matched to the 6 faces by
 // filename. There's no lighting preset for an arbitrary user image, so it
@@ -124,6 +133,7 @@ const gui = createDebugGUI({
     skyboxOptions: SKYBOX_OPTIONS, defaultSkybox: SKYBOX_OPTIONS[0], skyboxCustomLabel: SKYBOX_CUSTOM_LABEL,
     onSkyboxChange: selectBackground,
     onCustomSkyboxFiles: selectCustomSkybox,
+    skyboxNoneLabel: SKYBOX_NONE, voidColor, onVoidColorChange: selectVoidColor,
     tableOptions: TABLE_OPTIONS, defaultTable: TABLE_OPTIONS[0], tableCustomLabel: TABLE_CUSTOM_LABEL,
     onTableChange: selectTable,
     onCustomTableFile: selectCustomTable,

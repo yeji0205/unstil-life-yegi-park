@@ -183,12 +183,17 @@ then transitions into the live 3D scene:
 - **Space** (per-background preset, `LIGHTING_PRESETS` in `environment.js`):
   - `skybox_blue`: ambient fades to ~0, directional climbs to 3.5 — moody,
     high-contrast, "the sun does all the work" look.
-  - `None (white)`: ambient instead climbs to 3.2 (**above** the directional's
-    1.2) — because ambient is non-directional and lights every surface
-    orientation equally, this is what actually removes dark/shadowed sides
-    from objects, which a bright-but-still-directional-dominant setup cannot
-    do. This was tuned twice: first just "brighter," which didn't fix shadow
-    sides; then ambient made dominant, which did.
+  - `None (solid color)`: ambient instead climbs to 3.2 (**above** the
+    directional's 1.2) — because ambient is non-directional and lights every
+    surface orientation equally, this is what actually removes dark/shadowed
+    sides from objects, which a bright-but-still-directional-dominant setup
+    cannot do. This was tuned twice: first just "brighter," which didn't fix
+    shadow sides; then ambient made dominant, which did.
+    The background colour is live (`voidColor`, white by default) and the GUI
+    exposes a swatch for it; picking a colour re-tints ambient to that colour's
+    hue via `setVoidColor`, on the same rule as the cube maps — the fill light
+    comes from whatever is actually behind the objects. Intensity stays the
+    preset's, so only the hue changes.
   - Switching the "Skybox" GUI dropdown updates both together
     (`selectBackground()` in `main.js`) and takes effect **immediately**
     even if not currently mid-scroll (a bug where the update was skipped

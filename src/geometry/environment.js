@@ -5,9 +5,17 @@ import { injectSkyboxFlow, uFlowStrength } from '../render/skyboxFlow.js';
 // Each entry is a folder under asset/ containing 6 faces named
 // bkg1_right/left/top/bot/front/back.png (same convention as skybox_blue).
 // Drop a new folder in with that naming and add its name here to make it
-// selectable from the debug GUI dropdown. 'None (white)' is a special case
-// handled directly below — no folder/textures involved.
-export const SKYBOX_NONE         = 'None (white)';
+// selectable from the debug GUI dropdown. SKYBOX_NONE is a special case handled
+// directly below — no folder or textures involved, just a flat colour.
+export const SKYBOX_NONE         = 'None (solid color)';
+
+// The flat background colour used when SKYBOX_NONE is selected. White to begin
+// with — that's the plain gallery void the piece was designed against — but it's
+// live, so the GUI can offer a swatch beside the dropdown. Kept out here rather
+// than inside buildSkybox so the GUI can read the current value when it builds
+// its colour picker, without needing the skybox to hand it over.
+export const voidColor = { hex: '#ffffff' };
+
 export const SKYBOX_CUSTOM_LABEL = 'Add custom skybox…';
 export const SKYBOX_OPTIONS      = ['skybox_blue', 'skybox_red', SKYBOX_NONE, SKYBOX_CUSTOM_LABEL];
 
@@ -19,10 +27,9 @@ const SKYBOX_FILE_PREFIX = { skybox_blue: 'bkg1_', skybox_red: 'bkg3_' };
 // Ambient/directional tint the room lighting eases toward as it enters
 // 'space' (see render/lighting.js updateLighting) — keyed by the same names
 // as SKYBOX_OPTIONS. Lighting should match whatever the viewer can actually
-// see behind the objects: the blue nebula implies a cool blue tint, but a
-// plain white void has no light source to tint anything, so it gets a
-// neutral studio-white preset instead. Add an entry here whenever a new
-// skybox option is added above.
+// see behind the objects: the blue nebula implies a cool blue tint, while a
+// flat void is lit by whatever colour it's set to (white by default). Add an
+// entry here whenever a new skybox option is added above.
 export const LIGHTING_PRESETS = {
     skybox_blue: {
         // Deep space, lit BY the nebula.
@@ -59,12 +66,18 @@ export const LIGHTING_PRESETS = {
         directionalIntensity: 5.4,
     },
     [SKYBOX_NONE]: {
-        // Plain white void: ambient light has no direction, so pushing it well
+        // Plain coloured void: ambient light has no direction, so pushing it well
         // above the directional light (instead of just "bright-ish") is what
         // actually removes dark/shadowed sides from objects — a directional
         // light alone always leaves its non-facing side dim regardless of
         // ambient's absolute brightness, since only ambient reaches every
         // surface orientation equally.
+        //
+        // ambientColor here is only the WHITE default. Pick another background
+        // colour and setVoidColor overrides it with that colour's own hue, on the
+        // same principle as the cube-map presets: whatever surrounds the objects
+        // is what should be lighting them. A blue void that lit everything white
+        // would read as a flat cut-out.
         ambientColor:         [1.00, 1.00, 1.00],
         ambientIntensity:     3.2,
         directionalColor:     [1.00, 1.00, 1.00],
@@ -140,10 +153,21 @@ export function buildSkybox(scene) {
             for (let i = 0; i < d.length; i += 4) { R += d[i]; G += d[i + 1]; B += d[i + 2]; n++; }
         }
         if (!n) return null;
-        R /= n; G /= n; B /= n;
-        const max = Math.max(R, G, B);
-        if (max < 1) return [1, 1, 1]; // essentially black sky → neutral fill
-        return [R / max, G / max, B / max];
+        // Canvas pixels are 0–255; normalizeHue works in 0–1 like THREE.Color, so
+        // the two callers hand it the same units.
+        return normalizeHue(R / (255 * n), G / (255 * n), B / (255 * n));
+    }
+
+    // Takes the HUE of a colour and throws away its brightness, so a dim
+    // background still produces a usable fill (see the note above
+    // averageFaceColor — a starfield averages to almost black, and feeding that
+    // in raw would light nothing at all). Intensity stays the preset's job.
+    // Shared by the cube-map average and the flat void colour so both answer
+    // "what colour is the light around the objects" the same way.
+    function normalizeHue(r, g, b) {
+        const max = Math.max(r, g, b);
+        if (max < 1 / 255) return [1, 1, 1]; // essentially black → neutral fill
+        return [r / max, g / max, b / max];
     }
 
     // Wires the 6 per-face load callbacks up to one "all faces in" notification.
@@ -223,8 +247,9 @@ export function buildSkybox(scene) {
     function loadSkybox(folderName, onAverageColor) {
         if (folderName === SKYBOX_NONE) {
             skybox.visible   = false;
-            scene.background = new THREE.Color(0xffffff);
-            onAverageColor?.([1, 1, 1]); // plain white void → white fill
+            const c = new THREE.Color(voidColor.hex);
+            scene.background = c;
+            onAverageColor?.(normalizeHue(c.r, c.g, c.b));
             return;
         }
         scene.background = null; // let the skybox mesh show through again
@@ -339,7 +364,21 @@ export function buildSkybox(scene) {
         return true;
     }
 
-    return { loadSkybox, loadCustomSkybox };
+    // Repaints the flat background live. Only touches scene.background when the
+    // solid-colour option is actually showing — the skybox mesh covers it
+    // otherwise, so writing there would silently change what you'd see the next
+    // time None was picked, with no visible feedback now.
+    //
+    // Reports the new hue back the same way a cube map does, so the fill light
+    // follows the background without a second control to keep in sync.
+    function setVoidColor(hex, onAmbientColor) {
+        voidColor.hex = hex;
+        const c = new THREE.Color(hex);
+        if (!skybox.visible) scene.background = c;
+        onAmbientColor?.(normalizeHue(c.r, c.g, c.b));
+    }
+
+    return { loadSkybox, loadCustomSkybox, setVoidColor };
 }
 
 // ─── Stars ───────────────────────────────────────────────────────────────────
