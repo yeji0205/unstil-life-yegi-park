@@ -87,32 +87,69 @@ export function createDebugGUI({
     };
     const revealController = gui.add(revealActions, 'reveal').name('▶ Reveal Scene (dissolve painting)');
 
-    gui.add(uProgress,      'value', 0, 1, 0.01).name('Progress (p)').listen();
+    // Button lives in the GUI panel. Disabled until phase === 'space'.
+    const dissolveActions = { dissolve: () => onDissolveClick() };
+    const dissolveController = gui.add(dissolveActions, 'dissolve').name('▶ Dissolve Objects');
+    dissolveController.disable(); // enabled by the phase machine when room is fully gone
+
+    // Toggles the swirling curl-noise UV warp on the skybox texture (see
+    // render/skyboxFlow.js). Label flips to reflect state, same pattern as
+    // the dissolve button above.
+    const bgMotionAction = {
+        toggle: () => {
+            flowState.enabled = !flowState.enabled;
+            bgMotionController.name(flowState.enabled ? '⏸ Stop Background Motion' : '🌀 Animate Background');
+        },
+    };
+    const bgMotionController = gui.add(bgMotionAction, 'toggle').name('🌀 Animate Background');
+
+    // ─── Panel layout ────────────────────────────────────────────────────────
+    // The three buttons above are the only things left loose at the top level:
+    // they're the controls you press rather than adjust, so they're grouped
+    // together and reachable without opening anything. Everything else lives in
+    // a folder — previously some settings sat loose and some were in folders,
+    // which made the panel read as a list with arbitrary dividers in it.
+    //
+    // lil-gui renders in creation order, so these four are declared here to fix
+    // the sequence; their contents are attached further down, next to the code
+    // that owns them. The remaining folders (Room Textures, Sound, Objects,
+    // Camera position) are created later in the file and follow in that order,
+    // ending with the read-only camera readout — nothing to change there, so it
+    // belongs at the bottom.
+    const sceneFolder    = gui.addFolder('Scene');
+    const perfFolder     = gui.addFolder('Performance');
+    const dissolveFolder = gui.addFolder('Dissolve Look');
+    const contentFolder  = gui.addFolder('Scene Contents');
+
+    sceneFolder.add(uProgress, 'value', 0, 1, 0.01).name('Progress (p)').listen();
     // Scroll feel: how much the scene trails the wheel. Higher = objects drift
     // and coast (floaty); lower = they track the wheel closely (snappy, but the
     // float/bob gets swamped and reads as dragging). See scrollSmoothing.
-    gui.add(scrollSmoothing, 'tau', 0.08, 0.6, 0.01).name('Scroll Drift (float ⇢)');
+    sceneFolder.add(scrollSmoothing, 'tau', 0.08, 0.6, 0.01).name('Scroll Drift (float ⇢)');
+
     // Sharpness vs speed. The scene is fill-bound, so cost rises with the SQUARE
     // of this: 1.2 shades 44% more pixels than 1.0. Watch the fps readout while
     // dragging and stop where it stops being worth it.
-    gui.add({ q: 1.0 }, 'q', 0.55, 1.0, 0.05).name('Render Quality (max)')
+    perfFolder.add({ q: 1.0 }, 'q', 0.55, 1.0, 0.05).name('Render Quality (max)')
         .onChange(onRenderScaleChange);
     // On by default: the piece lowers its own resolution on slow machines so it
     // stays smooth on hardware we can't test. Turn off to pin the quality above.
-    gui.add({ adaptive: true }, 'adaptive').name('Auto-adjust for fps')
+    perfFolder.add({ adaptive: true }, 'adaptive').name('Auto-adjust for fps')
         .onChange(onAdaptiveQualityToggle);
-    gui.add(uDissolveEdge,  'value', 0, 0.8, 0.01).name('Dissolve Edge');
-    gui.add(uNoiseFreq,     'value', 0.1, 1.5, 0.01).name('Noise Frequency');
-    gui.add(uDissolveEdgeColor.value, 'r', 0, 1, 0.01).name('Edge R');
-    gui.add(uDissolveEdgeColor.value, 'g', 0, 1, 0.01).name('Edge G');
-    gui.add(uDissolveEdgeColor.value, 'b', 0, 1, 0.01).name('Edge B');
+
+    dissolveFolder.add(uDissolveEdge, 'value', 0, 0.8, 0.01).name('Dissolve Edge');
+    dissolveFolder.add(uNoiseFreq,    'value', 0.1, 1.5, 0.01).name('Noise Frequency');
+    dissolveFolder.add(uDissolveEdgeColor.value, 'r', 0, 1, 0.01).name('Edge R');
+    dissolveFolder.add(uDissolveEdgeColor.value, 'g', 0, 1, 0.01).name('Edge G');
+    dissolveFolder.add(uDissolveEdgeColor.value, 'b', 0, 1, 0.01).name('Edge B');
 
     // Dissolve particle color — live picker so neon shades can be auditioned.
     // Proxy holds a hex string (what lil-gui's color widget edits); onChange
     // writes it into the shared THREE.Color uniform every particle reads.
     const particleColorProxy = { color: '#' + uParticleColor.value.getHexString() };
-    gui.addColor(particleColorProxy, 'color').name('Particle Color')
+    dissolveFolder.addColor(particleColorProxy, 'color').name('Particle Color')
         .onChange((hex) => uParticleColor.value.set(hex));
+    dissolveFolder.close();
 
     // Skybox picker — swaps the cubemap live. Add new folder names to
     // skyboxOptions (geometry/environment.js) to list them here.
@@ -130,7 +167,7 @@ export function createDebugGUI({
 
     const skyboxSettings = { cubemap: defaultSkybox };
     let lastSkybox = defaultSkybox;
-    const skyboxCtrl = gui.add(skyboxSettings, 'cubemap', skyboxOptions)
+    const skyboxCtrl = contentFolder.add(skyboxSettings, 'cubemap', skyboxOptions)
         .name('Skybox')
         .onChange((folderName) => {
             if (folderName === skyboxCustomLabel) {
@@ -219,7 +256,7 @@ export function createDebugGUI({
     document.body.appendChild(fileInput);
 
     const tableSettings = { table: defaultTable };
-    gui.add(tableSettings, 'table', tableOptions)
+    contentFolder.add(tableSettings, 'table', tableOptions)
         .name('Table')
         .onChange((label) => {
             if (label === tableCustomLabel) {
@@ -242,7 +279,7 @@ export function createDebugGUI({
     // GLB tables carry their own materials. A colour swatch for a plain painted
     // plinth, plus the full set of PBR map slots for anything richer. Maps mix
     // freely and persist across Box↔Cylinder swaps (glbLoader keeps them).
-    const tableMatFolder = gui.addFolder('Table Material (Box/Cyl)');
+    const tableMatFolder = contentFolder.addFolder('Table Material (Box/Cyl)');
 
     // Colour applies only when no albedo map is loaded — a map is TINTED by
     // colour, so the two would fight. glbLoader whitens the tint in that case.
@@ -301,7 +338,7 @@ export function createDebugGUI({
 
     const stoneSettings = { stone: STONE_OPTIONS[0] };
     let lastStone = STONE_OPTIONS[0];
-    const stoneCtrl = gui.add(stoneSettings, 'stone', STONE_OPTIONS)
+    const stoneCtrl = contentFolder.add(stoneSettings, 'stone', STONE_OPTIONS)
         .name('Stone')
         .onChange((label) => {
             if (label === STONE_CUSTOM_LABEL) {
@@ -357,6 +394,7 @@ export function createDebugGUI({
     // and only takes effect once a file is actually chosen. Any format the
     // browser can decode works (mp3/wav/ogg/m4a). Used for both the room
     // track (café, fades out into space) and the space track (fades in).
+    const soundFolder = gui.addFolder('Sound');
     function addSoundPicker(name, options, defaultLabel, onChange, onCustomFile, volume) {
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
@@ -365,7 +403,7 @@ export function createDebugGUI({
         document.body.appendChild(fileInput);
 
         const settings = { sound: defaultLabel };
-        gui.add(settings, 'sound', options)
+        soundFolder.add(settings, 'sound', options)
             .name(name)
             .onChange((label) => {
                 if (label === soundCustomLabel) {
@@ -374,7 +412,7 @@ export function createDebugGUI({
                 }
                 onChange(label);
             });
-        gui.add(volume, 'value', 0, 1, 0.01).name(name + ' Volume');
+        soundFolder.add(volume, 'value', 0, 1, 0.01).name(name + ' Volume');
 
         fileInput.addEventListener('change', () => {
             const file = fileInput.files[0];
@@ -389,29 +427,24 @@ export function createDebugGUI({
     // Dissolve Sound is a one-shot (played once when the Dissolve button fires),
     // but its picker is identical: preset / None / custom upload + volume.
     addSoundPicker('Dissolve Sound', dissolveSoundOptions, defaultDissolveSound, onDissolveSoundChange, onCustomDissolveSoundFile, dissolveSoundVolume);
+    soundFolder.close();
 
-    // Toggles the swirling curl-noise UV warp on the skybox texture (see
-    // render/skyboxFlow.js). Label flips to reflect state, same pattern as
-    // the dissolve button below.
-    const bgMotionAction = {
-        toggle: () => {
-            flowState.enabled = !flowState.enabled;
-            bgMotionController.name(flowState.enabled ? '⏸ Stop Background Motion' : '🌀 Animate Background');
-        },
-    };
-    const bgMotionController = gui.add(bgMotionAction, 'toggle').name('🌀 Animate Background');
+    // Per-object placement folders are added at runtime as each GLB finishes
+    // loading. Declared here so they land inside one parent instead of six
+    // loose folders appended to the very bottom of the panel — and so the
+    // camera readout below stays last no matter when the models arrive.
+    const objectsFolder = gui.addFolder('Objects');
+    objectsFolder.close();
 
-    // Camera position display — read-only, updated every frame via updateCameraDebug.
+    // Camera position display — read-only, updated every frame via
+    // updateCameraDebug. Last in the panel: there's nothing to change here, it's
+    // only ever read while dialling in a shot.
     const cameraDebug = { x: 0, y: 0, z: 0 };
     const cameraFolder = gui.addFolder('Camera position');
     cameraFolder.add(cameraDebug, 'x').name('Cam X').listen().disable();
     cameraFolder.add(cameraDebug, 'y').name('Cam Y').listen().disable();
     cameraFolder.add(cameraDebug, 'z').name('Cam Z').listen().disable();
-
-    // Button lives in the GUI panel. Disabled until phase === 'space'.
-    const dissolveActions = { dissolve: () => onDissolveClick() };
-    const dissolveController = gui.add(dissolveActions, 'dissolve').name('▶ Dissolve Objects');
-    dissolveController.disable(); // enabled by the phase machine when room is fully gone
+    cameraFolder.close();
 
     // Camera position display — capped to 2 decimal places for readability.
     function updateCameraDebug(position) {
@@ -422,7 +455,7 @@ export function createDebugGUI({
 
     // Per-object debug folder, added once a stage object's GLB finishes loading.
     function addObjectFolder(label, entry, scaleFactor) {
-        const folder = gui.addFolder(label);
+        const folder = objectsFolder.addFolder(label);
         const scaleProxy = { scale: scaleFactor };
         folder.add(scaleProxy, 'scale', 0.05, 5.0, 0.01).name('Scale')
             .onChange(v => entry.mesh.scale.setScalar(v));

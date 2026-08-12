@@ -342,7 +342,60 @@ function injectPlinthBaseShading(mat, height) {
 // the same height the Box/Cylinder plinths use, and centre it in XZ so an
 // off-origin pivot doesn't slide it out of the light. This is the same treatment
 // custom STONE uploads already get, for the same reason.
+// ─── Backdrop / ground planes inside a downloaded model ──────────────────────
+// Most free table models are exported with the little display floor the artist
+// posed them on — a single enormous flat quad under the table. That's where the
+// "huge plane that dissolves too" comes from: it's a real mesh in the file, so
+// it gets the dissolve shader along with everything else. It went unnoticed
+// before only because the un-normalised model was so oversized that the plane
+// was off-screen entirely; scaling the model to fit brought it into frame.
+//
+// Two conditions have to hold together, and needing BOTH is what keeps a genuine
+// tabletop safe:
+//   • essentially two-dimensional — under 2% thickness relative to its own width
+//   • wider than the whole model is tall, by 2.5× or more
+// A tabletop passes the first test (they are thin) but fails the second: a 1.6-
+// wide top on a 1.9-tall table is nowhere near 4.75 wide. A display floor is
+// typically several times the table's height across, so it fails to hide.
+//
+// Bounds are measured in the model's own space before any normalising, and the
+// whole thing is skipped if it would empty the model — better to show a strange
+// table than no table.
+const BACKDROP_FLATNESS = 0.02; // thickness as a fraction of own width
+const BACKDROP_SPREAD   = 2.5;  // width as a multiple of total model height
+
+function stripBackdropPlanes(root) {
+    root.updateWorldMatrix(true, true);
+    const modelHeight = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()).y;
+    if (!(modelHeight > 0)) return [];
+
+    const meshes = [];
+    root.traverse((c) => { if (c.isMesh && c.geometry) meshes.push(c); });
+
+    const doomed = meshes.filter((m) => {
+        const s = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
+        const width = Math.max(s.x, s.z);
+        return width > 0
+            && s.y   <  BACKDROP_FLATNESS * width
+            && width >  BACKDROP_SPREAD   * modelHeight;
+    });
+    if (!doomed.length || doomed.length === meshes.length) return [];
+
+    for (const m of doomed) {
+        m.removeFromParent();
+        m.geometry.dispose();
+    }
+    return doomed.map((m) => m.name || '(unnamed mesh)');
+}
+
 function normalizeCustomTable(root) {
+    // Before measuring: a leftover display floor would otherwise dominate the
+    // bounding box and skew the centring as well as being visible in the scene.
+    const stripped = stripBackdropPlanes(root);
+    if (stripped.length) {
+        console.info(`Custom table: removed ${stripped.length} backdrop/ground plane(s) — ${stripped.join(', ')}`);
+    }
+
     root.updateWorldMatrix(true, true);
     const box = new THREE.Box3().setFromObject(root);
     // No geometry at all (an empty or camera/light-only file) — nothing to

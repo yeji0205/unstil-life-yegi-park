@@ -227,14 +227,20 @@ export function buildSkybox(scene) {
         return null;
     }
 
-    // Fallback for names with no separator at all — "skyboxRT.png", "sky_up1.png"
-    // — where tokenising yields one unsplittable blob. Looser by nature (a file
-    // called "group.png" ends in "up"), so it only ever fills faces the strict
-    // pass left empty.
-    function faceBySuffix(name) {
-        const base = name.toLowerCase().replace(/\.[^.]+$/, '').replace(/[^a-z0-9]+$/, '');
+    // Fallback for names with no separator at all — "skyboxRT.png", "BKsunset.jpg"
+    // — where tokenising yields one unsplittable blob. The face word can sit at
+    // either end, since packs use both: some append it, some lead with it.
+    //
+    // Looser by nature — "group.png" ends in "up", "background.png" starts with
+    // "back" — so it only ever fills faces the strict pass left empty, and suffix
+    // is tried before prefix because trailing face names are the commoner style.
+    function faceByEdge(name, mode) {
+        const base = name.toLowerCase().replace(/\.[^.]+$/, '').replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
         for (const face of SKYBOX_FACES) {
-            if (FACE_ALIASES[face].some(a => base.endsWith(a))) return face;
+            // Longest alias first: for "xneg…" this tries 'xneg' before 'xn', so a
+            // more specific spelling can't be pre-empted by a shorter one.
+            const aliases = [...FACE_ALIASES[face]].sort((a, b) => b.length - a.length);
+            if (aliases.some(a => (mode === 'suffix' ? base.endsWith(a) : base.startsWith(a)))) return face;
         }
         return null;
     }
@@ -242,26 +248,28 @@ export function buildSkybox(scene) {
     // Matches a set of user-picked files to the 6 cube faces by filename
     // (e.g. "myscene_right.png" -> right, "posx.png" -> right, "skyBK.png" -> back).
     //
-    // Two passes, strict before loose, and that ordering is the point: a folder
+    // Three passes, strictest first, and that ordering is the point: a folder
     // picker hands over EVERY file inside, including stray readme or preview
-    // images. Running the loose pass only on faces still unclaimed means a
-    // properly named file always wins its slot over an accidental suffix hit.
+    // images. Each looser pass only fills faces still unclaimed and only
+    // considers files not already spoken for, so a properly named file always
+    // wins its slot over an accidental prefix/suffix collision.
     //
     // Returns { matched, missing }. `missing` lets the caller name the faces it
     // couldn't find instead of just refusing the whole folder.
     function matchFaceFiles(files) {
         const list = Array.from(files);
         const matched = {};
-        for (const f of list) {
-            const face = faceByToken(f.name);
-            if (face && !matched[face]) matched[face] = f;
-        }
-        const claimed = new Set(Object.values(matched));
-        for (const f of list) {
-            if (claimed.has(f)) continue;
-            const face = faceBySuffix(f.name);
-            if (face && !matched[face]) { matched[face] = f; claimed.add(f); }
-        }
+        const claimed = new Set();
+        const claim = (face, file) => {
+            if (!face || matched[face]) return;
+            matched[face] = file;
+            claimed.add(file);
+        };
+
+        for (const f of list) claim(faceByToken(f.name), f);
+        for (const f of list) if (!claimed.has(f)) claim(faceByEdge(f.name, 'suffix'), f);
+        for (const f of list) if (!claimed.has(f)) claim(faceByEdge(f.name, 'prefix'), f);
+
         return { matched, missing: SKYBOX_FACES.filter(face => !matched[face]) };
     }
 
