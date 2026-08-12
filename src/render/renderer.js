@@ -106,10 +106,15 @@ export function createRenderer() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
-    // PCF, not PCFSoft: soft shadows take several times more texture samples per
-    // shaded pixel. On a fill-limited integrated GPU that is a poor trade for
-    // slightly softer edges.
-    renderer.shadowMap.type    = THREE.PCFShadowMap;
+    // PCFSoft, not plain PCF. This was the other way round while the scene was
+    // stuck on integrated graphics, where the extra texture samples per shaded
+    // pixel weren't affordable. With the discrete GPU in play they are, and the
+    // wider filter is what takes the remaining hard stair-steps off a shadow
+    // edge once the map resolution has done the heavy lifting (see
+    // setShadowQuality in lighting.js). Add ?shadows=hard to compare.
+    renderer.shadowMap.type = new URLSearchParams(location.search).get('shadows') === 'hard'
+        ? THREE.PCFShadowMap
+        : THREE.PCFSoftShadowMap;
     document.body.appendChild(renderer.domElement);
     return renderer;
 }

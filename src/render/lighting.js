@@ -176,22 +176,10 @@ export function setupLighting(scene) {
     // the shadow meets the stone where it touches the table. Keep the frustum
     // wide enough for the table's shadow on the floor and the objects' shadows
     // on the walls — anything outside it silently stops casting.
-    directionalLight.shadow.mapSize.set(1024, 1024);
-    // Bias, sized against the actual texel. The shadow camera spans 10 world
-    // units across a 1024 map, so ONE shadow texel is 10/1024 ≈ 0.0098 units.
-    // normalBias has to be at least about that big: it nudges the depth lookup
-    // along the surface normal to skip past the texel the surface itself
-    // occupies, and anything smaller than a texel can't do that.
-    //
-    // It was 0.001 — a TENTH of a texel, effectively nothing. That was left over
-    // from chasing the gap under the agate by winding the bias down; the real
-    // cause of that gap turned out to be Box3 inflating the object's bounds, and
-    // once that was fixed the shrunken bias stayed behind. The cost is
-    // self-shadow acne: every curved surface stipples itself with the shadow
-    // map's own stair-stepping. 0.012 ≈ 1.2 texels clears it, and at this scene's
-    // scale the shadow shifts by ~1 cm, which is not visible as a gap.
-    directionalLight.shadow.bias       = -0.0002;
-    directionalLight.shadow.normalBias =  0.012;
+    // Bias is sized against the actual TEXEL, so it has to be recomputed
+    // whenever the map size changes — see setShadowQuality below, which is what
+    // sets the initial values too.
+    directionalLight.shadow.bias        = -0.0002;
     directionalLight.shadow.camera.near = 0.5;
     directionalLight.shadow.camera.far  = 26;
     directionalLight.shadow.camera.left = -5;
@@ -199,6 +187,38 @@ export function setupLighting(scene) {
     directionalLight.shadow.camera.top  = 5;
     directionalLight.shadow.camera.bottom = -5;
     scene.add(directionalLight);
+
+    // ─── Shadow resolution ───────────────────────────────────────────────────
+    // The blocky stair-stepped shadow edges show up worst on the pale Box and
+    // Cylinder plinths, and that's not a coincidence: a shadow edge is a
+    // brightness step, and a step is easiest to see against a light, flat,
+    // untextured surface. The wood and plaster elsewhere hide the same jaggedness
+    // behind their own detail.
+    //
+    // The jaggedness itself is the shadow map's pixel grid. Its camera spans 10
+    // world units, so at 1024 each texel covers ~1 cm of world — and the plinth
+    // fills enough of the screen that those centimetre squares are plainly
+    // visible. Doubling to 2048 halves the step size, which is the only real fix;
+    // filtering can soften an edge but can't invent detail that was never
+    // rasterised. Cost is 4× the shadow-map memory and fill, which is why this is
+    // adjustable rather than simply set high.
+    //
+    // normalBias is derived from the texel rather than hard-coded, so it stays
+    // just over one texel at any resolution: too little and surfaces stipple
+    // themselves with acne, too much and shadows detach from their objects. A
+    // sharper map therefore also buys a tighter contact shadow, for free.
+    const SHADOW_FRUSTUM = 10; // world units across (camera.left..right)
+    function setShadowQuality(size) {
+        directionalLight.shadow.mapSize.set(size, size);
+        directionalLight.shadow.normalBias = 1.2 * (SHADOW_FRUSTUM / size);
+        // A shadow map already allocated on the GPU keeps its old dimensions.
+        // Disposing it makes three build a new one at the new size next frame.
+        if (directionalLight.shadow.map) {
+            directionalLight.shadow.map.dispose();
+            directionalLight.shadow.map = null;
+        }
+    }
+    setShadowQuality(2048);
 
     // ─── Left-wall fill ──────────────────────────────────────────────────────
     // The key light above comes from the upper LEFT, so it rakes across the back
@@ -328,5 +348,5 @@ export function setupLighting(scene) {
         uRimStrength.value = THREE.MathUtils.clamp(ambientLight.intensity * 0.3, 0.05, 0.6);
     }
 
-    return { ambientLight, directionalLight, updateLighting, setSpacePreset, applyLightAngle };
+    return { ambientLight, directionalLight, updateLighting, setSpacePreset, applyLightAngle, setShadowQuality };
 }

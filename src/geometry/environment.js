@@ -8,7 +8,7 @@ import { injectSkyboxFlow, uFlowStrength } from '../render/skyboxFlow.js';
 // selectable from the debug GUI dropdown. 'None (white)' is a special case
 // handled directly below — no folder/textures involved.
 export const SKYBOX_NONE         = 'None (white)';
-export const SKYBOX_CUSTOM_LABEL = 'Custom images…';
+export const SKYBOX_CUSTOM_LABEL = 'Add custom skybox…';
 export const SKYBOX_OPTIONS      = ['skybox_blue', 'skybox_red', SKYBOX_NONE, SKYBOX_CUSTOM_LABEL];
 
 // Face filenames aren't uniform across packs: skybox_blue ships bkg1_*.png while
@@ -81,17 +81,24 @@ const SKYBOX_BRIGHTNESS = 0.45;
 export function buildSkybox(scene) {
     const textureLoader = new THREE.TextureLoader();
 
-    // Loads one cube face and makes it robust to arbitrary user images:
-    //  • ClampToEdge + no mipmaps → no bright/wrong-colour seam lines where two
-    //    faces meet (the "edges" a custom cubemap showed with RepeatWrapping).
-    //  • center-crop to a SQUARE via the UV transform → a non-square photo is
-    //    cropped, not stretched, onto the square face (the "stretched textures").
-    // Square, equal-size faces still look best, but this keeps odd sizes usable.
+    // Loads one cube face. ClampToEdge + no mipmaps keeps the sampler from
+    // reaching past a face's own border, which is what produced bright or
+    // wrong-coloured seam lines under RepeatWrapping. Square, equal-size faces
+    // still look best — see inspectFaces for what happens when they aren't.
     function loadFaceTexture(url, revokeAfter = false, onReady = null) {
+        // Non-square images are STRETCHED to fill the face, not centre-cropped.
+        //
+        // Cropping was the wrong call for a cube map and is the main reason some
+        // folders showed visible edges while others were fine. A cube's faces only
+        // join invisibly if each one carries the sky right up to its own border —
+        // the right face's left border has to continue exactly where the front
+        // face's right border stops. Cropping to a square throws away precisely
+        // those borders, so every seam becomes a jump-cut. Stretching keeps the
+        // full image, so the edges still line up; the picture is squashed a little
+        // instead, which is far less noticeable than six hard lines.
+        //
+        // (Square images, which is what most packs ship, are unaffected either way.)
         const tex = textureLoader.load(url, (t) => {
-            const w = t.image.width, h = t.image.height;
-            if (w > h)      { t.repeat.set(h / w, 1); t.offset.set((1 - h / w) / 2, 0); }
-            else if (h > w) { t.repeat.set(1, w / h); t.offset.set(0, (1 - w / h) / 2); }
             t.needsUpdate = true;
             if (revokeAfter) URL.revokeObjectURL(url);
             onReady?.(t.image);
@@ -140,7 +147,7 @@ export function buildSkybox(scene) {
     }
 
     // Wires the 6 per-face load callbacks up to one "all faces in" notification.
-    function collectFaces(onAverage) {
+    function collectFaces(onAverage, onReport = null) {
         const images = new Array(6).fill(null);
         let remaining = 6;
         return (i) => (img) => {
@@ -148,8 +155,46 @@ export function buildSkybox(scene) {
             if (--remaining === 0) {
                 const avg = averageFaceColor(images);
                 if (avg) onAverage?.(avg);
+                if (onReport) onReport(inspectFaces(images));
             }
         };
+    }
+
+    // Why a given folder shows seams, answered from the images themselves rather
+    // than left to guesswork. Only two properties of the FILES can cause it:
+    //
+    //  • non-square faces — a cube face is square by definition, so anything else
+    //    has to be distorted to fit, and it usually means the images aren't a cube
+    //    map at all (a single panorama sliced up, or six unrelated photos)
+    //  • mismatched sizes — adjacent faces at different resolutions meet at
+    //    slightly different levels of detail, which shows as a visible change in
+    //    sharpness along the join even when the content is correct
+    //
+    // What this CANNOT detect is the third cause, and in practice the commonest:
+    // face orientation. Cube-map conventions disagree about handedness and about
+    // how the top and bottom faces are rotated, so a pack can be named perfectly
+    // and still meet at right angles. That one has to be seen to be diagnosed,
+    // which is why the report says so instead of pretending everything is fine.
+    function inspectFaces(images) {
+        const notes = [];
+        const dims = images.map((img, i) => img
+            ? { face: SKYBOX_FACES[i], w: img.width, h: img.height }
+            : { face: SKYBOX_FACES[i], w: 0, h: 0 });
+
+        const nonSquare = dims.filter(d => d.w && d.h && d.w !== d.h);
+        if (nonSquare.length) {
+            notes.push(`${nonSquare.length} of 6 images are not square (`
+                + nonSquare.map(d => `${d.face} ${d.w}×${d.h}`).join(', ')
+                + '). They are stretched to fit, so straight lines in the sky will bend.');
+        }
+
+        const sizes = [...new Set(dims.filter(d => d.w).map(d => `${d.w}×${d.h}`))];
+        if (sizes.length > 1) {
+            notes.push(`The faces are different sizes (${sizes.join(', ')}). `
+                + 'Neighbouring faces will meet at different sharpness, which reads as a line.');
+        }
+
+        return { notes, sizes };
     }
 
     const skybox = new THREE.Mesh(
@@ -276,13 +321,13 @@ export function buildSkybox(scene) {
     // Loads a user-supplied cube map from 6 local image files. Returns true on
     // success, or the list of face names it couldn't find — in that case the
     // background is left unchanged and the caller can say exactly what's missing.
-    function loadCustomSkybox(files, onAverageColor) {
+    function loadCustomSkybox(files, onAverageColor, onReport = null) {
         const { matched, missing } = matchFaceFiles(files);
         if (missing.length) return missing;
 
         scene.background = null;
         skybox.visible   = true;
-        const face$ = collectFaces(onAverageColor);
+        const face$ = collectFaces(onAverageColor, onReport);
         skybox.material.forEach((mat, i) => {
             const face = SKYBOX_FACES[i];
             const url  = URL.createObjectURL(matched[face]);

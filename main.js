@@ -16,7 +16,6 @@ import {
 } from './src/persistence/glbLoader.js';
 
 import { createLoadingScreen } from './src/ui/loadingScreen.js';
-import { createPerfHud } from './src/ui/perfHud.js';
 import { createSoundHint } from './src/ui/soundHint.js';
 import { createDebugGUI } from './src/ui/gui.js';
 
@@ -41,7 +40,7 @@ const { updateStars } = buildStars(scene);
 buildRoom(scene);
 
 // ─── Lighting ────────────────────────────────────────────────────────────────
-const { updateLighting, setSpacePreset } = setupLighting(scene);
+const { updateLighting, setSpacePreset, setShadowQuality } = setupLighting(scene);
 
 // Swaps the background AND its matching lighting tint together — the GUI's
 // "Skybox" dropdown is the only control needed; there's no separate lighting
@@ -61,14 +60,23 @@ selectBackground(SKYBOX_OPTIONS[0]);
 // filename. There's no lighting preset for an arbitrary user image, so it
 // reuses the moody skybox_blue tint as a reasonable default. Returns whether
 // the files matched — the GUI shows an error itself if not.
+// Set by the GUI once it exists, so a report raised while faces decode has
+// somewhere to go. Late-bound because the skybox is built before the GUI.
+let customSkyboxReport = null;
+
 function selectCustomSkybox(files) {
     const base = LIGHTING_PRESETS.skybox_blue;
     // A user image has no preset, but it doesn't need one for colour any more:
     // the fill is sampled from their own images, so the lighting matches
     // whatever they upload. The preset only supplies the intensities.
     // true on success, otherwise the array of faces it couldn't find.
-    const result = loadCustomSkybox(files, (skyColor) =>
-        setSpacePreset({ ...base, ambientColor: skyColor }));
+    // The third argument reports back on the images once all 6 have decoded —
+    // non-square or mismatched sizes, i.e. the things that make faces show seams.
+    const result = loadCustomSkybox(
+        files,
+        (skyColor) => setSpacePreset({ ...base, ambientColor: skyColor }),
+        (report) => customSkyboxReport?.(report),
+    );
     if (result === true) { setSpacePreset(base); return true; }
     return result; // e.g. ['top', 'bottom'] — the GUI names them in its error
 }
@@ -124,6 +132,7 @@ const gui = createDebugGUI({
     onRoomTextureReset: (surface) => resetRoomTextures(surface),
     onTableColorChange: (hex) => setTableColor(hex),
     onRenderScaleChange: (v) => adaptiveQuality.setCeiling(v),
+    onShadowQualityChange: (size) => setShadowQuality(size),
     onAdaptiveQualityToggle: (on) => adaptiveQuality.setEnabled(on),
     // Swapping the stone reloads just that one object, so it needs a fresh GUI
     // folder — the old one is destroyed with the object it described.
@@ -151,6 +160,7 @@ const gui = createDebugGUI({
     // dissolve (triggerDissolve returns false if not in the 'space' phase).
     onDissolveClick: () => { if (phaseMachine.triggerDissolve()) ambientSound.dissolve.play(); },
 });
+customSkyboxReport = gui.reportSkyboxImages;
 
 // ─── Phase state machine ─────────────────────────────────────────────────────
 const clock = new THREE.Clock();
@@ -195,7 +205,6 @@ loadScene(scene, {
     onObjectReady: (label, entry, scaleFactor) => gui.addObjectFolder(label, entry, scaleFactor),
 });
 
-const perfHud = createPerfHud(renderer); // diagnostic readout — see src/ui/perfHud.js
 // ─── Animate ─────────────────────────────────────────────────────────────────
 let lastT = 0;
 function animate() {
@@ -219,7 +228,6 @@ function animate() {
     gui.updateCameraDebug(camera.position);
 
     adaptiveQuality.update(dt);
-    perfHud.update();
     cameraControls.controls.update();
     // With the intro active, render() does its two-pass cross-dissolve; without
     // it, a single straight render at full performance.

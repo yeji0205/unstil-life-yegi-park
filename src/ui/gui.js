@@ -65,7 +65,7 @@ export function createDebugGUI({
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
     onRoomTextureFile, onRoomTextureReset, onTableColorChange,
-    onRenderScaleChange, onAdaptiveQualityToggle,
+    onRenderScaleChange, onAdaptiveQualityToggle, onShadowQualityChange,
     onStoneChange, onCustomStoneFile,
     roomSoundOptions, defaultRoomSound, spaceSoundOptions, defaultSpaceSound,
     dissolveSoundOptions, defaultDissolveSound, soundCustomLabel,
@@ -136,6 +136,12 @@ export function createDebugGUI({
     // stays smooth on hardware we can't test. Turn off to pin the quality above.
     perfFolder.add({ adaptive: true }, 'adaptive').name('Auto-adjust for fps')
         .onChange(onAdaptiveQualityToggle);
+    // Shadow map resolution. Unlike render quality this is NOT auto-adjusted:
+    // changing it mid-scene would be a visible step in how sharp every shadow
+    // edge is, so it stays a deliberate choice. 2048 is the default; drop to
+    // 1024 on weak hardware (it's 4× cheaper), raise to 4096 for stills.
+    perfFolder.add({ shadows: 2048 }, 'shadows', [1024, 2048, 4096]).name('Shadow Detail')
+        .onChange(onShadowQualityChange);
 
     dissolveFolder.add(uDissolveEdge, 'value', 0, 0.8, 0.01).name('Dissolve Edge');
     dissolveFolder.add(uNoiseFreq,    'value', 0.1, 1.5, 0.01).name('Noise Frequency');
@@ -149,11 +155,10 @@ export function createDebugGUI({
     const particleColorProxy = { color: '#' + uParticleColor.value.getHexString() };
     dissolveFolder.addColor(particleColorProxy, 'color').name('Particle Color')
         .onChange((hex) => uParticleColor.value.set(hex));
-    dissolveFolder.close();
 
     // Skybox picker — swaps the cubemap live. Add new folder names to
     // skyboxOptions (geometry/environment.js) to list them here.
-    // "Custom images…" is different from every other preset: a single flat
+    // "Add custom skybox…" is different from every other preset: a single flat
     // image can't be a skybox (the background is a box with 6 separately
     // textured faces). Rather than make the user pick 6 files by hand, this is
     // a FOLDER picker (webkitdirectory): they choose the folder that holds the
@@ -173,7 +178,7 @@ export function createDebugGUI({
             if (folderName === skyboxCustomLabel) {
                 // Snap the dropdown back to the last real preset immediately.
                 // lil-gui only fires onChange when the value CHANGES, so if the
-                // control stayed stuck on "Custom images…" (after a pick, or a
+                // control stayed stuck on "Add custom skybox…" (after a pick, or a
                 // cancelled dialog) selecting it again would do nothing — the
                 // "can't add a custom skybox a second time" trap. Resetting the
                 // display means picking it always re-fires and re-opens the picker.
@@ -244,6 +249,30 @@ export function createDebugGUI({
         }
         skyboxFileInput.value = '';
     });
+
+    // Called once all 6 faces of a custom cube map have decoded, with anything
+    // about the IMAGES that will make the joins visible. Shown only when there's
+    // something to say — a clean folder loads silently.
+    function reportSkyboxImages(report) {
+        if (!report?.notes?.length) return;
+        showModal({
+            title: 'Background loaded, with caveats',
+            bodyHTML: `
+                <p style="margin:0 0 10px;">The six faces were found and applied, but
+                these will show as edges between them:</p>
+                <ul style="margin:0 0 12px;padding-left:20px;">
+                  ${report.notes.map(n => `<li style="margin-bottom:6px;">${n}</li>`).join('')}
+                </ul>
+                <p style="margin:0;font-size:14px;opacity:0.8;">A cube map only joins
+                invisibly when all six faces are <b>square and the same size</b>, and when
+                they came from one cube map rather than being assembled by hand. If the
+                sizes look right and you still see edges, the pack is most likely using a
+                different face <b>orientation</b> convention — top and bottom are the usual
+                culprits, and that can only be fixed by rotating those two images.</p>`,
+            confirmLabel: 'Got it',
+            cancelLabel: null,
+        });
+    }
 
     // Table picker — swaps the table geometry live. "Custom GLB…" opens a
     // hidden file input instead of switching immediately; the actual swap
@@ -385,9 +414,7 @@ export function createDebugGUI({
         // one-way — otherwise the only route back is a page reload.
         sub.add({ reset: () => onRoomTextureReset(surface) }, 'reset')
             .name('↺ Reset to original');
-        sub.close();
     });
-    roomTexFolder.close();
 
     // Sound picker + volume — same pattern as the Table picker: preset
     // options switch immediately, "Custom audio…" opens a hidden file input
@@ -427,14 +454,12 @@ export function createDebugGUI({
     // Dissolve Sound is a one-shot (played once when the Dissolve button fires),
     // but its picker is identical: preset / None / custom upload + volume.
     addSoundPicker('Dissolve Sound', dissolveSoundOptions, defaultDissolveSound, onDissolveSoundChange, onCustomDissolveSoundFile, dissolveSoundVolume);
-    soundFolder.close();
 
     // Per-object placement folders are added at runtime as each GLB finishes
     // loading. Declared here so they land inside one parent instead of six
     // loose folders appended to the very bottom of the panel — and so the
     // camera readout below stays last no matter when the models arrive.
     const objectsFolder = gui.addFolder('Objects');
-    objectsFolder.close();
 
     // Camera position display — read-only, updated every frame via
     // updateCameraDebug. Last in the panel: there's nothing to change here, it's
@@ -444,7 +469,6 @@ export function createDebugGUI({
     cameraFolder.add(cameraDebug, 'x').name('Cam X').listen().disable();
     cameraFolder.add(cameraDebug, 'y').name('Cam Y').listen().disable();
     cameraFolder.add(cameraDebug, 'z').name('Cam Z').listen().disable();
-    cameraFolder.close();
 
     // Camera position display — capped to 2 decimal places for readability.
     function updateCameraDebug(position) {
@@ -464,9 +488,8 @@ export function createDebugGUI({
         folder.add(entry, 'restY', -5, 8, 0.01).name('Pos Y').listen().onChange(resetRepel);
         folder.add(entry, 'restZ', -3, 3, 0.01).name('Pos Z').listen().onChange(resetRepel);
         folder.add(entry, 'rotYOffset', -Math.PI, Math.PI, 0.01).name('Rot Y offset');
-        folder.close();
         entry.guiFolder = folder; // saved so we can hide it after permanent dissolve
     }
 
-    return { gui, dissolveController, updateCameraDebug, addObjectFolder };
+    return { gui, dissolveController, updateCameraDebug, addObjectFolder, reportSkyboxImages };
 }

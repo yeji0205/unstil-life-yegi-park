@@ -80,37 +80,68 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
     const tulipObj = stageObjects.find(o => o.label === 'tulip');
     if (vaseObj && tulipObj) tulipObj.repelY = Math.max(tulipObj.repelY, vaseObj.repelY);
 
+    // Table top in world Y, or null once there's no table to stand on. Needed
+    // again below for the bear's legs — see the clearance note there.
+    const tableTopY = tableState.object
+        ? tableState.object.position.y + tableState.topOffset
+        : null;
+
     // Step 4 — write final position + rotation to each mesh
     for (const obj of stageObjects) {
         obj.mesh.position.x = obj._baseX + obj.repelX;
         obj.mesh.position.y = obj._baseY + obj.repelY;
         obj.mesh.position.z = obj._baseZ + obj.repelZ;
+
+        // Spin is ACCUMULATED but APPLIED through floatP, and that combination is
+        // deliberate. Accumulating alone (the old `rotation.y = spinY + offset`)
+        // meant the total never came back down: after a trip to space every
+        // object had turned by however long the viewer lingered there, so the
+        // still life reassembled with each piece at a different, unrepeatable
+        // angle. Scaling by floatP unwinds the spin as the objects settle, and at
+        // floatP = 0 the rotation is exactly rotYOffset — the same arrangement
+        // every single time, which is the point of a still life that returns.
+        // Resetting the accumulator at that moment is invisible (it's multiplied
+        // by zero) and stops each successive trip spinning faster than the last.
         obj.spinY += 0.002 * floatP;
-        obj.mesh.rotation.y = obj.spinY + obj.rotYOffset;
+        if (floatP <= 0) obj.spinY = 0;
+        obj.mesh.rotation.y = obj.spinY * floatP + obj.rotYOffset;
         obj.mesh.rotation.z = Math.sin(t * 0.42 + obj.phaseOffset) * 0.06 * floatP;
         obj.mesh.rotation.x = Math.sin(t * 0.31 + obj.phaseOffset * 1.3) * 0.04 * floatP;
 
         // Skeleton leg animation: the bear sits while it's on the table and lets
         // its legs hang once it's airborne.
         if (obj.legBones) {
-            // Driven by floatP, NOT raw p — that's the whole point. Raw p starts
-            // moving immediately, but the bear does NOT leave the table then: the
-            // table itself rises from p = 0 and carries the objects with it, so
-            // for a long while the bear is still sitting on a surface that
-            // happens to be moving. Unfolding on raw p (the old 0.036 → 0.08)
-            // straightened the legs while the bear was still resting, and the
-            // straightened legs reached down THROUGH the tabletop — exactly the
-            // overlap in the second loop.
+            // Driven by ACTUAL CLEARANCE above the tabletop, not by progress.
             //
-            // floatP is zero until FLOAT_START and only then ramps, so tying the
-            // unfold to it means the legs cannot move before the bear has begun
-            // to rise under its own float. The 0.10 → 0.42 window lands the
-            // motion around the point it actually clears the table.
+            // Every progress-based window tried before failed the same way, and
+            // the reason is that progress doesn't know where the table is. The
+            // table rises too — from p = 0, faster than the objects, which only
+            // start floating at FLOAT_START — and the collision in step 3 keeps
+            // pushing the bear up to sit on it. So through a long stretch of the
+            // scroll the bear is still RESTING on a surface that happens to be
+            // moving, no matter what floatP says. Any window tuned to look right
+            // in one pass was wrong in the next, because the amount of that
+            // stretch depends on how the two rises happen to line up.
+            //
+            // Clearance can't be wrong about it: measure how far the bear's
+            // collision sphere sits above the tabletop and unfold across that.
+            // Touching the table → folded. Well above it → straight. Table gone
+            // (in space) → straight. No thresholds to re-tune, and it costs one
+            // subtraction — this is the cheap arithmetic version of the raycast
+            // idea, with no ray and no BVH.
+            //
+            // Thresholds are in units of the bear's own collision radius so they
+            // hold if the model is ever rescaled.
             const { bR, bL, sitR, sitL, straightR, straightL } = obj.legBones;
-            const LEG_DROP_START = 0.10, LEG_DROP_END = 0.42; // in floatP
-            const raw   = (floatP - LEG_DROP_START) / (LEG_DROP_END - LEG_DROP_START);
-            const bt    = Math.min(1, Math.max(0, raw));
-            const boneT = bt * bt * (3 - 2 * bt); // smoothstep
+            let boneT = 1; // no table underneath → nothing to overlap, hang free
+            if (tableTopY !== null) {
+                const bottomY   = obj.mesh.position.y + obj.sphereCenterLocalY - obj.radius;
+                const clearance = (bottomY - tableTopY) / Math.max(obj.radius, 1e-4);
+                const LEG_CLEAR_START = 0.15, LEG_CLEAR_END = 1.20; // in radii
+                const raw = (clearance - LEG_CLEAR_START) / (LEG_CLEAR_END - LEG_CLEAR_START);
+                const bt  = Math.min(1, Math.max(0, raw));
+                boneT = bt * bt * (3 - 2 * bt); // smoothstep
+            }
             bR.quaternion.slerpQuaternions(sitR, straightR, boneT);
             bL.quaternion.slerpQuaternions(sitL, straightL, boneT);
         }
@@ -126,7 +157,13 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
         tableState.object.position.y = tableState.floorY + tableRise + tableBob;
         tableState.object.position.x = 0;
         tableState.object.position.z = tableState.floorZ;
-        tableState.object.rotation.y += 0.0015 * p;
-        tableState.object.rotation.z  = Math.sin(t * 0.38) * 0.04 * p;
+        // Same accumulate-but-apply-through-p treatment as the objects above, and
+        // for the same reason: `rotation.y += …` alone left the table facing a
+        // different way every time the room came back, which reads as strongly as
+        // the objects moving since everything stands on it.
+        tableState.spinY = (tableState.spinY ?? 0) + 0.0015 * p;
+        if (p <= 0) tableState.spinY = 0;
+        tableState.object.rotation.y = tableState.spinY * p;
+        tableState.object.rotation.z = Math.sin(t * 0.38) * 0.04 * p;
     }
 }
