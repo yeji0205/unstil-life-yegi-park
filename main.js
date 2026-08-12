@@ -47,7 +47,7 @@ const { updateLighting, setSpacePreset } = setupLighting(scene);
 // "Skybox" dropdown is the only control needed; there's no separate lighting
 // button because the two should never be out of sync.
 function selectBackground(name) {
-    const preset = LIGHTING_PRESETS[name] ?? LIGHTING_PRESETS.blue;
+    const preset = LIGHTING_PRESETS[name] ?? LIGHTING_PRESETS.space_blue;
     setSpacePreset(preset); // apply immediately; textures load asynchronously
     // Once all 6 faces are in, replace the preset's hand-picked ambient colour
     // with the cube map's own measured average, so the fill light always matches
@@ -87,7 +87,7 @@ function selectVoidColor(hex) {
 let customSkyboxReport = null;
 
 function selectCustomSkybox(files) {
-    const base = LIGHTING_PRESETS.blue;
+    const base = LIGHTING_PRESETS.space_blue;
     // A user image has no preset, but it doesn't need one for colour any more:
     // the fill is sampled from their own images, so the lighting matches
     // whatever they upload. The preset only supplies the intensities.

@@ -100,6 +100,29 @@ export function createCameraControls(camera, domElement) {
     // scrolling and the camera stops where it is.
     const LIMIT_RELEASE_START = 0.6;   // fully room-limited at or below this p
     const LIMIT_RELEASE_END   = 0.95;  // fully free at or above (unchanged)
+
+    // ── Why the cone also has a speed limit ─────────────────────────────────
+    // Tying the limits to p alone fixed the one-frame teleport but left the
+    // sweep's SPEED in the viewer's hands, and in the wrong direction: the
+    // faster you scrolled home, the faster the camera was wrenched back. Coming
+    // out of space from behind the objects, all 150° of it had to happen inside
+    // p 0.95 → 0.6 — about a third of a scroll, which is well under a second if
+    // you spin the wheel. That's the jump.
+    //
+    // So the cone is allowed to WIDEN instantly — nothing is being pushed when
+    // it opens — but may only NARROW at a fixed angular rate. How quickly the
+    // camera gets swept home is then set by the clock rather than by how hard
+    // the wheel was spun, which is the property that was missing.
+    //
+    // The trade is that the cone can lag p: arrive in the room from a wide angle
+    // and for a second or two you can still orbit further than ±30° while it
+    // catches up. Preferable to being yanked, and invisible unless you go
+    // looking for it.
+    const CONE_CLOSE_RATE = 1.0; // radians per second
+    let coneAz       = ROOM_AZIMUTH;
+    let conePolarMin = ROOM_LIMITS.minPolar;
+    let conePolarMax = ROOM_LIMITS.maxPolar;
+    let lastLimitMs  = null;
     // Moves camera and target together by the same amount, so the frame shifts
     // vertically while the viewing angle, the orbit radius and the azimuth all
     // stay exactly as they were. OrbitControls derives its offset from
@@ -114,24 +137,46 @@ export function createCameraControls(camera, domElement) {
     }
 
     function applyControlMode(progressValue) {
+        // Real elapsed time, taken here rather than threaded through the two
+        // callers (the frame loop and the wheel handler). A wheel event firing
+        // between frames simply sees dt ≈ 0 and contributes no extra narrowing,
+        // which is exactly right — scrolling harder must not close the cone
+        // faster. Clamped so a backgrounded tab doesn't resume with one huge step.
+        const now = performance.now();
+        const dt  = lastLimitMs === null ? 0 : Math.min(0.1, (now - lastLimitMs) / 1000);
+        lastLimitMs = now;
+
         const t = THREE.MathUtils.smoothstep(progressValue, LIMIT_RELEASE_START, LIMIT_RELEASE_END);
+
         if (t >= 1) {
             // Genuinely unbounded, so the viewer can keep spinning past 180°
-            // without hitting a wall.
+            // without hitting a wall. The cone is parked fully open so the
+            // narrowing starts from there the moment the scroll comes back.
+            coneAz = Math.PI; conePolarMin = 0; conePolarMax = Math.PI;
             controls.minAzimuthAngle = -Infinity;
             controls.maxAzimuthAngle =  Infinity;
             controls.minPolarAngle   = 0;
             controls.maxPolarAngle   = Math.PI;
         } else {
-            // Widening to ±180° means the finite limit is a no-op the instant it
-            // engages (OrbitControls reports azimuth wrapped into ±180°), so the
-            // hand-off from "unbounded" costs nothing — and from there the cone
-            // narrows smoothly back to the room's ±30°.
-            const az = THREE.MathUtils.lerp(ROOM_AZIMUTH, Math.PI, t);
-            controls.minAzimuthAngle = -az;
-            controls.maxAzimuthAngle =  az;
-            controls.minPolarAngle   = THREE.MathUtils.lerp(ROOM_LIMITS.minPolar, 0,       t);
-            controls.maxPolarAngle   = THREE.MathUtils.lerp(ROOM_LIMITS.maxPolar, Math.PI, t);
+            // Where p says the cone should be...
+            const wantAz  = THREE.MathUtils.lerp(ROOM_AZIMUTH, Math.PI, t);
+            const wantMin = THREE.MathUtils.lerp(ROOM_LIMITS.minPolar, 0,       t);
+            const wantMax = THREE.MathUtils.lerp(ROOM_LIMITS.maxPolar, Math.PI, t);
+
+            // ...and how far it is allowed to move toward that this frame.
+            // Opening is free; closing is capped. Widening to ±180° also means
+            // the finite azimuth limit is a no-op the instant it replaces
+            // Infinity (OrbitControls reports azimuth wrapped into ±180°), so
+            // the hand-off out of unbounded costs nothing.
+            const step = CONE_CLOSE_RATE * dt;
+            coneAz       = wantAz  >= coneAz       ? wantAz  : Math.max(wantAz,  coneAz - step);
+            conePolarMin = wantMin <= conePolarMin ? wantMin : Math.min(wantMin, conePolarMin + step);
+            conePolarMax = wantMax >= conePolarMax ? wantMax : Math.max(wantMax, conePolarMax - step);
+
+            controls.minAzimuthAngle = -coneAz;
+            controls.maxAzimuthAngle =  coneAz;
+            controls.minPolarAngle   =  conePolarMin;
+            controls.maxPolarAngle   =  conePolarMax;
         }
         controls.minDistance = 2;
         controls.maxDistance = 200;

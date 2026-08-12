@@ -29,7 +29,7 @@ export const SKYBOX_NONE         = 'None (solid color)';
 export const voidColor = { hex: '#ffffff' };
 
 export const SKYBOX_CUSTOM_LABEL = 'Add custom skybox…';
-export const SKYBOX_OPTIONS      = ['blue', 'red', 'interstellar', SKYBOX_NONE, SKYBOX_CUSTOM_LABEL];
+export const SKYBOX_OPTIONS      = ['space_blue', 'space_red', 'sky', SKYBOX_NONE, SKYBOX_CUSTOM_LABEL];
 
 // Ambient/directional tint the room lighting eases toward as it enters
 // 'space' (see render/lighting.js updateLighting) — keyed by the same names
@@ -38,7 +38,7 @@ export const SKYBOX_OPTIONS      = ['blue', 'red', 'interstellar', SKYBOX_NONE, 
 // flat void is lit by whatever colour it's set to (white by default). Add an
 // entry here whenever a new skybox option is added above.
 export const LIGHTING_PRESETS = {
-    blue: {
+    space_blue: {
         // Deep space, lit BY the nebula.
         //
         // KEY: hard, pure white and strong. In vacuum there's no atmosphere to
@@ -62,8 +62,8 @@ export const LIGHTING_PRESETS = {
         directionalColor:     [1.00, 1.00, 1.00],
         directionalIntensity: 5.4,
     },
-    red: {
-        // Same deep-space treatment as blue — hard white key light, dim
+    space_red: {
+        // Same deep-space treatment as space_blue — hard white key light, dim
         // fill. The fill COLOUR isn't specified by hand: buildSkybox() samples
         // the red nebula's own average and overrides ambientColor, so shadowed
         // sides pick up that warm red rather than this fallback blue.
@@ -72,8 +72,8 @@ export const LIGHTING_PRESETS = {
         directionalColor:     [1.00, 1.00, 1.00],
         directionalIntensity: 5.4,
     },
-    interstellar: {
-        // Hipshot's "Interstellar" starfield (asset/skybox/interstellar/README.TXT
+    sky: {
+        // Hipshot's "Interstellar" starfield (asset/skybox/sky/README.TXT
         // carries the author's attribution — keep it with the images). Same
         // deep-space treatment as the two nebulae: a hard white key with a low
         // fill, and the fill's COLOUR measured from the images themselves rather

@@ -181,7 +181,7 @@ then transitions into the live 3D scene:
   raking-light photo reference. A fake volumetric light beam (additive-blended
   cone) fades out in the first 40% of the room→space scroll.
 - **Space** (per-background preset, `LIGHTING_PRESETS` in `environment.js`):
-  - `blue` / `red` / `interstellar`: ambient stays low, directional climbs — moody,
+  - `space_blue` / `space_red` / `sky`: ambient stays low, directional climbs — moody,
     high-contrast, "the sun does all the work" look.
   - `None (solid color)`: ambient instead climbs to 3.2 (**above** the
     directional's 1.2) — because ambient is non-directional and lights every

@@ -63,9 +63,11 @@ vite.config.js   — sets base: '/unstil-life-yegi-park/' for GitHub Pages
 public/asset/    — the ONLY asset tree. Vite serves public/ at the site root in
   model/           dev AND copies it to dist/ on build, so one copy works for
   skybox/          both. There used to be a second tree at ./asset/ and forgetting
-    blue/          to mirror into public/ was a recurring deploy bug.
-    red/
-    interstellar/  — 6 PNGs each: right/left/top/bottom/front/back.png
+    space_blue/    to mirror into public/ was a recurring deploy bug.
+    space_red/
+    sky/           — 6 PNGs each: right/left/top/bottom/front/back.png
+                     Folder name IS the dropdown label and the LIGHTING_PRESETS
+                     key, so renaming a folder means renaming both.
   texture/         — PBR sets, one folder per material
   sound/
   image/
