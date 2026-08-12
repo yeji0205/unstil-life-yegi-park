@@ -73,11 +73,14 @@ export const LIGHTING_PRESETS = {
         // ambient's absolute brightness, since only ambient reaches every
         // surface orientation equally.
         //
-        // ambientColor here is only the WHITE default. Pick another background
-        // colour and setVoidColor overrides it with that colour's own hue, on the
-        // same principle as the cube-map presets: whatever surrounds the objects
-        // is what should be lighting them. A blue void that lit everything white
-        // would read as a flat cut-out.
+        // These are the values for a WHITE void. Pick another background colour
+        // and setVoidColor overrides both: ambientColor takes that colour's hue,
+        // on the same principle as the cube-map presets (whatever surrounds the
+        // objects is what should be lighting them — a blue void that lit
+        // everything white would read as a flat cut-out), and ambientIntensity is
+        // scaled by how bright the colour is, so black genuinely goes dark instead
+        // of falling back to a bright neutral fill. 3.2 is therefore the CEILING
+        // reached at pure white, not a constant.
         ambientColor:         [1.00, 1.00, 1.00],
         ambientIntensity:     3.2,
         directionalColor:     [1.00, 1.00, 1.00],
@@ -249,7 +252,7 @@ export function buildSkybox(scene) {
             skybox.visible   = false;
             const c = new THREE.Color(voidColor.hex);
             scene.background = c;
-            onAverageColor?.(normalizeHue(c.r, c.g, c.b));
+            onAverageColor?.(normalizeHue(c.r, c.g, c.b), voidBrightness(c));
             return;
         }
         scene.background = null; // let the skybox mesh show through again
@@ -375,7 +378,35 @@ export function buildSkybox(scene) {
         voidColor.hex = hex;
         const c = new THREE.Color(hex);
         if (!skybox.visible) scene.background = c;
-        onAmbientColor?.(normalizeHue(c.r, c.g, c.b));
+        onAmbientColor?.(normalizeHue(c.r, c.g, c.b), voidBrightness(c));
+    }
+
+    // How much fill a flat background is worth, 0–1, scaling the preset's ambient
+    // intensity. This is the piece that makes a black void actually dark.
+    //
+    // It exists ONLY for the flat colour, not for cube maps, and the distinction
+    // is intent. A starfield is mostly black by accident — it's empty space with
+    // a few bright points — and dimming the scene to match would leave nothing
+    // visible, so there the darkness is discarded and only hue is taken. But a
+    // flat colour is chosen: picking #000 is a decision that the objects sit in
+    // darkness, and answering it with a bright neutral fill (which is what
+    // normalizeHue alone does, since black has no channel ratio to preserve)
+    // contradicts the choice. That was the surprising part.
+    //
+    // The measure is the BRIGHTEST CHANNEL, not perceptual luminance. Rec.709
+    // weights would call pure red 0.21 and pure green 0.72, so a vivid red
+    // background would come out three times dimmer than a vivid green one —
+    // technically true of emitted light, but not what someone means when they
+    // pick a saturated swatch. Max-channel is HSV's "value": fully saturated
+    // hues all read as fully bright, and only genuinely dark colours dim. It's
+    // also exactly the divisor normalizeHue already uses, so hue and brightness
+    // are two halves of the same decomposition.
+    //
+    // The key light is deliberately left alone. At ambient 0 the objects are
+    // still lit from one side, so a black void reads as dramatic and directional
+    // rather than as a blank screen.
+    function voidBrightness(c) {
+        return Math.max(c.r, c.g, c.b);
     }
 
     return { loadSkybox, loadCustomSkybox, setVoidColor };

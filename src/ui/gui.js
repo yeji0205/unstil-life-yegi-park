@@ -60,7 +60,7 @@ function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Ca
 // logic (only fires once in the 'space' phase) and enables/disables the
 // button returned here as `dissolveController`.
 export function createDebugGUI({
-    uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor,
+    uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     skyboxNoneLabel, voidColor, onVoidColorChange,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
@@ -127,6 +127,9 @@ export function createDebugGUI({
     const particleColorProxy = { color: '#' + uParticleColor.value.getHexString() };
     dissolveFolder.addColor(particleColorProxy, 'color').name('Particle Color')
         .onChange((hex) => uParticleColor.value.set(hex));
+    // How far the particle stream wanders sideways. 0 is a perfectly straight
+    // stream — the calmest setting, and worth starting from when judging the feel.
+    dissolveFolder.add(uParticleSwirl, 'value', 0, 0.25, 0.005).name('Particle Sway');
 
     // Skybox picker — swaps the cubemap live. Add new folder names to
     // skyboxOptions (geometry/environment.js) to list them here.

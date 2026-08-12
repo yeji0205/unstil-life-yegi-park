@@ -190,10 +190,21 @@ then transitions into the live 3D scene:
     cannot do. This was tuned twice: first just "brighter," which didn't fix
     shadow sides; then ambient made dominant, which did.
     The background colour is live (`voidColor`, white by default) and the GUI
-    exposes a swatch for it; picking a colour re-tints ambient to that colour's
-    hue via `setVoidColor`, on the same rule as the cube maps — the fill light
-    comes from whatever is actually behind the objects. Intensity stays the
-    preset's, so only the hue changes.
+    exposes a swatch for it. Picking a colour overrides **both** halves of the
+    preset's ambient via `setVoidColor`:
+    - **hue** from the colour, on the same rule as the cube maps — the fill light
+      comes from whatever is actually behind the objects.
+    - **intensity** scaled by the colour's brightest channel, so 3.2 is the
+      ceiling at pure white and black gives 0. Without this, black fell back to a
+      bright neutral fill (black has no channel ratio for `normalizeHue` to
+      preserve), which surprised users who expected a dark background to be dark.
+      The key light is left alone, so a black void reads as dramatic and
+      directional rather than as a blank screen.
+
+    Brightness scaling applies to the flat colour **only**, not to cube maps: a
+    starfield is black by accident and dimming to match would leave nothing
+    visible, whereas a flat colour is a deliberate choice. See `voidBrightness`
+    for why it measures the brightest channel rather than Rec.709 luminance.
   - Switching the "Skybox" GUI dropdown updates both together
     (`selectBackground()` in `main.js`) and takes effect **immediately**
     even if not currently mid-scroll (a bug where the update was skipped

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import { createRenderer, createCamera, setupResize, createAdaptiveQuality } from './src/render/renderer.js';
 import { setupLighting } from './src/render/lighting.js';
-import { uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, updateDissolveTransparency } from './src/render/dissolve.js';
+import { uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, updateDissolveTransparency } from './src/render/dissolve.js';
 import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
 import { createPaintingIntro } from './src/render/paintingIntro.js';
 
@@ -53,7 +53,15 @@ function selectBackground(name) {
     // with the cube map's own measured average, so the fill light always matches
     // the background actually on screen. Only the hue comes from the sky — the
     // preset keeps control of intensity. See averageFaceColor in environment.js.
-    loadSkybox(name, (skyColor) => setSpacePreset({ ...preset, ambientColor: skyColor }));
+    // Second argument is only supplied by the flat-colour background: it scales
+    // the preset's ambient so a dark colour actually darkens the scene. Cube maps
+    // pass nothing and keep the preset intensity (their darkness is incidental —
+    // see voidBrightness in environment.js).
+    loadSkybox(name, (skyColor, brightness) => setSpacePreset({
+        ...preset,
+        ambientColor:     skyColor,
+        ambientIntensity: preset.ambientIntensity * (brightness ?? 1),
+    }));
 }
 selectBackground(SKYBOX_OPTIONS[0]);
 
@@ -63,7 +71,11 @@ selectBackground(SKYBOX_OPTIONS[0]);
 // rather than a special case per background type.
 function selectVoidColor(hex) {
     const preset = LIGHTING_PRESETS[SKYBOX_NONE];
-    setVoidColor(hex, (c) => setSpacePreset({ ...preset, ambientColor: c }));
+    setVoidColor(hex, (hue, brightness) => setSpacePreset({
+        ...preset,
+        ambientColor:     hue,
+        ambientIntensity: preset.ambientIntensity * brightness,
+    }));
 }
 
 // Custom cube map upload: 6 user-picked images matched to the 6 faces by
@@ -129,7 +141,7 @@ const ambientSound = createAmbientSoundTracks();
 
 // ─── Debug GUI ───────────────────────────────────────────────────────────────
 const gui = createDebugGUI({
-    uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor,
+    uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl,
     skyboxOptions: SKYBOX_OPTIONS, defaultSkybox: SKYBOX_OPTIONS[0], skyboxCustomLabel: SKYBOX_CUSTOM_LABEL,
     onSkyboxChange: selectBackground,
     onCustomSkyboxFiles: selectCustomSkybox,

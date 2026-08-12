@@ -135,6 +135,12 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
 // than bright dots would need a bloom post-process — offered as a follow-up.)
 export const uParticleColor = { value: new THREE.Color(0xffffff) };
 
+// How far the particle stream sways sideways as it flows, in object-local units
+// before scale compensation. 0 = a perfectly straight stream. Kept low: this
+// used to be an orbit rather than a sway (see the shader note) and read as a fast
+// corkscrew, which fought the stillness the piece is going for.
+export const uParticleSwirl = { value: 0.05 };
+
 // Direction the particle stream flows toward as it leaves the object: up and
 // slightly back, i.e. off into the sky/space background. Kept as a
 // normalized-ish constant in object-local space (objects barely rotate, so
@@ -152,6 +158,7 @@ export const objectParticleVertexShader = /* glsl */`
     uniform float   uScale;      // mesh scaleFactor — normalizes blob size (see injectDissolve)
     uniform float   uFreqScale;  // matches the material's freqScale so particles sit on the dissolve edge
     uniform float   uStreamStrength; // 1 = coherent "flow into background" (objects); low = disperse (table)
+    uniform float   uSwirl;          // lateral sway amplitude; 0 = straight stream
     uniform float   uTime;
     varying float   vAlpha;
     ${NOISE_GLSL}
@@ -162,11 +169,13 @@ export const objectParticleVertexShader = /* glsl */`
         // appear exactly where the surface is breaking up regardless of object size.
         float noise        = snoise3(position * uScale * uFreq * uFreqScale);
         float distFromEdge = noise - threshold;
-        // Very long trailing band (8× the edge): the dissolve front sweeps a
+        // Very long trailing band (11× the edge): the dissolve front sweeps a
         // given particle over a much longer window, so it drifts GRADUALLY
         // instead of zipping — and many shells stay in flight at once, reading
-        // as a continuous stream rather than a quick burst.
-        float driftBand    = uEdge * 8.0;
+        // as a continuous stream rather than a quick burst. Raised from 8: the
+        // wider the band, the more spread out a particle's whole journey is in
+        // time, which is the other half of "too fast" alongside the sway rate.
+        float driftBand    = uEdge * 11.0;
 
         if(distFromEdge > uEdge || distFromEdge < -driftBand){
             gl_Position  = vec4(9999., 9999., 9999., 1.);
@@ -193,9 +202,26 @@ export const objectParticleVertexShader = /* glsl */`
                  + aVelocity * t * 0.7                                   // per-particle spread
                  + streamDir * t * 4.5 * invScale * uStreamStrength;     // shared flow into the background
 
-        // Slow, gentle swirl so the stream curls softly as it flows outward.
-        pos.x += sin(position.y * 2.0 + uTime * 1.1) * 0.15 * t * invScale;
-        pos.z += cos(position.x * 2.0 + uTime * 0.9) * 0.15 * t * invScale;
+        // A slow LATERAL SWAY, deliberately not a rotation.
+        //
+        // This used to be sin() on x paired with cos() on z. Those are a quarter
+        // cycle apart, which is the parametric equation of a circle — so every
+        // particle was orbiting while it rose, and a circle plus a rise is a
+        // helix. That's where the corkscrew came from. It wasn't designed; it fell
+        // out of reaching for two trig functions to get motion on two axes.
+        //
+        // Using ONE phase for both axes moves a particle back and forth along a
+        // single fixed diagonal instead of around a ring, so the stream wanders
+        // rather than winds. The time frequency is also ~6× slower (0.18 vs 1.1):
+        // the old rate completed a full turn in a few seconds, which is brisk for
+        // something meant to be watched rather than noticed.
+        //
+        // Tunable live via "Particle Sway" — at 0 the stream is perfectly
+        // straight, which is the calmest setting and a fair default to judge from.
+        float swayPhase = position.y * 0.8 + uTime * 0.18;
+        float sway      = sin(swayPhase) * uSwirl * t * invScale;
+        pos.x += sway;
+        pos.z += sway * 0.6; // slight asymmetry so it isn't a flat plane of motion
 
         // Fade smoothly across the whole (longer) band — bright as it leaves
         // the surface, gently gone by the far end.
@@ -241,6 +267,7 @@ export function makeParticleMaterial(progressUniform, timeUniform, { freqScale =
             uScale:          scaleUniform,
             uFreqScale:      { value: freqScale },
             uStreamStrength: { value: streamStrength },
+            uSwirl:          uParticleSwirl,
             uParticleColor,
             uTime:           timeUniform,
         },
