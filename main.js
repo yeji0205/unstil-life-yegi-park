@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
-import { createRenderer, createCamera, setupResize } from './src/render/renderer.js';
+import { createRenderer, createCamera, setupResize, createAdaptiveQuality } from './src/render/renderer.js';
 import { setupLighting } from './src/render/lighting.js';
-import { uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor } from './src/render/dissolve.js';
+import { uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, updateDissolveTransparency } from './src/render/dissolve.js';
 import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
 import { createPaintingIntro } from './src/render/paintingIntro.js';
 
@@ -16,6 +16,7 @@ import {
 } from './src/persistence/glbLoader.js';
 
 import { createLoadingScreen } from './src/ui/loadingScreen.js';
+import { createPerfHud } from './src/ui/perfHud.js';
 import { createSoundHint } from './src/ui/soundHint.js';
 import { createDebugGUI } from './src/ui/gui.js';
 
@@ -27,6 +28,9 @@ import { updateFloating } from './src/simulation/floating.js';
 
 // ─── Renderer, scene, camera ─────────────────────────────────────────────────
 const renderer = createRenderer();
+// Measures its own frame rate and trades resolution for smoothness on whatever
+// machine opens the page — see createAdaptiveQuality.
+const adaptiveQuality = createAdaptiveQuality(renderer);
 const camera   = createCamera();
 const scene    = new THREE.Scene();
 setupResize(camera, renderer);
@@ -119,6 +123,8 @@ const gui = createDebugGUI({
     onRoomTextureReset: (surface) => resetRoomTextures(surface),
     onStoneOrientationChange: applyStoneOrientation,
     onTableColorChange: (hex) => setTableColor(hex),
+    onRenderScaleChange: (v) => adaptiveQuality.setCeiling(v),
+    onAdaptiveQualityToggle: (on) => adaptiveQuality.setEnabled(on),
     // Swapping the stone reloads just that one object, so it needs a fresh GUI
     // folder — the old one is destroyed with the object it described.
     onStoneChange: (label) => setStone(scene, label, {
@@ -189,6 +195,7 @@ loadScene(scene, {
     onObjectReady: (label, entry, scaleFactor) => gui.addObjectFolder(label, entry, scaleFactor),
 });
 
+const perfHud = createPerfHud(renderer); // diagnostic readout — see src/ui/perfHud.js
 // ─── Animate ─────────────────────────────────────────────────────────────────
 let lastT = 0;
 function animate() {
@@ -206,10 +213,13 @@ function animate() {
     ambientSound.update(p, t);
     paintingIntro?.update(dt);
     updateFloating({ t, p, stageObjects, tableState });
+    updateDissolveTransparency(); // keep materials opaque unless mid-dissolve
     cameraControls.updateAutoZoomOut(p);
 
     gui.updateCameraDebug(camera.position);
 
+    adaptiveQuality.update(dt);
+    perfHud.update();
     cameraControls.controls.update();
     // With the intro active, render() does its two-pass cross-dissolve; without
     // it, a single straight render at full performance.

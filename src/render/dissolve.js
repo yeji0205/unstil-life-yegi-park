@@ -33,7 +33,35 @@ export const uRimStrength = { value: 0.0 };
 // Without this, a natively-large GLB (small scaleFactor) dissolved in fine dots
 // while a natively-small one dissolved in big blobs, which read as each object
 // fading at a different speed. Default 1 = no normalization (room walls, table).
+
+// ─── Transparency, only while dissolving ─────────────────────────────────────
+// Every material the dissolve is injected into, with the uniform driving it.
+const dissolveMaterials = [];
+
+// Transparency is only needed WHILE something is dissolving — that's when the
+// effect fades its edge with alpha. The rest of the time these materials are
+// fully opaque, and leaving `transparent: true` on them is expensive on a
+// fill-limited GPU: transparent meshes skip early-Z rejection, get sorted
+// back-to-front and run through the blender. That was 13 of the scene's 14
+// meshes, including six near-full-screen room planes, all paying for blending
+// they never used.
+//
+// Toggling `transparent` does NOT recompile the shader — three reads it per
+// frame when building render lists — so this is free to flip every frame.
+export function updateDissolveTransparency() {
+    for (const { material, progress } of dissolveMaterials) {
+        // ownsAlpha: this material needs transparency for its OWN sake, not just
+        // for the dissolve — a cut-out leaf texture, say, where the mesh is a flat
+        // rectangle and the alpha channel carves the leaf shape out of it. Forcing
+        // those opaque makes the alpha channel be ignored and the bare rectangle
+        // shows. Set in glbLoader BEFORE the dissolve forces transparency on.
+        const needsAlpha = material.userData.ownsAlpha || progress.value > 0.001;
+        if (material.transparent !== needsAlpha) material.transparent = needsAlpha;
+    }
+}
+
 export function injectDissolve(material, progressUniform, { space = 'local', freqScale = 1.0, scaleUniform = { value: 1.0 } } = {}) {
+    dissolveMaterials.push({ material, progress: progressUniform });
     material.onBeforeCompile = (shader) => {
         shader.uniforms.uProgress    = progressUniform;
         shader.uniforms.uEdge        = uDissolveEdge;

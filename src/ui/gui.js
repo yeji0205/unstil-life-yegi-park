@@ -65,6 +65,7 @@ export function createDebugGUI({
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
     onRoomTextureFile, onRoomTextureReset, onStoneOrientationChange, onTableColorChange,
+    onRenderScaleChange, onAdaptiveQualityToggle,
     onStoneChange, onCustomStoneFile,
     roomSoundOptions, defaultRoomSound, spaceSoundOptions, defaultSpaceSound,
     dissolveSoundOptions, defaultDissolveSound, soundCustomLabel,
@@ -91,6 +92,15 @@ export function createDebugGUI({
     // and coast (floaty); lower = they track the wheel closely (snappy, but the
     // float/bob gets swamped and reads as dragging). See scrollSmoothing.
     gui.add(scrollSmoothing, 'tau', 0.08, 0.6, 0.01).name('Scroll Drift (float ⇢)');
+    // Sharpness vs speed. The scene is fill-bound, so cost rises with the SQUARE
+    // of this: 1.2 shades 44% more pixels than 1.0. Watch the fps readout while
+    // dragging and stop where it stops being worth it.
+    gui.add({ q: 1.0 }, 'q', 0.55, 1.0, 0.05).name('Render Quality (max)')
+        .onChange(onRenderScaleChange);
+    // On by default: the piece lowers its own resolution on slow machines so it
+    // stays smooth on hardware we can't test. Turn off to pin the quality above.
+    gui.add({ adaptive: true }, 'adaptive').name('Auto-adjust for fps')
+        .onChange(onAdaptiveQualityToggle);
     gui.add(uDissolveEdge,  'value', 0, 0.8, 0.01).name('Dissolve Edge');
     gui.add(uNoiseFreq,     'value', 0.1, 1.5, 0.01).name('Noise Frequency');
     gui.add(uDissolveEdgeColor.value, 'r', 0, 1, 0.01).name('Edge R');

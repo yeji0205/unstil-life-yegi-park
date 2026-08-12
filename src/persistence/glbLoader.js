@@ -384,6 +384,8 @@ function setupTableObject(tableObject, scene) {
         // Without cloning, all meshes would share one compiled program and
         // the first mesh to compile would overwrite the others.
         const mat = child.material.clone();
+        mat.userData.ownsAlpha = mat.transparent === true || mat.alphaTest > 0
+            || (mat.opacity ?? 1) < 1 || !!mat.alphaMap;
         mat.transparent = true;
         injectDissolve(mat, uTableProgress, { space: 'local', freqScale: 4.0 });
         // Unique key per submesh prevents Three.js from reusing another mesh's
@@ -694,6 +696,12 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
                 });
             }
 
+            // Record whether this material was ALREADY transparent for its own
+            // reasons (glTF alphaMode BLEND/MASK — cut-out leaves, etc.) before we
+            // force transparency on for the dissolve. updateDissolveTransparency
+            // must never take alpha away from those.
+            mat.userData.ownsAlpha = mat.transparent === true || mat.alphaTest > 0
+                || (mat.opacity ?? 1) < 1 || !!mat.alphaMap;
             mat.transparent = true;
 
             injectDissolve(mat, uObjProgress, { space: 'local', freqScale: OBJECT_FREQ_SCALE, scaleUniform: uScale });

@@ -177,8 +177,21 @@ export function setupLighting(scene) {
     // wide enough for the table's shadow on the floor and the objects' shadows
     // on the walls — anything outside it silently stops casting.
     directionalLight.shadow.mapSize.set(1024, 1024);
-    directionalLight.shadow.bias       = -0.0006;
-    directionalLight.shadow.normalBias =  0.001;
+    // Bias, sized against the actual texel. The shadow camera spans 10 world
+    // units across a 1024 map, so ONE shadow texel is 10/1024 ≈ 0.0098 units.
+    // normalBias has to be at least about that big: it nudges the depth lookup
+    // along the surface normal to skip past the texel the surface itself
+    // occupies, and anything smaller than a texel can't do that.
+    //
+    // It was 0.001 — a TENTH of a texel, effectively nothing. That was left over
+    // from chasing the gap under the agate by winding the bias down; the real
+    // cause of that gap turned out to be Box3 inflating the object's bounds, and
+    // once that was fixed the shrunken bias stayed behind. The cost is
+    // self-shadow acne: every curved surface stipples itself with the shadow
+    // map's own stair-stepping. 0.012 ≈ 1.2 texels clears it, and at this scene's
+    // scale the shadow shifts by ~1 cm, which is not visible as a gap.
+    directionalLight.shadow.bias       = -0.0002;
+    directionalLight.shadow.normalBias =  0.012;
     directionalLight.shadow.camera.near = 0.5;
     directionalLight.shadow.camera.far  = 26;
     directionalLight.shadow.camera.left = -5;
@@ -186,6 +199,34 @@ export function setupLighting(scene) {
     directionalLight.shadow.camera.top  = 5;
     directionalLight.shadow.camera.bottom = -5;
     scene.add(directionalLight);
+
+    // ─── Left-wall fill ──────────────────────────────────────────────────────
+    // The key light above comes from the upper LEFT, so it rakes across the back
+    // wall and lights the objects — but the left wall itself faces AWAY from it.
+    // A surface only gets light from a source it can "see": Lambert shading
+    // scales by dot(normal, lightDirection), and for the left wall that dot is
+    // negative, so the key contributes exactly zero. All it had left was the
+    // ambient term, which is a flat constant with no shading in it — hence the
+    // dead, colorless look.
+    //
+    // The fix is a second source aimed the other way. Only ONE is needed, not
+    // the pair discussed earlier: the ceiling was going to get its own light,
+    // but barely any of it is on screen, so it isn't worth a draw of anyone's
+    // attention or the GPU's. This one sits out on +X and shines back toward the
+    // origin, so it catches every surface whose normal points right — the left
+    // wall, and the right-hand side of the objects, which also gives them a
+    // gentle second edge.
+    //
+    // castShadow stays FALSE, and that is the whole reason this is cheap. A
+    // shadow-casting light means a second full render of the scene from the
+    // light's point of view every frame; a non-casting one is a few extra lines
+    // of arithmetic in the fragment shader. Fill lights almost never need to
+    // cast — a second set of shadows going the other way would read as confused
+    // rather than realistic.
+    const wallFill = new THREE.DirectionalLight(0xffd0a0, 0.55);
+    wallFill.position.set(6, 1.5, 2);
+    wallFill.castShadow = false;
+    scene.add(wallFill);
 
     // Converts the two angles above into the light's XYZ position. Called once
     // now (so the default matches the original hardcoded position) and again
@@ -261,6 +302,13 @@ export function setupLighting(scene) {
             THREE.MathUtils.lerp(0.69, db, p)    // 0xb0 = 176 → 0.69
         );
         directionalLight.intensity = THREE.MathUtils.lerp(2.6, spacePreset.directionalIntensity, p) * lightBoost.directional;
+
+        // The wall fill exists to solve a ROOM problem — a wall the key light
+        // can't reach. Once the room has dissolved there's no wall left to lift,
+        // and in space the preset lighting is meant to be the whole look, so it
+        // fades out with the transition rather than quietly brightening one side
+        // of every floating object.
+        wallFill.intensity = THREE.MathUtils.lerp(0.55, 0.0, p) * lightBoost.ambient;
 
         // Fade the visible sun in with the transition: hidden in the room (we're
         // indoors — the window beam is the source there), easing in over the
