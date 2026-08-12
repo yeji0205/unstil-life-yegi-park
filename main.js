@@ -47,7 +47,7 @@ const { updateLighting, setSpacePreset } = setupLighting(scene);
 // "Skybox" dropdown is the only control needed; there's no separate lighting
 // button because the two should never be out of sync.
 function selectBackground(name) {
-    const preset = LIGHTING_PRESETS[name] ?? LIGHTING_PRESETS.skybox_blue;
+    const preset = LIGHTING_PRESETS[name] ?? LIGHTING_PRESETS.blue;
     setSpacePreset(preset); // apply immediately; textures load asynchronously
     // Once all 6 faces are in, replace the preset's hand-picked ambient colour
     // with the cube map's own measured average, so the fill light always matches
@@ -80,14 +80,14 @@ function selectVoidColor(hex) {
 
 // Custom cube map upload: 6 user-picked images matched to the 6 faces by
 // filename. There's no lighting preset for an arbitrary user image, so it
-// reuses the moody skybox_blue tint as a reasonable default. Returns whether
+// reuses the moody blue-nebula tint as a reasonable default. Returns whether
 // the files matched — the GUI shows an error itself if not.
 // Set by the GUI once it exists, so a report raised while faces decode has
 // somewhere to go. Late-bound because the skybox is built before the GUI.
 let customSkyboxReport = null;
 
 function selectCustomSkybox(files) {
-    const base = LIGHTING_PRESETS.skybox_blue;
+    const base = LIGHTING_PRESETS.blue;
     // A user image has no preset, but it doesn't need one for colour any more:
     // the fill is sampled from their own images, so the lighting matches
     // whatever they upload. The preset only supplies the intensities.
@@ -119,7 +119,7 @@ const cameraControls = createCameraControls(camera, renderer.domElement);
 // and start straight in the interactive 3D scene at full performance.
 const SHOW_INTRO_PAINTING = false;
 const paintingIntro = SHOW_INTRO_PAINTING
-    ? createPaintingIntro(renderer, scene, camera, 'asset/intro_painting.png')
+    ? createPaintingIntro(renderer, scene, camera, 'asset/image/intro_painting.png')
     : null;
 
 // Swaps the table geometry live. Called both from the GUI's preset options

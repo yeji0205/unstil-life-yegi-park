@@ -104,19 +104,32 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
         obj.mesh.position.y = obj._baseY + obj.repelY;
         obj.mesh.position.z = obj._baseZ + obj.repelZ;
 
-        // Spin is ACCUMULATED but APPLIED through floatP, and that combination is
-        // deliberate. Accumulating alone (the old `rotation.y = spinY + offset`)
-        // meant the total never came back down: after a trip to space every
-        // object had turned by however long the viewer lingered there, so the
-        // still life reassembled with each piece at a different, unrepeatable
-        // angle. Scaling by floatP unwinds the spin as the objects settle, and at
-        // floatP = 0 the rotation is exactly rotYOffset — the same arrangement
-        // every single time, which is the point of a still life that returns.
-        // Resetting the accumulator at that moment is invisible (it's multiplied
-        // by zero) and stops each successive trip spinning faster than the last.
-        obj.spinY += 0.002 * floatP;
-        if (floatP <= 0) obj.spinY = 0;
-        obj.mesh.rotation.y = obj.spinY * floatP + obj.rotYOffset;
+        // Yaw is a slow BOUNDED DRIFT, not an accumulating spin — and that change
+        // is what removes the spiral, not the particle shader.
+        //
+        // The spin used to accumulate (`spinY += 0.002` every frame) and be
+        // applied through floatP. That gave a repeatable resting pose, but it
+        // bought it at a price: whatever angle had piled up in space — a minute
+        // of lingering is ~7 radians, more than a full turn — had to be shed on
+        // the way back, because floatP drags the applied angle down to zero. So
+        // the objects reassembled while rotating, and the longer you stayed in
+        // space the faster they had to turn to get back in time.
+        //
+        // The dissolve particles are CHILDREN of these meshes, so they inherited
+        // every bit of that. A stream flowing outward from a body that is itself
+        // turning traces a spiral — which is why the corkscrew survived flattening
+        // the sway in the shader. The shader was never the main source.
+        //
+        // An oscillation has no such debt. It is bounded (±0.22 rad ≈ 13°), it is
+        // exactly zero whenever floatP is zero, so the resting pose is still
+        // identical every time, and nothing accumulates that later has to be
+        // undone. It also matches how pitch and roll below already work.
+        //
+        // The cost is that objects no longer turn continuously while parked in
+        // space — they drift back and forth over about a minute instead. For a
+        // piece meant to be still, that reads better anyway.
+        obj.mesh.rotation.y = obj.rotYOffset
+            + Math.sin(t * 0.11 + obj.phaseOffset) * 0.22 * floatP;
         obj.mesh.rotation.z = Math.sin(t * 0.42 + obj.phaseOffset) * 0.06 * floatP;
         obj.mesh.rotation.x = Math.sin(t * 0.31 + obj.phaseOffset * 1.3) * 0.04 * floatP;
 
@@ -172,13 +185,11 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
         tableState.object.position.y = tableState.floorY + tableRise + tableBob;
         tableState.object.position.x = 0;
         tableState.object.position.z = tableState.floorZ;
-        // Same accumulate-but-apply-through-p treatment as the objects above, and
-        // for the same reason: `rotation.y += …` alone left the table facing a
-        // different way every time the room came back, which reads as strongly as
-        // the objects moving since everything stands on it.
-        tableState.spinY = (tableState.spinY ?? 0) + 0.0015 * p;
-        if (p <= 0) tableState.spinY = 0;
-        tableState.object.rotation.y = tableState.spinY * p;
+        // Same bounded drift as the objects above, and for the same two reasons:
+        // `rotation.y += …` left the table facing a different way every time the
+        // room came back, and the accumulate-then-unwind fix for that made it
+        // turn on the way down — dragging its own particle cloud round with it.
+        tableState.object.rotation.y = Math.sin(t * 0.09 + 0.7) * 0.16 * p;
         tableState.object.rotation.z = Math.sin(t * 0.38) * 0.04 * p;
     }
 }

@@ -121,18 +121,18 @@ export const stageObjects = [];
 // all dissolve simultaneously the moment the Dissolve button is pressed (the
 // table follows just after — see phaseMachine).
 export const OBJECT_DEFS = [
-    { file: 'asset/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0, dissolveStart: 0 },
-    { file: 'asset/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart: 0 },
-    { file: 'asset/agate.glb', label: 'stone', targetHeight: 0.35,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.02, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart: 0, recenterXZ: true },
-    { file: 'asset/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart: 0 },
-    { file: 'asset/bear_ribbon.glb',  label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 0 },
+    { file: 'asset/model/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0, dissolveStart: 0 },
+    { file: 'asset/model/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart: 0 },
+    { file: 'asset/model/agate.glb', label: 'stone', targetHeight: 0.35,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.02, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart: 0, recenterXZ: true },
+    { file: 'asset/model/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart: 0 },
+    { file: 'asset/model/bear_ribbon.glb',  label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 0 },
 ];
 
 // ─── Table geometry options ───────────────────────────────────────────────────
 // Selectable from the debug GUI's "Table" dropdown (mirrors the Skybox
 // dropdown). Add a new label here + a case in loadTableGeometry() to offer
 // another built-in shape.
-const DEFAULT_TABLE_URL   = 'asset/table.glb';
+const DEFAULT_TABLE_URL   = 'asset/model/table.glb';
 export const TABLE_CUSTOM_LABEL = 'Custom GLB…';
 export const TABLE_OPTIONS = ['Table (default)', 'Box', 'Cylinder', TABLE_CUSTOM_LABEL];
 
@@ -165,15 +165,15 @@ export function tableKindForLabel(label) {
 // Order matters twice over: the first entry is what the GUI dropdown shows on
 // load, and the first two are the pair that cycles (see STONE_CYCLE).
 const STONE_VARIANTS = [
-    { name: 'Agate',      file: 'asset/agate.glb',          targetHeight: 0.35, rotYOffset: 0,     offsetY: -0.02 },
-    { name: 'Fluorite',   file: 'asset/fluorita_small.glb', targetHeight: 0.28, rotYOffset: -2.11, offsetY: -0.02 },
-    { name: 'Aventurine', file: 'asset/aventurina.glb', targetHeight: 0.32, rotYOffset: 0, offsetY: -0.02, layFlat: true },
+    { name: 'Agate',      file: 'asset/model/agate.glb',          targetHeight: 0.35, rotYOffset: 0,     offsetY: -0.02 },
+    { name: 'Fluorite',   file: 'asset/model/fluorita_small.glb', targetHeight: 0.28, rotYOffset: -2.11, offsetY: -0.02 },
+    { name: 'Aventurine', file: 'asset/model/aventurina.glb', targetHeight: 0.32, rotYOffset: 0, offsetY: -0.02, layFlat: true },
     // The biface arrives balanced upright on a narrow point, which reads as
     // perched rather than placed. layFlat measures it and rests it on its
     // largest face. targetHeight is THICKNESS once it's lying down, not stature:
     // that value normalises height, so a flat slab would otherwise be scaled up
     // until it stood tall again. 0.22 gives a ~0.56 × 0.49 footprint.
-    { name: 'Quartz Biface', file: 'asset/quartz_biface.glb',
+    { name: 'Quartz Biface', file: 'asset/model/quartz_biface.glb',
       layFlat: true, targetHeight: 0.22, rotYOffset: 0, offsetY: -0.02 },
 ];
 
@@ -201,9 +201,9 @@ export function setStone(scene, label, { customUrl, onObjectReady } = {}) {
 }
 
 const OBJECT_VARIANTS = {
-    teddy: [{ file: 'asset/bear_ribbon.glb' },              { file: 'asset/bear_skeleton.glb' }],
+    teddy: [{ file: 'asset/model/bear_ribbon.glb' },              { file: 'asset/model/bear_skeleton.glb' }],
     stone: STONE_CYCLE,
-    tulip: [{ file: 'asset/tulip.glb' },                    { file: 'asset/daffodil.glb' }],
+    tulip: [{ file: 'asset/model/tulip.glb' },                    { file: 'asset/model/daffodil.glb' }],
 };
 
 // The mannequin has no second model, so it changes finish instead of shape —
@@ -981,7 +981,6 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             phaseOffset:  def.phaseOffset,
             dissolveStart: def.dissolveStart,
             shadowsKilled: false,
-            spinY:        0,                    // cumulative auto-rotation (driven by simulation loop)
             rotYOffset:   def.rotYOffset ?? 0, // initial facing direction baked from GUI
             bottomLocalY,          // lowest vertex Y relative to the pivot (table contact)
             radius,                // rough object size, for scaling the leg-unfold thresholds

@@ -18,13 +18,13 @@ import { uProgress, injectDissolve } from '../render/dissolve.js';
 //   walls: 14 × 7  ÷ 7   → 2 × 1 repeat (square tiles, low repetition)
 //   floor: 14 × 14 ÷ 3.5 → 4 × 4 repeat (cobbles want a smaller, denser grain)
 const SURFACE_TEXTURES = {
-    wall:  { dir: 'asset/red_plaster_weathered.blend/textures', base: 'red_plaster_weathered', tile: 7 },
+    wall:  { dir: 'asset/texture/red_plaster_weathered', base: 'red_plaster_weathered', tile: 7 },
     // This set's maps are all 3-channel DWAA, which EXRLoader handles. (Sets whose
     // roughness is a SINGLE-channel `Y` EXR with DWAA compression — stained_pine,
     // pebble — crash three's lossyDctDecode; those need `skip: ['roughnessMap']`
     // plus a constant `roughness`. The loader also detaches any map that fails at
     // runtime, so a bad file degrades instead of taking the surface down.)
-    floor: { dir: 'asset/weathered_planks.blend/textures', base: 'weathered_planks', tile: 3.5 },
+    floor: { dir: 'asset/texture/weathered_planks', base: 'weathered_planks', tile: 3.5 },
 };
 
 // diff is a COLOUR image, so it must be tagged sRGB or it renders washed out.

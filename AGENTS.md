@@ -60,9 +60,22 @@ Everything is in `main.js`. Sections in order:
 main.js          — entire application
 index.html       — minimal shell, loads main.js
 vite.config.js   — sets base: '/unstil-life-yegi-park/' for GitHub Pages
-public/asset/
-  skybox_blue/   — 6 cube map PNGs (bkg1_right/left/top/bot/front/back.png)
+public/asset/    — the ONLY asset tree. Vite serves public/ at the site root in
+  model/           dev AND copies it to dist/ on build, so one copy works for
+  skybox/          both. There used to be a second tree at ./asset/ and forgetting
+    blue/          to mirror into public/ was a recurring deploy bug.
+    red/
+    interstellar/  — 6 PNGs each: right/left/top/bottom/front/back.png
+  texture/         — PBR sets, one folder per material
+  sound/
+  image/
+source/blend/    — Blender authoring files. Deliberately outside public/ so they
+                   are never deployed; only their exported textures ship.
 ```
+
+To add a skybox: drop the folder in `public/asset/skybox/`, rename its faces to
+the six words above, then add the folder name to `SKYBOX_OPTIONS` and a matching
+entry to `LIGHTING_PRESETS` (both in `src/geometry/environment.js`).
 
 ---
 

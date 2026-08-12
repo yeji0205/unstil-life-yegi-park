@@ -2,11 +2,23 @@ import * as THREE from 'three';
 import { injectSkyboxFlow, uFlowStrength } from '../render/skyboxFlow.js';
 
 // ─── Skybox ──────────────────────────────────────────────────────────────────
-// Each entry is a folder under asset/ containing 6 faces named
-// bkg1_right/left/top/bot/front/back.png (same convention as skybox_blue).
-// Drop a new folder in with that naming and add its name here to make it
-// selectable from the debug GUI dropdown. SKYBOX_NONE is a special case handled
-// directly below — no folder or textures involved, just a flat colour.
+// Each entry is a folder under asset/skybox/ holding exactly six files:
+// right / left / top / bottom / front / back .png — the same six words
+// SKYBOX_FACES lists, and the same ones the custom-upload matcher accepts.
+//
+// Adding a background is therefore: drop the folder in, rename its faces to
+// those words, add the folder name here and a LIGHTING_PRESETS entry below.
+// Nothing else in the code needs to know about it.
+//
+// Packs in the wild use every naming scheme going (bkg1_*, xpos/xneg, rt/lf/up),
+// so the renaming step is unavoidable somewhere. It used to live in code as a
+// per-folder prefix table, which meant a pack whose names differed in any way
+// OTHER than a prefix — like the axis-named interstellar set — simply could not
+// be added without new code. Normalising on disk instead costs one rename per
+// file, once, and removes the table entirely.
+//
+// SKYBOX_NONE is a special case handled directly below — no folder or textures
+// involved, just a flat colour.
 export const SKYBOX_NONE         = 'None (solid color)';
 
 // The flat background colour used when SKYBOX_NONE is selected. White to begin
@@ -17,12 +29,7 @@ export const SKYBOX_NONE         = 'None (solid color)';
 export const voidColor = { hex: '#ffffff' };
 
 export const SKYBOX_CUSTOM_LABEL = 'Add custom skybox…';
-export const SKYBOX_OPTIONS      = ['skybox_blue', 'skybox_red', SKYBOX_NONE, SKYBOX_CUSTOM_LABEL];
-
-// Face filenames aren't uniform across packs: skybox_blue ships bkg1_*.png while
-// skybox_red ships bkg3_*.png. Rather than rename the assets, each folder
-// declares its prefix here (default 'bkg1_' keeps existing folders working).
-const SKYBOX_FILE_PREFIX = { skybox_blue: 'bkg1_', skybox_red: 'bkg3_' };
+export const SKYBOX_OPTIONS      = ['blue', 'red', 'interstellar', SKYBOX_NONE, SKYBOX_CUSTOM_LABEL];
 
 // Ambient/directional tint the room lighting eases toward as it enters
 // 'space' (see render/lighting.js updateLighting) — keyed by the same names
@@ -31,7 +38,7 @@ const SKYBOX_FILE_PREFIX = { skybox_blue: 'bkg1_', skybox_red: 'bkg3_' };
 // flat void is lit by whatever colour it's set to (white by default). Add an
 // entry here whenever a new skybox option is added above.
 export const LIGHTING_PRESETS = {
-    skybox_blue: {
+    blue: {
         // Deep space, lit BY the nebula.
         //
         // KEY: hard, pure white and strong. In vacuum there's no atmosphere to
@@ -55,11 +62,22 @@ export const LIGHTING_PRESETS = {
         directionalColor:     [1.00, 1.00, 1.00],
         directionalIntensity: 5.4,
     },
-    skybox_red: {
-        // Same deep-space treatment as skybox_blue — hard white key light, dim
+    red: {
+        // Same deep-space treatment as blue — hard white key light, dim
         // fill. The fill COLOUR isn't specified by hand: buildSkybox() samples
         // the red nebula's own average and overrides ambientColor, so shadowed
         // sides pick up that warm red rather than this fallback blue.
+        ambientColor:         [0.34, 0.45, 0.72],
+        ambientIntensity:     0.7,
+        directionalColor:     [1.00, 1.00, 1.00],
+        directionalIntensity: 5.4,
+    },
+    interstellar: {
+        // Hipshot's "Interstellar" starfield (asset/skybox/interstellar/README.TXT
+        // carries the author's attribution — keep it with the images). Same
+        // deep-space treatment as the two nebulae: a hard white key with a low
+        // fill, and the fill's COLOUR measured from the images themselves rather
+        // than guessed here, so it tracks whatever that sky actually looks like.
         ambientColor:         [0.34, 0.45, 0.72],
         ambientIntensity:     0.7,
         directionalColor:     [1.00, 1.00, 1.00],
@@ -261,8 +279,7 @@ export function buildSkybox(scene) {
         skybox.material.forEach((mat, i) => {
             const face = SKYBOX_FACES[i];
             const oldMap = mat.map;
-            const prefix = SKYBOX_FILE_PREFIX[folderName] ?? 'bkg1_';
-            mat.map = loadFaceTexture(`asset/${folderName}/${prefix}${face}.png`, false, face$(i));
+            mat.map = loadFaceTexture(`asset/skybox/${folderName}/${face}.png`, false, face$(i));
             mat.needsUpdate = true;
             if (oldMap) oldMap.dispose();
         });

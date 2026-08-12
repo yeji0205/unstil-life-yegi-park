@@ -29,7 +29,7 @@ The viewer interacts by scrolling (room ↔ space transition) and orbiting/zoomi
 
 ### space
 - **Skybox:** `BoxGeometry(1000,1000,1000)` with 6 `MeshBasicMaterial` faces using
-  cube map textures (`asset/skybox_blue/bkg1_*.png`), rendered `BackSide`
+  cube map textures (`asset/skybox/<name>/{right,left,top,bottom,front,back}.png`), rendered `BackSide`
 - **Why `BoxGeometry` + `BackSide` works here:** `MeshBasicMaterial` ignores lighting
   entirely — no normal vectors, no dot product calculations. It simply displays the texture
   color directly. So the outward-pointing normals of `BoxGeometry` cause no problem —
@@ -210,4 +210,4 @@ by higher light intensities (ambient 2.8, directional up to 8.0).
 - GitHub Pages via GitHub Actions (`static.yml`)
 - Vite build (`npm run build`) → `dist/` deployed
 - Base path: `/unstil-life-yegi-park/`
-- Skybox textures in `public/asset/skybox_blue/` → copied to `dist/` by Vite
+- Skybox textures in `public/asset/skybox/<name>/` → copied to `dist/` by Vite

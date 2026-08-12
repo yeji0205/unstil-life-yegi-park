@@ -28,7 +28,7 @@ Point-by-point comparison against the submitted technical proposal
 | At `p = 1`: scroll disabled, object dissolution proceeds via elapsed time | As proposed (triggered by a GUI button rather than automatically — minor difference) |
 | `OrbitControls`, bounded rotation while `p < 1`, bounds removed + zoom at `p = 1` | Exactly as proposed (`src/simulation/cameraControls.js`) |
 | Lighting transition: warm interior fades, cold space light strengthens, driven by `p` | As proposed, extended with per-background presets (see §6) |
-| Sound: ambient café atmosphere, gain interpolated by `p` via the Web Audio API | As proposed (`src/audio/ambientSound.js`, `asset/cafe.mp3` from Freesound) — full volume in the room, fading to silence in space. Extended with a GUI sound picker (Café / None / user-uploaded custom audio) and volume slider. Starts on the first click/key gesture (browser autoplay policy — wheel doesn't count as an activation, so scroll alone can't unlock audio). |
+| Sound: ambient café atmosphere, gain interpolated by `p` via the Web Audio API | As proposed (`src/audio/ambientSound.js`, `asset/sound/cafe.m4a` from Freesound) — full volume in the room, fading to silence in space. Extended with a GUI sound picker (Café / None / user-uploaded custom audio) and volume slider. Starts on the first click/key gesture (browser autoplay policy — wheel doesn't count as an activation, so scroll alone can't unlock audio). |
 
 ### Deviations from the proposal ⚠️
 
@@ -110,7 +110,7 @@ src/render/
 
 src/geometry/
   room.js                      6-plane room (floor/ceiling/4 walls)
-  environment.js                skybox (2 options + custom-none), stars,
+  environment.js                skybox (3 packs + solid colour + upload), stars,
                                 LIGHTING_PRESETS keyed by skybox name
 
 src/persistence/
@@ -151,7 +151,7 @@ around the current dissolve edge.
 ## 5. Painting intro (not in the original plan)
 
 Before the viewer can interact, a stylized painting (currently a
-Van-Gogh-style AI-generated image at `asset/intro_painting.jpeg`) is shown,
+Van-Gogh-style AI-generated image at `asset/image/intro_painting.png`) is shown,
 then transitions into the live 3D scene:
 
 - A screen-aligned quad, parented to the camera, sized to exactly fill its
@@ -169,7 +169,7 @@ then transitions into the live 3D scene:
   swirl/spiral look that was tried and rejected earlier.
 - If the image file fails to load, the intro is skipped silently (console
   warning only) and the scene is immediately interactive — this path is
-  exercised whenever `asset/intro_painting.jpeg` is missing.
+  exercised whenever `asset/image/intro_painting.png` is missing.
 - Scroll (`phaseMachine.enableInteraction()`) and orbit (`controls.enabled`)
   stay locked out until the merge completes.
 
@@ -181,7 +181,7 @@ then transitions into the live 3D scene:
   raking-light photo reference. A fake volumetric light beam (additive-blended
   cone) fades out in the first 40% of the room→space scroll.
 - **Space** (per-background preset, `LIGHTING_PRESETS` in `environment.js`):
-  - `skybox_blue`: ambient fades to ~0, directional climbs to 3.5 — moody,
+  - `blue` / `red` / `interstellar`: ambient stays low, directional climbs — moody,
     high-contrast, "the sun does all the work" look.
   - `None (solid color)`: ambient instead climbs to 3.2 (**above** the
     directional's 1.2) — because ambient is non-directional and lights every
