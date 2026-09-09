@@ -57,7 +57,8 @@ Everything is in `main.js`. Sections in order:
 
 ### Key files
 ```
-main.js          — entire application
+main.js          — scene assembly + animation loop; picks the render path
+src/render/particleBloom.js — the scene's only post-process (see below)
 index.html       — minimal shell, loads main.js
 vite.config.js   — sets base: '/unstil-life-yegi-park/' for GitHub Pages
 public/asset/    — the ONLY asset tree. Vite serves public/ at the site root in
@@ -142,6 +143,39 @@ For each object:
 4. **Attach as `object.add(particles)`** — particles follow object automatically
 5. Use `AdditiveBlending`, `depthWrite: false`
 6. Particle color: **white** `0xffffff` (separate from room edge color)
+7. **Every particle `Points` object must be created via `makeParticlePoints()`**
+   (glbLoader), which puts it on `PARTICLE_BLOOM_LAYER`. A `new THREE.Points`
+   built by hand is invisible to the bloom pass and will silently never glow.
+8. Two selectable appearances, switched live by the `uParticleShiny` uniform
+   (`✨ Shiny Particles` button in the GUI): `0` = flat evenly-lit white dots
+   (the default and the fast path), `1` = the Codrops demo's shiny look.
+   Shiny is **two** things, and neither works alone:
+   - **Selective bloom** (`src/render/particleBloom.js`) does all the work. A
+     point sprite can only fill its own quad, so a "glow" drawn inside one just
+     makes fatter dots — tried, and that is exactly what it looked like. Glow
+     has to spread onto NEIGHBOURING pixels, which needs a post-process.
+   - **The sprite stays a plain soft point of light**: one smooth radial
+     gaussian, peaking just above white, with a mild per-particle stretch.
+
+   Do NOT copy the demo's `particle.png` shape here. It is a ragged elongated
+   wisp, which works because it emits a few hundred LARGE wisps; this scene
+   emits 200–2000 specks a few pixels across, and at that size any shape with
+   structure (a dash, a plus, a star) is just a recognisable little GLYPH —
+   a thousand identical stamps rather than a dissolving object. Two failed
+   attempts, in order: a core+halo+glint cross (read as fat dots), then a
+   rotating streak plus a crossing one (read as a square with a dark X in it,
+   because it also clipped).
+
+   Two traps in the sprite, both learned the hard way:
+   - Keep peak brightness barely over 1.0. It only has to clear the bloom
+     threshold; brighter just clips flat across the sprite and the soft point
+     becomes a hard white slab.
+   - The stretch is applied as `q.x / stretch, q.y * stretch` (constant area),
+     so the effective long:short ratio is **stretch squared**. 1.35 → ~1.8:1.
+
+   Per-particle randomness is HASHED from the particle's own `position` rather
+   than stored as an attribute, so the shared geometry builder needs no extra
+   buffer (and no per-frame upload, unlike the demo).
 
 Particles appear only within `uEdge * 1.5` band around dissolve threshold.
 
@@ -227,11 +261,31 @@ Follow Clean Code principles — names must be descriptive and unambiguous.
 
 A `lil-gui` debug panel is always present. Comment out the `gui` block before final release.
 Controls: `uProgress`, `uDissolveEdge`, `uNoiseFreq`, edge color RGB, ambient/directional intensity.
+Loose top-level buttons (the ones you press rather than adjust): dissolve trigger,
+background motion, and the flat/shiny particle A/B toggle.
 
 ## What NOT to implement without discussion
 
 - Do not restructure into multiple files without confirming (single file is preferred for AI context)
 - Do not add physics engine — floating is purely mathematical (sinusoidal)
 - Do not use CSS or HTML elements for UI — canvas only
-- Do not add post-processing (bloom, FXAA) without confirming
+- Do not add post-processing without confirming. There is now exactly ONE
+  post-process — the selective particle bloom in `src/render/particleBloom.js` —
+  and it is opt-in, only rendering while shiny particle mode is on. Do not move
+  it onto the default path, and do not add a second (FXAA, DOF, vignette)
+  without asking.
+- **NEVER route the on-screen render through an `EffectComposer`.** This scene
+  has several ADDITIVE layers (volumetric light cone, star field, particles).
+  Rendering straight to canvas blends them on sRGB-encoded values; a composer's
+  linear half-float target blends them in linear space, and the sRGB encode at
+  the end then lifts every dark pixel. Measured cost of getting this wrong: the
+  whole frame washed out by R +7 / G +14 / B +17 of 255 with no particles even
+  on screen. It also silently discards the canvas MSAA. `particleBloom.js`
+  therefore renders the base frame with a plain `renderer.render()` and adds
+  only the glow, as an additive full-screen quad. The painting-intro note in
+  main.js is the same trap ("made the volumetric lighting look off").
+- Known cosmetic limitation: the perf HUD's `calls`/`tris` readout is wrong while
+  shiny mode is on, because `renderer.info` resets per `render()` call and the
+  composer makes several. The fps/ms figures are still correct (they're timed
+  from the animation loop, not from `renderer.info`).
 - Do not add `DRACOLoader` unless GLB files were explicitly exported with Draco compression

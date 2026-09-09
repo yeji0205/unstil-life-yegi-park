@@ -2,9 +2,10 @@ import * as THREE from 'three';
 
 import { createRenderer, createCamera, setupResize, createAdaptiveQuality } from './src/render/renderer.js';
 import { setupLighting } from './src/render/lighting.js';
-import { uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, updateDissolveTransparency } from './src/render/dissolve.js';
+import { uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleShiny, updateDissolveTransparency } from './src/render/dissolve.js';
 import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
 import { createPaintingIntro } from './src/render/paintingIntro.js';
+import { createParticleBloom, bloomSettings } from './src/render/particleBloom.js';
 
 import { buildRoom, setRoomTexture, resetRoomTextures } from './src/geometry/room.js';
 import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, SKYBOX_NONE, LIGHTING_PRESETS, voidColor } from './src/geometry/environment.js';
@@ -34,6 +35,14 @@ const adaptiveQuality = createAdaptiveQuality(renderer);
 const camera   = createCamera();
 const scene    = new THREE.Scene();
 setupResize(camera, renderer);
+
+// ─── Selective particle bloom ────────────────────────────────────────────────
+// The post-process behind "shiny" particle mode. Built once, but only rendered
+// through while uParticleShiny is on — flat mode never touches it and keeps the
+// single straight render it always had. See render/particleBloom.js for the
+// whole mechanism, how it differs from the Codrops demo it comes from, and why
+// the base frame is deliberately NOT routed through an EffectComposer.
+const particleBloom = createParticleBloom(renderer, scene, camera);
 
 // ─── Geometry ────────────────────────────────────────────────────────────────
 const { loadSkybox, loadCustomSkybox, setVoidColor } = buildSkybox(scene);
@@ -141,7 +150,8 @@ const ambientSound = createAmbientSoundTracks();
 
 // ─── Debug GUI ───────────────────────────────────────────────────────────────
 const gui = createDebugGUI({
-    uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl,
+    uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleShiny,
+    bloomSettings,
     skyboxOptions: SKYBOX_OPTIONS, defaultSkybox: SKYBOX_OPTIONS[0], skyboxCustomLabel: SKYBOX_CUSTOM_LABEL,
     onSkyboxChange: selectBackground,
     onCustomSkyboxFiles: selectCustomSkybox,
@@ -254,9 +264,14 @@ function animate() {
     adaptiveQuality.update(dt);
     perfHud.update();
     cameraControls.controls.update();
-    // With the intro active, render() does its two-pass cross-dissolve; without
-    // it, a single straight render at full performance.
+    // Three render paths:
+    //  - painting intro active: its own two-pass cross-dissolve (and it owns
+    //    the frame, so bloom sits out — the intro is a still image anyway).
+    //  - shiny particles on: the same straight render, plus a particles-only
+    //    pass for the glow map and an additive overlay of it.
+    //  - otherwise: one straight render, exactly as before.
     if (paintingIntro) paintingIntro.render(scene, camera);
+    else if (uParticleShiny.value > 0.5) particleBloom.render();
     else renderer.render(scene, camera);
 }
 animate();

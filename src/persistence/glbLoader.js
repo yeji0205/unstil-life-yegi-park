@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { injectDissolve, makeParticleMaterial, uProgress } from '../render/dissolve.js';
+import { injectDissolve, makeParticleMaterial, uProgress, PARTICLE_BLOOM_LAYER } from '../render/dissolve.js';
 
 const TABLE_PARTICLE_COUNT  = 2000;
 
@@ -551,6 +551,16 @@ function buildParticlesFromGeometry(root, count, { radial = false, velocityCompe
     return geom;
 }
 
+// Wraps geometry + material into the Points object, and puts it on the camera
+// layer the selective-bloom pass renders in isolation (see particleBloom.js).
+// Every dissolve particle system goes through here so that no call site can
+// create one that the bloom pass then silently fails to pick up.
+function makeParticlePoints(geometry, material) {
+    const points = new THREE.Points(geometry, material);
+    points.layers.set(PARTICLE_BLOOM_LAYER);
+    return points;
+}
+
 // Applies the dissolve shader + particle system to a freshly loaded table
 // root (whether a GLB scene or a bare primitive Mesh), positions it with its
 // bottom on the floor, and updates tableState. Returns the new surface Y.
@@ -604,7 +614,7 @@ function setupTableObject(tableObject, scene) {
         // keep the full directional "flow into the background").
         const particleMat = makeParticleMaterial(uTableProgress, uTableTime, { streamStrength: 0.4 });
         // Attach as child so particles inherit the table's position/rotation automatically.
-        tableObject.add(new THREE.Points(particleGeom, particleMat));
+        tableObject.add(makeParticlePoints(particleGeom, particleMat));
     }
 
     return tableSurfaceY;
@@ -937,7 +947,7 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
         });
         if (particleGeom) {
             const particleMat = makeParticleMaterial(uObjProgress, uObjTime, { freqScale: OBJECT_FREQ_SCALE, scaleUniform: uScale });
-            mesh.add(new THREE.Points(particleGeom, particleMat));
+            mesh.add(makeParticlePoints(particleGeom, particleMat));
         }
 
         // ── Contact height, and why it is NOT the bounding sphere ───────────

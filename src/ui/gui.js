@@ -61,6 +61,7 @@ function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Ca
 // button returned here as `dissolveController`.
 export function createDebugGUI({
     uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl,
+    uParticleShiny, bloomSettings,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     skyboxNoneLabel, voidColor, onVoidColorChange,
     tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
@@ -92,14 +93,32 @@ export function createDebugGUI({
     };
     const bgMotionController = gui.add(bgMotionAction, 'toggle').name('🌀 Animate Background');
 
+    // Particle appearance A/B. Top level rather than inside "Dissolve Look"
+    // because the only moment it can be judged is the few seconds a dissolve is
+    // actually running — it has to be one click away, not behind a folder.
+    // Flipping it writes one uniform and swaps the render path in main.js, so it
+    // takes effect on the very next frame and can be switched mid-stream. Shiny
+    // mode adds a particles-only render pass plus the bloom mip chain (see
+    // render/particleBloom.js), so leaving it off is also the fast path.
+    // See uParticleShiny in dissolve.js.
+    const particleShinyAction = {
+        toggle: () => {
+            uParticleShiny.value = uParticleShiny.value > 0.5 ? 0.0 : 1.0;
+            particleShinyController.name(uParticleShiny.value > 0.5
+                ? '⚪ Flat White Particles'
+                : '✨ Shiny Particles');
+        },
+    };
+    const particleShinyController = gui.add(particleShinyAction, 'toggle').name('✨ Shiny Particles');
+
     // ─── Panel layout ────────────────────────────────────────────────────────
-    // The three buttons above are the only things left loose at the top level:
+    // The four buttons above are the only things left loose at the top level:
     // they're the controls you press rather than adjust, so they're grouped
     // together and reachable without opening anything. Everything else lives in
     // a folder — previously some settings sat loose and some were in folders,
     // which made the panel read as a list with arbitrary dividers in it.
     //
-    // lil-gui renders in creation order, so these four are declared here to fix
+    // lil-gui renders in creation order, so these three are declared here to fix
     // the sequence; their contents are attached further down, next to the code
     // that owns them. The remaining folders (Room Textures, Sound, Objects,
     // Camera position) are created later in the file and follow in that order,
@@ -130,6 +149,25 @@ export function createDebugGUI({
     // How far the particle stream wanders sideways. 0 is a perfectly straight
     // stream — the calmest setting, and worth starting from when judging the feel.
     dissolveFolder.add(uParticleSwirl, 'value', 0, 0.25, 0.005).name('Particle Sway');
+
+    // ─── Particle bloom ──────────────────────────────────────────────────────
+    // Only has any effect while shiny mode is on — flat mode never runs the
+    // post-process at all. Worth having on sliders rather than hardcoded because
+    // the right values depend on what's behind the particles: the glow needs
+    // more composite strength to read against a bright nebula than against the
+    // flat black void. Defaults are retuned from the Codrops demo's numbers —
+    // see bloomSettings for why its values are too hot at this particle count.
+    const bloomFolder = dissolveFolder.addFolder('Particle Bloom (shiny only)');
+    // Composite strength is the dial to reach for first — it scales the whole
+    // glow after the fact, without touching what qualifies as bloom.
+    bloomFolder.add(bloomSettings, 'composite', 0, 20, 0.1).name('Glow Strength');
+    // How far the glow bleeds outward from each speck.
+    bloomFolder.add(bloomSettings, 'radius', 0, 1, 0.01).name('Glow Radius');
+    // Luminance a pixel has to reach before it blooms at all. Raise it to make
+    // only the hottest particle cores glow; drop it and the dimmer trailing
+    // specks start to as well.
+    bloomFolder.add(bloomSettings, 'threshold', 0, 1, 0.01).name('Glow Threshold');
+    bloomFolder.add(bloomSettings, 'strength', 0, 3, 0.01).name('Bloom Pass Strength');
 
     // Skybox picker — swaps the cubemap live. Add new folder names to
     // skyboxOptions (geometry/environment.js) to list them here.
