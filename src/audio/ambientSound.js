@@ -82,7 +82,7 @@ function createSoundSystem() {
     // sliders behave exactly as before. Trade-off: element looping isn't
     // sample-accurate like an AudioBufferSourceNode, but these tracks are minutes
     // long and broadband, so a loop seam is a non-issue in practice.
-    function createTrack({ urlMap, defaultLabel, gainOf }) {
+    function createTrack({ urlMap, defaultLabel, gainOf, defaultVolume = 0.5 }) {
         let gainNode = null;
         let el        = null; // current <audio> element
         let mediaNode = null; // its MediaElementAudioSourceNode
@@ -94,7 +94,7 @@ function createSoundSystem() {
         // only the newest wins.
         let loadGeneration = 0;
 
-        const volume = { value: 0.5 }; // object so lil-gui can bind a slider to .value directly
+        const volume = { value: defaultVolume }; // object so lil-gui can bind a slider to .value directly
 
         function stopCurrent() {
             if (el) { el.pause(); el.removeAttribute('src'); el.load(); el = null; }
@@ -279,7 +279,9 @@ export function createAmbientSoundTracks() {
     };
 
     const room     = system.createTrack({ urlMap: ROOM_SOUND_URLS,  defaultLabel: 'Café ambience',  gainOf: (p) => 1 - p });
-    const space    = system.createTrack({ urlMap: SPACE_SOUND_URLS, defaultLabel: 'Space ambience', gainOf: spaceGainOf });
+    // Space starts SILENT. The track still loads and crossfades on p exactly as
+    // before, so raising the slider mid-piece brings it in with no reload.
+    const space    = system.createTrack({ urlMap: SPACE_SOUND_URLS, defaultLabel: 'Space ambience', gainOf: spaceGainOf, defaultVolume: 0 });
     const dissolve = system.createOneShot({ urlMap: DISSOLVE_SOUND_URLS, defaultLabel: 'Slowly Whoosh' });
     return {
         room, space, dissolve,

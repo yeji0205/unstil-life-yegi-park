@@ -452,7 +452,11 @@ function makeStarTexture() {
 const STAR_ROTATE_SPEED = 0.03;
 
 export function buildStars(scene) {
-    const STAR_COUNT = 1000;
+    // Halved from 1000. These sit in FRONT of the skybox, which already has its
+    // own painted stars, so the two fields were competing — a second, brighter,
+    // additively-blended layer of specks over an image that did not need them.
+    // Fewer of them reads as depth over the nebula rather than as noise on it.
+    const STAR_COUNT = 500;
     // Stars used to be scattered through a ±100 CUBE centred on the origin, which
     // put a share of them inside the room — visible as bright specks floating in
     // front of the walls and through the table. Spawning them on a spherical

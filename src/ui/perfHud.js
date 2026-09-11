@@ -18,8 +18,25 @@ export function createPerfHud(renderer) {
         color: '#cfe8ff', background: 'rgba(0,0,0,0.62)',
         padding: '7px 10px', borderRadius: '5px', whiteSpace: 'pre',
         pointerEvents: 'none', userSelect: 'none',
+        // Hidden until "t" is pressed. This is a diagnostic, and the piece is
+        // looked at far more often than it is measured, so off is the right
+        // resting state; update() keeps running either way, so the numbers are
+        // already correct the moment it appears rather than needing half a
+        // second to fill in.
+        display: 'none',
     });
     document.body.appendChild(el);
+
+    // "t" shows/hides the readout.
+    window.addEventListener('keydown', (e) => {
+        if (e.key !== 't' && e.key !== 'T') return;
+        // Not while a GUI field has focus, or typing "t" into one of lil-gui's
+        // value boxes would toggle the HUD instead of entering a character.
+        const target = e.target;
+        if (target instanceof HTMLElement
+            && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+        el.style.display = el.style.display === 'none' ? '' : 'none';
+    });
 
     // The GPU string is only exposed through this debug extension.
     let gpu = 'unknown';

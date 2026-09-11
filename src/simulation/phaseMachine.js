@@ -20,6 +20,21 @@ import { uProgress } from '../render/dissolve.js';
 // the scene was already struggling.
 export const scrollSmoothing = { tau: 0.28 };
 
+// ─── How long the dissolve takes, in seconds ─────────────────────────────────
+// This is the budget EVERYTHING in the effect is spent out of, which makes it
+// the real control over how fast the particles move.
+//
+// A speck's whole existence is measured against the threshold sweep, not against
+// the clock: it lives uParticleLife out of the 2.4 noise units the threshold
+// covers, so its life in seconds is (life / 2.4) * duration. Its speed is then
+// simply drift / that. So at a fixed duration, asking for a wider spread is
+// asking for faster specks — the two cannot both improve. Lengthening the
+// dissolve is what buys slowness without pulling the plume back in.
+//
+// Was a hardcoded 3.0. On a slider because it sets the pace of the piece's
+// central moment, and that is judged by watching rather than by arithmetic.
+export const dissolveDuration = { value: 5.0 };
+
 // 'room'       — room visible, scroll controls uProgress
 // 'space'      — room gone, zoom active, waiting for the dissolve button
 // 'dissolving' — objects dissolving automatically, scroll blocked
@@ -33,7 +48,7 @@ export const scrollSmoothing = { tau: 0.28 };
 // (fully dissolved / invisible). Scrolling back toward the room then drives
 // their uProgress from 1 → 0 (see the reverse-dissolve block in update), so the
 // exact same objects re-materialize by playing the dissolve effect backwards.
-export function createPhaseMachine({ scene, camera, cameraControls, tableState, stageObjects, dissolveController, getTime, onObjectsDissolved }) {
+export function createPhaseMachine({ scene, camera, cameraControls, tableState, stageObjects, dissolveController, onObjectsDissolved }) {
     const { controls, zoomState, applyControlMode } = cameraControls;
     const ROOM_RETURN_DIST = 5.5; // kept in sync with simulation/cameraControls.js
 
@@ -46,8 +61,14 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     let phase         = 'room';
     let targetP       = 0;   // raw scroll destination; uProgress.value eases toward this
     let lastUpdateT   = null; // for the frame-rate-independent smoothing above
-    let phaseStart    = 0;   // clock time when current phase began
     let scrollBlocked = false;
+    // Seconds into the 3s dissolve. ACCUMULATED from per-frame dt rather than
+    // measured as (now - startTime), which is what makes it pausable: holding it
+    // still holds the whole effect still. The dt it adds is the clamped one, so
+    // a backgrounded tab resumes the dissolve where it left off instead of
+    // finding it already over.
+    let dissolveElapsed = 0;
+    let dissolvePaused  = false;
     // True from when a dissolve finishes until the objects have fully
     // re-materialized back in the room. While set, the objects' dissolve amount
     // tracks the scroll (p) so returning to the room reverses the dissolve.
@@ -99,12 +120,18 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     // lands mid-transition.
     function triggerDissolve() {
         if (phase !== 'space') return false;
-        phase         = 'dissolving';
-        phaseStart    = getTime();
-        scrollBlocked = true;
+        phase           = 'dissolving';
+        dissolveElapsed = 0;
+        scrollBlocked   = true;
         dissolveController.disable();
         return true; // caller plays the single dissolve sound when this returns true
     }
+
+    // Freezes/unfreezes the 3s dissolve mid-flight, so the noise pattern on the
+    // surfaces can actually be looked at — it is otherwise on screen for about a
+    // second per object. Only the dissolve stops; the float, the sway and the
+    // particle drift keep running, so a paused frame is still a live scene.
+    function setDissolvePaused(value) { dissolvePaused = value; }
 
     // Advances uProgress toward targetP and runs the phase transitions. Called
     // once per frame; returns the values other simulation/render modules need.
@@ -140,15 +167,15 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
 
         if (phase === 'room' && rawP >= 1.0) {
             phase         = 'space';
-            phaseStart    = t;
             scrollBlocked = false;
             dissolveController.enable(); // button becomes clickable when fully in space
         }
 
         if (phase === 'dissolving') {
-            const elapsed = t - phaseStart;
+            if (!dissolvePaused) dissolveElapsed += dt;
+            const elapsed = dissolveElapsed;
             // Everything — all objects AND the table — dissolves together over 3s.
-            const d = Math.min(1.0, Math.max(0.0, elapsed / 3.0));
+            const d = Math.min(1.0, Math.max(0.0, elapsed / dissolveDuration.value));
             for (const obj of stageObjects) {
                 obj.uProgress.value = d;
                 if (obj.uProgress.value >= 1.0 && !obj.shadowsKilled) {
@@ -161,7 +188,7 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
                 tableState.object.traverse(c => { if (c.isMesh) c.castShadow = false; });
                 tableState.object.userData.shadowsKilled = true;
             }
-            if (elapsed >= 3.2) {
+            if (elapsed >= dissolveDuration.value + 0.2) {
                 phase         = 'done';
                 scrollBlocked = false;
                 // Keep the objects (now fully dissolved / invisible at uProgress=1)
@@ -212,5 +239,5 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     // Called once the painting intro finishes dissolving (or there is none).
     function enableInteraction() { interactionEnabled = true; }
 
-    return { update, triggerDissolve, enableInteraction };
+    return { update, triggerDissolve, setDissolvePaused, enableInteraction };
 }

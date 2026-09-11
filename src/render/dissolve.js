@@ -6,9 +6,70 @@ import { NOISE_GLSL } from './noise.js';
 // (room walls, table, stage objects). Each object still owns its own
 // progress uniform so they can dissolve independently.
 export const uProgress          = { value: 0.0 };
-export const uDissolveEdge      = { value: 0.25 };
 export const uNoiseFreq         = { value: 0.35 };
+
+// ─── Edge width: one per category, NOT one for the scene ─────────────────────
+// The rim's thickness in WORLD units is uEdge / (the noise frequency the
+// surface is sampled at). The room samples world-space noise at freqScale 1.0
+// and the table/objects at 4.0, so a single shared value lands very
+// differently on each:
+//
+//              rim thickness   surface size   rim as % of surface
+//   room wall      0.71 u          ~10 u              7%
+//   object         0.18 u          ~1 u              18%   <- 2.5x heavier
+//
+// A 1-unit object was wearing a rim proportionally two and a half times wider
+// than a wall's, which is most of why the dissolve read as a soft fade on the
+// objects and as a crisp sweep on the room. Objects get their own value,
+// picked so their rim covers the same ~7% of the object that the room's does
+// of a wall: 0.071 world units x 1.4 frequency = 0.10.
+//
+// Knock-on effect, deliberate: the particle drift band is uEdge x 11, so a
+// thinner object edge also tightens the band the particles live in (2.75 ->
+// 1.10 noise units), which pulls them closer to the front they came off.
+export const uDissolveEdge       = { value: 0.25 };  // room walls
+export const uObjectDissolveEdge = { value: 0.10 };  // table + stage objects
+// The colour the surface takes AT the dissolve front, before it discards —
+// the rim that outlines whatever is currently breaking up. The demo makes this
+// its most recognisable feature with a bright blue (0x4d9bff); black here is a
+// deliberate departure, keeping the dissolve front a dark edge rather than a
+// lit one. Live on the GUI's "Edge Color" picker if that's ever worth revisiting.
 export const uDissolveEdgeColor = { value: new THREE.Color(0x000000) };
+
+// ─── The OBJECTS' edge colour, separate from the room's ──────────────────────
+// Split for the same reason the width was: the room wants a dark front against
+// warm plaster, while the objects dissolve against black space where a dark rim
+// is simply invisible — there is nothing for the particles to visibly come off.
+//
+// Defaulted to match uParticleColor (white), which is how the demo is built:
+// its edge and its particles are two SEPARATE uniforms both initialised to the
+// same 0x4d9bff, on two separate GUI controls. Same value, independently
+// tunable — so the rim and the specks it sheds read as one material by default,
+// without being locked together.
+export const uObjectDissolveEdgeColor = { value: new THREE.Color(0xffffff) };
+
+// ─── Rim takes the surface's OWN colour ──────────────────────────────────────
+// A fixed rim colour outlines every hole it opens. On a hollow mesh — which all
+// the scanned/modelled objects are — that draws a bright line around the empty
+// interior and makes the hollowness the most eye-catching thing on screen.
+//
+// With follow on, the rim is the surface's own LIT colour scaled by the gain, so
+// a hole is edged in a darker version of the object rather than in a foreign
+// hue, and the eye reads it as the object thinning rather than as an outline.
+// Gain below 1 darkens the front, above 1 brightens it into a glow.
+//
+// Room keeps follow OFF (its walls are not hollow and its dark front is wanted).
+// Kept as floats rather than a bool so the shader can branch-free mix() on them.
+export const uObjectEdgeFollow = { value: 1.0 };
+export const uObjectEdgeGain   = { value: 0.35 };
+
+// The room's defaults: follow off, so it uses uDissolveEdgeColor as before.
+const EDGE_FOLLOW_OFF = { value: 0.0 };
+const EDGE_GAIN_UNUSED = { value: 1.0 };
+
+// Identity default for localMatrixUniform — a child whose geometry already sits
+// in its root's space needs no remap.
+const IDENTITY_MATRIX = { value: new THREE.Matrix4() };
 
 // Fresnel rim tint — every object edge-blends toward this color at grazing
 // angles, so objects visually "pick up" whatever's actually around them
@@ -48,6 +109,21 @@ const dissolveMaterials = [];
 //
 // Toggling `transparent` does NOT recompile the shader — three reads it per
 // frame when building render lists — so this is free to flip every frame.
+// Drops a material from the list above. Must be called whenever a dissolving
+// mesh is disposed — this array was push-only, so every object swap left its
+// old materials in it forever: a growing per-frame loop over materials that no
+// longer exist, and a reference that kept each disposed one alive in memory.
+export function forgetDissolveMaterials(root) {
+    root.traverse?.((child) => {
+        if (!child.isMesh) return;
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        for (const m of mats) {
+            const i = dissolveMaterials.findIndex((e) => e.material === m);
+            if (i !== -1) dissolveMaterials.splice(i, 1);
+        }
+    });
+}
+
 export function updateDissolveTransparency() {
     for (const { material, progress } of dissolveMaterials) {
         // ownsAlpha: this material needs transparency for its OWN sake, not just
@@ -60,23 +136,44 @@ export function updateDissolveTransparency() {
     }
 }
 
-export function injectDissolve(material, progressUniform, { space = 'local', freqScale = 1.0, scaleUniform = { value: 1.0 } } = {}) {
+// edgeUniform: which category's rim width this surface follows. Defaults to the
+// room's, so the room's own call site doesn't have to say so; the table and the
+// stage objects pass uObjectDissolveEdge. Anything drawing a rim AND emitting
+// particles must hand the same uniform to makeParticleMaterial, or the specks
+// will sit at a different place than the edge they are supposed to come off.
+export function injectDissolve(material, progressUniform, { space = 'local', freqScale = 1.0, scaleUniform = { value: 1.0 }, edgeUniform = uDissolveEdge, edgeColorUniform = uDissolveEdgeColor, edgeFollowUniform = EDGE_FOLLOW_OFF, edgeGainUniform = EDGE_GAIN_UNUSED, localMatrixUniform = IDENTITY_MATRIX } = {}) {
     dissolveMaterials.push({ material, progress: progressUniform });
     material.onBeforeCompile = (shader) => {
         shader.uniforms.uProgress    = progressUniform;
-        shader.uniforms.uEdge        = uDissolveEdge;
+        shader.uniforms.uEdge        = edgeUniform;
         shader.uniforms.uFreq        = uNoiseFreq;
-        shader.uniforms.uEdgeColor   = uDissolveEdgeColor;
+        shader.uniforms.uEdgeColor   = edgeColorUniform;
+        shader.uniforms.uEdgeFollow  = edgeFollowUniform;
+        shader.uniforms.uEdgeGain    = edgeGainUniform;
+        shader.uniforms.uLocalMatrix = localMatrixUniform;
         shader.uniforms.uRimColor    = uRimColor;
         shader.uniforms.uRimStrength = uRimStrength;
         shader.uniforms.uScale       = scaleUniform;
 
+        // 'local' samples in the ROOT's space, not the child mesh's own.
+        //
+        // This has to agree with the particle system, which builds its points in
+        // root-local space (see buildParticlesFromGeometry). A GLB whose
+        // submeshes carry a transform relative to their root broke that
+        // agreement silently: the tulip's three submeshes sit 16.06 units above
+        // their root, which at that object's scale is 0.75 in noise-argument
+        // units — close to a whole noise period. So the surface and the specks
+        // it was meant to shed were reading unrelated parts of the field, and
+        // the flower dissolved with no particles while they arrived later.
+        //
+        // uLocalMatrix is that child-to-root transform. It is a uniform, so the
+        // generated source is unchanged and the shared program cache key holds.
         const posExpr = space === 'world'
             ? '(modelMatrix * vec4(transformed, 1.0)).xyz'
-            : 'transformed';
+            : '(uLocalMatrix * vec4(transformed, 1.0)).xyz';
 
         shader.vertexShader =
-            'varying vec3 vDissolvePos;\n' +
+            'uniform mat4 uLocalMatrix;\nvarying vec3 vDissolvePos;\n' +
             shader.vertexShader.replace(
                 '#include <begin_vertex>',
                 `#include <begin_vertex>
@@ -89,6 +186,8 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
              uniform float uFreq;
              uniform float uScale;
              uniform vec3  uEdgeColor;
+             uniform float uEdgeFollow;
+             uniform float uEdgeGain;
              uniform vec3  uRimColor;
              uniform float uRimStrength;
              varying vec3  vDissolvePos;
@@ -119,8 +218,18 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
                 float edgeEnd = threshold + uEdge;
                 if (noise < edgeEnd) {
                     float t     = (noise - threshold) / uEdge;
-                    float alpha = mix(0.5, 1.0, t);
-                    gl_FragColor = vec4(mix(uEdgeColor, gl_FragColor.rgb, t), alpha);
+                    // The edge fade MULTIPLIES the material's own alpha instead of
+                    // replacing it. A cut-out texture (the tulip's leaves are one
+                    // flat quad with the leaf shape carved out by the texture's
+                    // alpha) is 0 outside the shape, and overwriting that made the
+                    // whole rectangular quad opaque wherever the edge band crossed
+                    // it — a rectangle appearing around the leaves mid-dissolve.
+                    float alpha = gl_FragColor.a * mix(0.5, 1.0, t);
+                    // Either a fixed colour, or the surface's own lit colour
+                    // scaled — see uObjectEdgeFollow for why hollow meshes want
+                    // the second one.
+                    vec3 edgeCol = mix(uEdgeColor, gl_FragColor.rgb * uEdgeGain, uEdgeFollow);
+                    gl_FragColor = vec4(mix(edgeCol, gl_FragColor.rgb, t), alpha);
                 }
             }`
         );
@@ -141,6 +250,73 @@ export const uParticleColor = { value: new THREE.Color(0xffffff) };
 // corkscrew, which fought the stillness the piece is going for.
 export const uParticleSwirl = { value: 0.05 };
 
+// ─── Sprite size, and how the specks travel ──────────────────────────────────
+// SIZE multiplies the sprite's on-screen diameter. 1.2 is the 20% bump asked
+// for; the slider is there because the right value depends on how close the
+// camera is when you happen to be watching.
+// A multiplier on top of the size clamp below, which is what actually decides
+// how big a speck lands on screen. 1.0 = the clamp's own range.
+export const uParticleSize = { value: 1.0 };
+
+// Depth of the per-particle twinkle. Each speck swings between (1 - twinkle)
+// and (1 + twinkle) of its base SIZE, and half that in brightness, on its own
+// phase and rate.
+//
+// Size rather than brightness because of the scale we are working at. Rotating
+// the sprite cannot twinkle below roughly 10px — the 512x512 texture is sampled
+// from a coarse mip there, which has averaged the wisp's raggedness into a
+// symmetric blob, and a symmetric blob looks identical however you spin it.
+// Brightness alone barely reads either, since each speck sits under its own
+// bloom halo. Size is the channel that survives both.
+export const uParticleTwinkle = { value: 0.6 };
+
+// How far the four diffraction spikes reach out of each speck's core.
+//   0   -> a clean round bokeh dot, no rays
+//   1   -> a star with long rays
+// The spikes are SCREEN-ALIGNED and share one orientation, which is what real
+// lens/eye diffraction does — the reference images all show every star pointing
+// the same way. They are also modulated by vSparkle, so the twinkle grows and
+// shrinks the rays rather than only dimming them, which is how a star actually
+// reads as twinkling.
+export const uParticleSpikes = { value: 0.7 };
+
+// How much a speck shrinks over its life, as 1 / (1 + t * shrink): at 2.0 it
+// ends a third of the size it started. 0 disables it.
+//
+// Shrinking is what makes the disappearance read as RECEDING rather than as
+// being switched off. Alpha alone cannot do that: a half-transparent speck at
+// full size is a big dim smudge, and a field of those is haze. Size carries
+// distance, alpha carries presence, and they want to happen together — which is
+// how the demo does it too, with size / (aDist + 1.0).
+export const uParticleShrink = { value: 2.0 };
+
+// LIFE is how long a speck survives after the dissolve front passes it,
+// measured in NOISE units. This used to be `uEdge * 11.0`, i.e. welded to the
+// rim width — so narrowing the objects' rim to 0.10 silently cut particle life
+// from 2.75 to 1.10 and made them vanish about two and a half times sooner.
+// Those two things have no business being the same number, so life is its own
+// value now and the rim can be tuned without touching it.
+//
+// Counterintuitively, a SMALLER value here gives a LONGER-looking fade.
+//
+// A speck's progress through its own life is t = (threshold - noise) / life, and
+// the threshold only ever sweeps 2.4 noise units in total. At life 2.4 a
+// mid-noise speck reaches just t = 0.5 by the time the dissolve ends — still
+// half alive — and is then cut off by the global end-of-dissolve fade below
+// rather than fading on its own curve. That cut is what read as "too fast".
+//
+// At about 1.4 a speck's t actually reaches 1 around the moment the dissolve
+// finishes, so it plays its whole alpha curve and tails off gracefully instead
+// of being switched off part-way. Raising this past ~2 does not lengthen
+// anything; it just moves more of the disappearance into the hard cut.
+export const uParticleLife = { value: 1.4 };
+
+// DRIFT is how far, in world units, a speck travels over its life — and it now
+// scales the per-particle SCATTER as well, so one slider widens the whole plume
+// instead of only stretching it along the stream. The scatter used to be a fixed
+// 0.7 that ignored this value, so pushing the drift up made a long thin jet
+// rather than a wider cloud.
+export const uParticleDrift = { value: 4.5 };
 
 // ─── Particle look: flat white vs. shiny ─────────────────────────────────────
 // 0 = the original look: every speck the same flat, evenly-lit white dot.
@@ -197,6 +373,11 @@ export const objectParticleVertexShader = /* glsl */`
     uniform float   uStreamStrength; // 1 = coherent "flow into background" (objects); low = disperse (table)
     uniform float   uSwirl;          // lateral sway amplitude; 0 = straight stream
     uniform float   uShiny;          // 0 = flat white dots, 1 = specular glints (see uParticleShiny)
+    uniform float   uSize;           // sprite diameter multiplier (see uParticleSize)
+    uniform float   uTwinkle;        // brightness flicker depth (see uParticleTwinkle)
+    uniform float   uShrink;         // how much a speck shrinks over its life
+    uniform float   uLife;           // trailing band in noise units (see uParticleLife)
+    uniform float   uDrift;          // world units travelled over that life
     uniform float   uTime;
     varying float   vAlpha;
     varying float   vSparkle;    // per-particle twinkle brightness (shiny only)
@@ -216,7 +397,7 @@ export const objectParticleVertexShader = /* glsl */`
         // as a continuous stream rather than a quick burst. Raised from 8: the
         // wider the band, the more spread out a particle's whole journey is in
         // time, which is the other half of "too fast" alongside the sway rate.
-        float driftBand    = uEdge * 11.0;
+        float driftBand    = uLife;
 
         if(distFromEdge > uEdge || distFromEdge < -driftBand){
             gl_Position  = vec4(9999., 9999., 9999., 1.);
@@ -240,8 +421,8 @@ export const objectParticleVertexShader = /* glsl */`
         // particles DISPERSE instead of drifting off as one clump (the table).
         vec3 streamDir = normalize(vec3(0.15, 1.0, 0.4));
         vec3 pos = position
-                 + aVelocity * t * 0.7                                   // per-particle spread
-                 + streamDir * t * 4.5 * invScale * uStreamStrength;     // shared flow into the background
+                 + aVelocity * t * uDrift * 0.233                       // per-particle spread, scaled with drift
+                 + streamDir * t * uDrift * invScale * uStreamStrength;     // shared flow into the background
 
         // A slow LATERAL SWAY, deliberately not a rotation.
         //
@@ -264,9 +445,19 @@ export const objectParticleVertexShader = /* glsl */`
         pos.x += sway;
         pos.z += sway * 0.6; // slight asymmetry so it isn't a flat plane of motion
 
-        // Fade smoothly across the whole (longer) band — bright as it leaves
-        // the surface, gently gone by the far end.
-        vAlpha = 1. - t;
+        // ─── Fading away ────────────────────────────────────────────────────
+        // Two things happen together, because either alone looks wrong.
+        //
+        // ALPHA held full for the first quarter of the life, then eased out.
+        // This was a straight 1-t, which puts a speck at 50% the moment it is
+        // halfway along — so the whole field sits permanently half-faded and
+        // reads as a dim haze rather than as specks that are still there and
+        // then are not. smoothstep keeps them present, then lets them go.
+        vAlpha = 1.0 - smoothstep(0.25, 1.0, t);
+
+        // SIZE shrinking on the demo's curve. This is the half that makes it
+        // look like receding into distance instead of a light being dimmed.
+        float lifeShrink = 1.0 / (1.0 + t * uShrink);
 
         // Global fade-out over the last stretch of the dissolve. Without this,
         // the highest-noise particles never reach the cull band (the threshold
@@ -274,7 +465,12 @@ export const objectParticleVertexShader = /* glsl */`
         // the object itself was gone — visible until the whole scene is cleared
         // seconds later. Forcing alpha to 0 by uObjectProgress = 1 removes them
         // exactly when the object finishes dissolving.
-        vAlpha *= 1.0 - smoothstep(0.85, 1.0, uObjectProgress);
+        // Safety net for stragglers whose noise sits high enough that they never
+        // reach the cull band — without it a sparse shell hangs frozen in mid-air
+        // after the object is gone. Starts at 0.92 rather than 0.85: with life
+        // tuned so specks finish on their own, this should rarely be what ends
+        // them, and starting it earlier just truncated the tail.
+        vAlpha *= 1.0 - smoothstep(0.92, 1.0, uObjectProgress);
 
         // ─── Per-particle identity ───────────────────────────────────────────
         // Hashed from the particle's own surface position, which is unique and
@@ -297,9 +493,30 @@ export const objectParticleVertexShader = /* glsl */`
         // Twinkle: kept subtle now that the streak's rotation carries most of
         // the shimmer, and that bloom exaggerates whatever brightness variation
         // there is. Flat mode gets a constant 1.
-        float flare   = 0.5 + 0.5 * sin(uTime * (1.6 + random * 2.4) + random * 31.4);
-        float twinkle = 0.75 + 0.45 * flare * flare;
-        vSparkle      = mix(1.0, twinkle, uShiny);
+        float flare = 0.5 + 0.5 * sin(uTime * (1.6 + random * 2.4) + random * 31.4);
+        float pulse = flare * flare * 2.0 - 1.0; // -1..1, biased low so peaks are brief
+
+        // SIZE is the twinkle that actually reads here, which is the whole point
+        // of doing it this way. Brightness flicker fails at this scale: the specks
+        // are 3-12px and sit under a bloom halo, so dimming one mostly just dims
+        // its glow. Changing how much SPACE it occupies survives any resolution —
+        // the eye is far more sensitive to a changing extent than to a changing
+        // level, which is why drei's Sparkles animates per-particle size rather
+        // than only opacity.
+        //
+        // Floored at 0.15 rather than 0: a speck that reaches zero size pops out
+        // and back in, which reads as a dropped frame, not as a glint.
+        // Only ever ADDS size, never subtracts. It used to swing both ways, so a
+        // speck spent half its life SMALLER than its base size — and stacked on
+        // top of sizeVariation and lifeShrink that compounded down to a fraction
+        // of a pixel, which is why they vanished. A twinkle is a brief flare,
+        // not a shrink, so max(pulse, 0) is also the truer shape.
+        float sizePulse = mix(1.0, 1.0 + uTwinkle * max(pulse, 0.0), uShiny);
+
+        // Brightness follows at HALF depth, in phase. Both at full depth compound
+        // into a strobe; half lets a speck look like it is catching the light
+        // rather than being switched on and off.
+        vSparkle = mix(1.0, 1.0 + uTwinkle * 0.5 * max(pulse, 0.0), uShiny);
 
         vec4 mvPos   = modelViewMatrix * vec4(pos, 1.);
         // Base 30 (was 60./2.) so particles read as fine specks rather than
@@ -312,14 +529,49 @@ export const objectParticleVertexShader = /* glsl */`
         // look thick instead of shiny. Sizes also vary per particle here; a
         // field of identically sized flares is what gives a particle system away.
         float sizeVariation = mix(1.0, 0.7 + 0.7 * random, uShiny);
-        gl_PointSize = max(1., 30. * mix(1.0, 1.7, uShiny) * sizeVariation / -mvPos.z);
+        // ─── Size is CLAMPED in screen pixels, not left to 1/z ───────────────
+        // The camera sits ~6 units out in the room, dollies to ~14 in space, and
+        // the viewer can zoom closer still: about a 5x range of distance, and
+        // therefore of sprite size. No single constant survives that. Sized for
+        // the wide shot the specks become flakes the moment you zoom in; sized
+        // for the zoom they are sub-pixel and invisible at the wide shot, which
+        // is where the dissolve actually plays.
+        //
+        // So the DRAWN diameter is clamped to a legible band and the perspective
+        // term only moves it inside that band. Distant specks stop shrinking with
+        // depth — standard for dust and starfields, and their motion still
+        // carries the depth cue.
+        //
+        // The clamp is on drawn ink, not on gl_PointSize, because the two modes
+        // ink very different fractions of the same quad: flat fills the inscribed
+        // circle (1.0), while the texture's wisp spans about 0.75 of it. Clamping
+        // the quad would make the two modes different sizes for no reason.
+        float ink    = mix(1.0, 0.45, uShiny);
+        float inkCss = 30. * mix(1.0, 1.7, uShiny) * uSize * ink / -mvPos.z;
+        // sizePulse applied AFTER the clamp, like sizeVariation: the clamp exists
+        // to normalise for camera distance, and folding the pulse in first would
+        // let it flatten the twinkle back out against the 3px floor.
+        // The band is the CORE's diameter; the star's rays run out to the quad
+        // edge, so the whole speck spans roughly 1/ink = 2.2x this.
+        //
+        // Then THREE multipliers stack on top — per-particle variation, the
+        // twinkle flare, and the life shrink. Their product is what actually
+        // reaches the screen, and forgetting that is how a 2px floor became a
+        // 0.2px invisible one. The final max() is the backstop: whatever the
+        // multipliers do, a live speck never falls under 1.5px. Disappearing at
+        // the end of life is alpha's job, not something to leave to a size that
+        // has quietly decayed to nothing.
+        inkCss       = clamp(inkCss, 3.0, 8.0) * sizeVariation * sizePulse * lifeShrink;
+        inkCss       = max(inkCss, 1.5);
+        gl_PointSize = max(1., inkCss / ink);
         gl_Position  = projectionMatrix * mvPos;
     }
 `;
 
 export const objectParticleFragmentShader = /* glsl */`
-    uniform vec3  uParticleColor;
-    uniform float uShiny;
+    uniform vec3      uParticleColor;
+    uniform float     uShiny;
+    uniform float     uSpikes;
     varying float vAlpha;
     varying float vSparkle;
     varying float vStreakAngle;
@@ -340,42 +592,33 @@ export const objectParticleFragmentShader = /* glsl */`
             return;
         }
 
-        // ─── Shiny mode — a soft point of light for the bloom to work on ────
-        // NOT a copy of the demo's sprite, deliberately. Its particle.png is a
-        // ragged elongated wisp, and reproducing that shape here (an elongated
-        // gaussian plus a crossing one) was a mistake for two reasons:
-        //
-        //   - The demo emits a few hundred LARGE wisps; this scene emits 200–2000
-        //     specks that are only a handful of pixels across. Any shape with
-        //     structure in it — a dash, a plus, a star — is at that size just a
-        //     recognisable little GLYPH, and a glyph repeated a thousand times
-        //     reads as a thousand pasted stamps, not as a dissolving object.
-        //   - It was bright enough to clip, so the shape saturated into a flat
-        //     white slab with dim gaps between its arms, which is what put a
-        //     visible dark X inside every speck.
-        //
-        // So: one smooth radial falloff, peaking just about at white and fading
-        // to nothing well inside the sprite quad, with only a mild per-particle
-        // stretch for variety. Everything that makes it read as SHINY rather
-        // than as a dot now comes from the bloom pass, which is the one place it
-        // can come from. vStreakAngle still orients the stretch, so the specks
-        // don't all lean the same way and still turn slowly.
-        float c = cos(vStreakAngle), s = sin(vStreakAngle);
-        vec2  q = vec2(uv.x * c - uv.y * s, uv.x * s + uv.y * c) * 2.;
+        // ─── Shiny mode — a star glint, drawn procedurally ──────────────────
+        // Replaces the demo's particle.png, which is a smoke-like WISP: ragged,
+        // soft, no core and no rays. That is the opposite shape to a glint, and
+        // it is why the specks read as fluff no matter how they were sized or
+        // animated. A sparkle needs a small hard core with thin rays coming off
+        // it; that shape is trivial to draw and impossible to get from that
+        // texture.
+        vec2  p = uv * 2.0;          // -1..1 across the quad
+        float r = length(p);
+        if (r > 1.0) discard;
 
-        // A gentle stretch. NOTE the effective long:short ratio is stretch
-        // SQUARED, because one axis is divided while the other is multiplied
-        // (done that way so the sprite's area stays roughly constant). So 1.35
-        // here means about 1.8:1 — enough that no two specks are quite the same
-        // shape, too little to read as a dash. Setting this to 1.8 directly, as
-        // a first attempt did, gives 3.2:1 and they turn back into little marks.
-        float stretch = 1. + vRandom * .35;
-        vec2  e       = vec2(q.x / stretch, q.y * stretch);
+        // Tight round core. This is the bright point the eye actually locks on.
+        float core = exp(-r * r * 24.0);
 
-        // Gaussian peaking at 1.0. Reaching 0 by ~40% of the quad radius keeps
-        // the sprite's square edge far away from anything visible.
-        float shape = exp(-dot(e, e) * 26.) * vSparkle;
-        if(shape < .01) discard;
+        // Four screen-aligned spikes: thin ridges along the axes, tapering with
+        // radius. 1/(1+|x|*k) gives a sharp ridge rather than the soft lobe a
+        // gaussian would; fade^3 pulls the tips to nothing before the quad edge
+        // so the sprite's square boundary never shows. Length varies per
+        // particle so the field is not uniform, and rides vSparkle so the rays
+        // extend and retract as the speck twinkles.
+        float fade = max(0.0, 1.0 - r);
+        float sx   = 1.0 / (1.0 + abs(p.x) * 110.0);
+        float sy   = 1.0 / (1.0 + abs(p.y) * 110.0);
+        float arms = (sx + sy) * fade * fade * fade * (0.6 + 0.8 * vRandom);
+
+        float shape = core + arms * uSpikes * vSparkle;
+        if (shape < 0.01) discard;
 
         // Each speck biased slightly warm or cool. Both stay multiples of
         // uParticleColor, so the GUI colour picker still drives the whole look.
@@ -383,26 +626,28 @@ export const objectParticleFragmentShader = /* glsl */`
         vec3 cool = uParticleColor * vec3(.84,  .93, 1.16);
         vec3 tint = mix(warm, cool, vRandom);
 
-        // Only just over 1.0 at the centre. The point is to have a hot core the
-        // bloom threshold can catch WITHOUT flattening the falloff into a slab:
-        // anything much brighter clips across most of the sprite and the soft
-        // point of light becomes a hard white blob again.
-        // Additive blending contributes rgb * alpha, so the shape lives in the
-        // colour and alpha stays the particle's own life fade (vAlpha).
-        gl_FragColor = vec4(tint * shape * 1.15, vAlpha);
+        // 0.8 keeps the core just under clipping so overlapping specks stay
+        // separate instead of fusing into white (Particle Color dims further).
+        gl_FragColor = vec4(tint * shape * vSparkle * 0.8, vAlpha);
     }
 `;
 
-export function makeParticleMaterial(progressUniform, timeUniform, { freqScale = 4.0, scaleUniform = { value: 1.0 }, streamStrength = 1.0 } = {}) {
+export function makeParticleMaterial(progressUniform, timeUniform, { freqScale = 4.0, scaleUniform = { value: 1.0 }, streamStrength = 1.0, edgeUniform = uObjectDissolveEdge } = {}) {
     return new THREE.ShaderMaterial({
         uniforms: {
             uObjectProgress: progressUniform,
-            uEdge:           uDissolveEdge,
+            uEdge:           edgeUniform,
             uFreq:           uNoiseFreq,
             uScale:          scaleUniform,
             uFreqScale:      { value: freqScale },
             uStreamStrength: { value: streamStrength },
             uSwirl:          uParticleSwirl,
+            uSize:           uParticleSize,
+            uSpikes:         uParticleSpikes,
+            uTwinkle:        uParticleTwinkle,
+            uShrink:         uParticleShrink,
+            uLife:           uParticleLife,
+            uDrift:          uParticleDrift,
             uShiny:          uParticleShiny,
             uParticleColor,
             uTime:           timeUniform,

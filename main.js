@@ -2,10 +2,11 @@ import * as THREE from 'three';
 
 import { createRenderer, createCamera, setupResize, createAdaptiveQuality } from './src/render/renderer.js';
 import { setupLighting } from './src/render/lighting.js';
-import { uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleShiny, updateDissolveTransparency } from './src/render/dissolve.js';
+import { uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleShrink, uParticleShiny, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, updateDissolveTransparency } from './src/render/dissolve.js';
 import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
 import { createPaintingIntro } from './src/render/paintingIntro.js';
 import { createParticleBloom, bloomSettings } from './src/render/particleBloom.js';
+import { PARTICLE_BLOOM_LAYER } from './src/render/dissolve.js';
 
 import { buildRoom, setRoomTexture, resetRoomTextures } from './src/geometry/room.js';
 import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, SKYBOX_NONE, LIGHTING_PRESETS, voidColor } from './src/geometry/environment.js';
@@ -34,6 +35,17 @@ const renderer = createRenderer();
 const adaptiveQuality = createAdaptiveQuality(renderer);
 const camera   = createCamera();
 const scene    = new THREE.Scene();
+
+// The dissolve particles live on their own layer so the bloom pass can render
+// them in isolation (see render/particleBloom.js). The camera has to be told to
+// draw that layer as well, or they are simply never rendered: a camera's default
+// mask is layer 0 only.
+//
+// This was missing, and it hid behind the bloom pass — that pass ends with
+// camera.layers.enableAll(), so the moment shiny mode ran once the camera kept
+// every layer for the rest of the session and the particles appeared to work.
+// In flat mode from a fresh load they were invisible.
+camera.layers.enable(PARTICLE_BLOOM_LAYER);
 setupResize(camera, renderer);
 
 // ─── Selective particle bloom ────────────────────────────────────────────────
@@ -150,7 +162,7 @@ const ambientSound = createAmbientSoundTracks();
 
 // ─── Debug GUI ───────────────────────────────────────────────────────────────
 const gui = createDebugGUI({
-    uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleShiny,
+    uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleShrink, uParticleShiny,
     bloomSettings,
     skyboxOptions: SKYBOX_OPTIONS, defaultSkybox: SKYBOX_OPTIONS[0], skyboxCustomLabel: SKYBOX_CUSTOM_LABEL,
     onSkyboxChange: selectBackground,
@@ -188,6 +200,9 @@ const gui = createDebugGUI({
     // Play the dissolve sound exactly ONCE, when the button actually starts a
     // dissolve (triggerDissolve returns false if not in the 'space' phase).
     onDissolveClick: () => { if (phaseMachine.triggerDissolve()) ambientSound.dissolve.play(); },
+    // Late-bound like onDissolveClick above: the GUI is built before the phase
+    // machine that owns the dissolve clock.
+    onDissolvePauseToggle: (paused) => phaseMachine.setDissolvePaused(paused),
 });
 customSkyboxReport = gui.reportSkyboxImages;
 
@@ -197,7 +212,6 @@ const phaseMachine = createPhaseMachine({
     scene, camera, cameraControls,
     tableState, stageObjects,
     dissolveController: gui.dissolveController,
-    getTime: () => clock.getElapsedTime(),
     // Fires the instant everything has dissolved away in space. The objects that
     // reverse-dissolve back into the room are then the "returned" set, so the
     // still life that comes home isn't the one that left.

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { injectDissolve, makeParticleMaterial, uProgress, PARTICLE_BLOOM_LAYER } from '../render/dissolve.js';
+import { injectDissolve, makeParticleMaterial, forgetDissolveMaterials, uProgress, uObjectDissolveEdge, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, PARTICLE_BLOOM_LAYER } from '../render/dissolve.js';
 
 const TABLE_PARTICLE_COUNT  = 2000;
 
@@ -454,6 +454,7 @@ function loadTableGeometry(kind, customUrl) {
 function disposeTable(scene) {
     if (!tableState.object) return;
     scene.remove(tableState.object);
+    forgetDissolveMaterials(tableState.object);
     tableState.object.traverse((child) => {
         if (child.isMesh || child.isPoints) {
             child.geometry?.dispose();
@@ -579,12 +580,21 @@ function setupTableObject(tableObject, scene) {
         mat.userData.ownsAlpha = mat.transparent === true || mat.alphaTest > 0
             || (mat.opacity ?? 1) < 1 || !!mat.alphaMap;
         mat.transparent = true;
-        injectDissolve(mat, uTableProgress, { space: 'local', freqScale: 4.0 });
+        const tableChildToRoot = new THREE.Matrix4()
+            .multiplyMatrices(new THREE.Matrix4().copy(tableObject.matrixWorld).invert(), child.matrixWorld);
+        injectDissolve(mat, uTableProgress, { space: 'local', freqScale: 4.0, edgeUniform: uObjectDissolveEdge, edgeColorUniform: uObjectDissolveEdgeColor, edgeFollowUniform: uObjectEdgeFollow, edgeGainUniform: uObjectEdgeGain, localMatrixUniform: { value: tableChildToRoot } });
         // After the dissolve, so it wraps that hook instead of clobbering it.
         if (child.userData.isPlinth) injectPlinthBaseShading(mat, PRIMITIVE_TABLE_HEIGHT);
         // Unique key per submesh prevents Three.js from reusing another mesh's
         // compiled shader program (which would skip our onBeforeCompile injection).
-        mat.customProgramCacheKey = () => 'table_dissolve_' + child.uuid;
+        // STABLE key, deliberately not the mesh uuid. The uuid is new on every
+        // load, so keying on it guaranteed a cache MISS every time the table was
+        // swapped and forced a fresh shader compile per submesh — which is most
+        // of the stall before objects come back. The injected source varies only
+        // by `space` and `freqScale` (both fixed here) plus the plinth wrap, so
+        // that is all the key has to separate; three's own key already covers
+        // material parameters like which maps are present.
+        mat.customProgramCacheKey = () => 'table_dissolve' + (child.userData.isPlinth ? '_plinth' : '');
         child.material = mat;
     });
 
@@ -672,6 +682,7 @@ function replaceStageObject(scene, label, variant, { onObjectReady, initialProgr
     if (oldIndex !== -1) {
         const old = stageObjects[oldIndex];
         scene.remove(old.mesh);
+        forgetDissolveMaterials(old.mesh);
         old.mesh.traverse((child) => {
             if (child.isMesh || child.isPoints) {
                 child.geometry?.dispose();
@@ -898,8 +909,18 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
                 || (mat.opacity ?? 1) < 1 || !!mat.alphaMap;
             mat.transparent = true;
 
-            injectDissolve(mat, uObjProgress, { space: 'local', freqScale: OBJECT_FREQ_SCALE, scaleUniform: uScale });
-            mat.customProgramCacheKey = () => def.label + '_dissolve_' + child.uuid;
+            // The child's transform relative to the GLB root, so the surface
+            // samples the noise where its particles do — see posExpr in
+            // injectDissolve. Captured now, while the hierarchy is final.
+            const childToRoot = new THREE.Matrix4()
+                .multiplyMatrices(new THREE.Matrix4().copy(mesh.matrixWorld).invert(), child.matrixWorld);
+            injectDissolve(mat, uObjProgress, { space: 'local', freqScale: OBJECT_FREQ_SCALE, scaleUniform: uScale, edgeUniform: uObjectDissolveEdge, edgeColorUniform: uObjectDissolveEdgeColor, edgeFollowUniform: uObjectEdgeFollow, edgeGainUniform: uObjectEdgeGain, localMatrixUniform: { value: childToRoot } });
+            // One key for every stage object: they all inject the same source
+            // (space 'local', freqScale OBJECT_FREQ_SCALE), and everything that
+            // differs between them — scale, progress, edge colour — is a uniform,
+            // which does not affect the compiled program. Keying per label per
+            // uuid recompiled ~15 shaders on every return for no benefit.
+            mat.customProgramCacheKey = () => 'stage_dissolve';
             child.material = mat;
         });
 

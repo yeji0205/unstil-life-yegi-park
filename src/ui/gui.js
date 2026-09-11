@@ -1,6 +1,6 @@
 import GUI from 'lil-gui';
 import { flowState } from '../render/skyboxFlow.js';
-import { scrollSmoothing } from '../simulation/phaseMachine.js';
+import { scrollSmoothing, dissolveDuration } from '../simulation/phaseMachine.js';
 import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../geometry/room.js';
 import { primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../persistence/glbLoader.js';
 
@@ -60,7 +60,7 @@ function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Ca
 // logic (only fires once in the 'space' phase) and enables/disables the
 // button returned here as `dissolveController`.
 export function createDebugGUI({
-    uProgress, uDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl,
+    uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleShrink,
     uParticleShiny, bloomSettings,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     skyboxNoneLabel, voidColor, onVoidColorChange,
@@ -72,7 +72,7 @@ export function createDebugGUI({
     onRoomSoundChange, onCustomRoomSoundFile, roomSoundVolume,
     onSpaceSoundChange, onCustomSpaceSoundFile, spaceSoundVolume,
     onDissolveSoundChange, onCustomDissolveSoundFile, dissolveSoundVolume,
-    onDissolveClick,
+    onDissolveClick, onDissolvePauseToggle,
 }) {
     const gui = new GUI({ title: 'Unstil Life Debug' });
     gui.hide(); // hidden during loading screen; shown once the loading dissolve completes
@@ -81,6 +81,21 @@ export function createDebugGUI({
     const dissolveActions = { dissolve: () => onDissolveClick() };
     const dissolveController = gui.add(dissolveActions, 'dissolve').name('▶ Dissolve Objects');
     dissolveController.disable(); // enabled by the phase machine when room is fully gone
+
+    // Freezes the dissolve where it is. The whole effect is over in three
+    // seconds, which is too quick to study the noise pattern it's built on, so
+    // this is the control for looking at a single moment of it. Armable before
+    // the dissolve starts as well as during it — pause first, then press
+    // Dissolve, and it holds at the very beginning.
+    let dissolvePaused = false;
+    const dissolvePauseAction = {
+        toggle: () => {
+            dissolvePaused = !dissolvePaused;
+            onDissolvePauseToggle(dissolvePaused);
+            dissolvePauseController.name(dissolvePaused ? '▶ Resume Dissolve' : '⏸ Pause Dissolve');
+        },
+    };
+    const dissolvePauseController = gui.add(dissolvePauseAction, 'toggle').name('⏸ Pause Dissolve');
 
     // Toggles the swirling curl-noise UV warp on the skybox texture (see
     // render/skyboxFlow.js). Label flips to reflect state, same pattern as
@@ -134,11 +149,36 @@ export function createDebugGUI({
     // float/bob gets swamped and reads as dragging). See scrollSmoothing.
     sceneFolder.add(scrollSmoothing, 'tau', 0.08, 0.6, 0.01).name('Scroll Drift (float ⇢)');
 
-    dissolveFolder.add(uDissolveEdge, 'value', 0, 0.8, 0.01).name('Dissolve Edge');
+    // Two edge widths, not one. The same number lands very differently on a
+    // 10-unit wall and a 1-unit object — see uObjectDissolveEdge for the
+    // arithmetic. The object range is finer because its useful band is smaller.
+    dissolveFolder.add(uDissolveEdge,       'value', 0, 0.8,  0.01 ).name('Edge Width (Room)');
+    dissolveFolder.add(uObjectDissolveEdge, 'value', 0, 0.5,  0.005).name('Edge Width (Objects)');
     dissolveFolder.add(uNoiseFreq,    'value', 0.1, 1.5, 0.01).name('Noise Frequency');
-    dissolveFolder.add(uDissolveEdgeColor.value, 'r', 0, 1, 0.01).name('Edge R');
-    dissolveFolder.add(uDissolveEdgeColor.value, 'g', 0, 1, 0.01).name('Edge G');
-    dissolveFolder.add(uDissolveEdgeColor.value, 'b', 0, 1, 0.01).name('Edge B');
+    // The colour of the rim at the dissolve front. One picker rather than the
+    // three R/G/B sliders this used to be: the useful range here is a narrow
+    // band of warm near-whites, which is a colour you choose by eye, not by
+    // solving for three numbers.
+    const edgeColorProxy = { color: '#' + uDissolveEdgeColor.value.getHexString() };
+    dissolveFolder.addColor(edgeColorProxy, 'color').name('Edge Color (Room)')
+        .onChange((hex) => uDissolveEdgeColor.value.set(hex));
+
+    // Separate from the room's, and defaulted to match Particle Color below —
+    // the same arrangement the demo uses (two uniforms, one shared starting
+    // value, two controls), so the rim and the specks it sheds read as one
+    // material without being welded together.
+    const objectEdgeColorProxy = { color: '#' + uObjectDissolveEdgeColor.value.getHexString() };
+    dissolveFolder.addColor(objectEdgeColorProxy, 'color').name('Edge Color (Objects)')
+        .onChange((hex) => uObjectDissolveEdgeColor.value.set(hex));
+
+    // When on, the picker above is ignored and the rim takes the surface's own
+    // lit colour instead — the fix for a fixed colour drawing a bright outline
+    // around every hole it opens in a hollow mesh. Brightness scales it: below 1
+    // the front darkens, above 1 it glows.
+    const edgeFollowProxy = { on: uObjectEdgeFollow.value > 0.5 };
+    dissolveFolder.add(edgeFollowProxy, 'on').name('Edge Uses Object Color')
+        .onChange((v) => { uObjectEdgeFollow.value = v ? 1.0 : 0.0; });
+    dissolveFolder.add(uObjectEdgeGain, 'value', 0, 2.5, 0.05).name('Edge Brightness (Objects)');
 
     // Dissolve particle color — live picker so neon shades can be auditioned.
     // Proxy holds a hex string (what lil-gui's color widget edits); onChange
@@ -149,6 +189,23 @@ export function createDebugGUI({
     // How far the particle stream wanders sideways. 0 is a perfectly straight
     // stream — the calmest setting, and worth starting from when judging the feel.
     dissolveFolder.add(uParticleSwirl, 'value', 0, 0.25, 0.005).name('Particle Sway');
+
+    // Size is the sprite's on-screen diameter. Life is how long a speck lasts
+    // after the front passes (it was welded to the rim width, which is why
+    // narrowing the rim made them vanish early); Drift is how far it travels in
+    // that time. Speed is Drift / Life, so raising Life alone slows them down.
+    dissolveFolder.add(uParticleSize,  'value', 0.3, 3.0, 0.05).name('Particle Size');
+    dissolveFolder.add(uParticleLife,  'value', 0.4, 4.0, 0.1 ).name('Particle Life');
+    dissolveFolder.add(uParticleDrift, 'value', 0.2, 8.0, 0.1 ).name('Particle Drift');
+
+    // The time budget the whole effect is spent out of — see dissolveDuration.
+    // Raising it slows the specks without narrowing the plume, which is the one
+    // thing Drift and Life cannot do between them.
+    dissolveFolder.add(dissolveDuration, 'value', 1.5, 12, 0.5).name('Dissolve Duration (s)');
+    dissolveFolder.add(uParticleTwinkle, 'value', 0, 1, 0.05).name('Particle Twinkle');
+    dissolveFolder.add(uParticleSpikes,  'value', 0, 1, 0.05).name('Particle Spikes');
+    dissolveFolder.add(uParticleShrink,  'value', 0, 5, 0.1 ).name('Particle Shrink');
+
 
     // ─── Particle bloom ──────────────────────────────────────────────────────
     // Only has any effect while shiny mode is on — flat mode never runs the
@@ -516,7 +573,10 @@ export function createDebugGUI({
 
     // Per-object debug folder, added once a stage object's GLB finishes loading.
     function addObjectFolder(label, entry, scaleFactor) {
-        const folder = objectsFolder.addFolder(label);
+        // Closed like the rest. These are created as each GLB finishes loading,
+        // which is after the closeAll pass at the end of this function has
+        // already run, so they have to close themselves.
+        const folder = objectsFolder.addFolder(label).close();
         const scaleProxy = { scale: scaleFactor };
         folder.add(scaleProxy, 'scale', 0.05, 5.0, 0.01).name('Scale')
             .onChange(v => entry.mesh.scale.setScalar(v));
@@ -527,6 +587,20 @@ export function createDebugGUI({
         folder.add(entry, 'rotYOffset', -Math.PI, Math.PI, 0.01).name('Rot Y offset');
         entry.guiFolder = folder; // saved so we can hide it after permanent dissolve
     }
+
+    // Every folder starts closed, nested ones included. The four buttons above
+    // are what you press while the piece is running; the folders are for tuning,
+    // so the panel opens as a short list of headings rather than a wall of
+    // sliders you have to scroll past. Done here, after everything is built,
+    // rather than as a .close() on each addFolder call — one rule that a new
+    // folder cannot forget to follow.
+    (function closeAll(g) {
+        for (const folder of g.folders) { folder.close(); closeAll(folder); }
+    })(gui);
+    // ...except Scene Contents, which holds the skybox / table / stone pickers —
+    // the things swapped most often while working, so it is the one folder worth
+    // having in view.
+    contentFolder.open();
 
     return { gui, dissolveController, updateCameraDebug, addObjectFolder, reportSkyboxImages };
 }
