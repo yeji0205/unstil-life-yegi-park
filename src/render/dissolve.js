@@ -236,6 +236,79 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
     };
 }
 
+// ─── The same dissolve, for the SHADOW pass ─────────────────────────────────
+// injectDissolve only patches the material a mesh is DRAWN with. Shadow maps are
+// rendered with a separate depth material that three.js supplies itself, and
+// that one knows nothing about the dissolve — so a half-dissolved object went on
+// casting its whole solid shadow, and a fully dissolved (invisible) one still
+// cast a shadow from nothing.
+//
+// The workaround for that used to be flipping castShadow off once an object had
+// dissolved and back on once it was home, which traded the wrong shadow for a
+// sudden one: every shadow in the scene snapped into existence in the same
+// frame, at the very end of the return.
+//
+// Attaching this as a mesh's customDepthMaterial fixes the cause instead. It
+// runs the identical noise and the identical discard, so the shadow erodes in
+// step with the surface casting it and castShadow can simply stay true.
+//
+// The options MUST match the injectDissolve() call for the same mesh — same
+// space, freqScale, scaleUniform and localMatrixUniform — or the shadow will
+// dissolve out of step with the surface.
+export function makeDissolveDepthMaterial(progressUniform, {
+    space = 'local', freqScale = 1.0, scaleUniform = { value: 1.0 },
+    localMatrixUniform = IDENTITY_MATRIX, cacheKey = 'dissolve_depth',
+} = {}) {
+    // RGBADepthPacking is what three's shadow map reads back for directional and
+    // spot lights; the default (BasicDepthPacking) would decode as garbage.
+    const depthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+
+    depthMat.onBeforeCompile = (shader) => {
+        shader.uniforms.uProgress    = progressUniform;
+        shader.uniforms.uFreq        = uNoiseFreq;
+        shader.uniforms.uScale       = scaleUniform;
+        shader.uniforms.uLocalMatrix = localMatrixUniform;
+
+        const posExpr = space === 'world'
+            ? '(modelMatrix * vec4(transformed, 1.0)).xyz'
+            : '(uLocalMatrix * vec4(transformed, 1.0)).xyz';
+
+        shader.vertexShader =
+            `uniform mat4 uLocalMatrix;
+             varying vec3 vDissolvePos;
+             ` +
+            shader.vertexShader.replace(
+                '#include <begin_vertex>',
+                `#include <begin_vertex>
+                vDissolvePos = ${posExpr};`
+            );
+
+        shader.fragmentShader =
+            `uniform float uProgress;
+             uniform float uFreq;
+             uniform float uScale;
+             varying vec3  vDissolvePos;
+             ${NOISE_GLSL}` +
+            shader.fragmentShader;
+
+        // Discard before the depth is written. Only the fully-eaten region goes:
+        // the glowing edge band is still solid surface, so it still casts.
+        shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <clipping_planes_fragment>',
+            `#include <clipping_planes_fragment>
+            if (uProgress > 0.01) {
+                float threshold = mix(-1.2, 1.2, uProgress);
+                if (snoise3(vDissolvePos * uScale * uFreq * ${freqScale.toFixed(4)}) < threshold) discard;
+            }`
+        );
+    };
+
+    // Stable, for the same reason the surface materials' keys are — everything
+    // that differs between meshes here is a uniform, not generated source.
+    depthMat.customProgramCacheKey = () => cacheKey;
+    return depthMat;
+}
+
 // ─── Dissolve particle system (shared by table + every stage object) ────────
 // White particle color — reads cleanest against the dark space background
 // (tinted variants looked worse). Additive blending + the brightness boost in

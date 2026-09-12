@@ -213,23 +213,41 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
             tableState.uProgress.value = p;
             for (const obj of stageObjects) obj.uProgress.value = p;
 
-            if (p <= 0.02) {
-                // Fully home: solidify, restore shadows, and leave the dissolved
-                // state so a later scroll-up just floats them (and Dissolve can
-                // run fresh — including re-firing each object's whoosh).
-                objectsDissolved = false;
-                tableState.uProgress.value = 0;
-                if (tableState.object) {
-                    tableState.object.userData.shadowsKilled = false;
+            // Shadows come back as soon as there is ANY surface left to cast
+            // one — not at the end of the return.
+            //
+            // castShadow was previously restored at p <= 0.02, which meant every
+            // object re-materialized shadowless and then the whole scene's
+            // shadows appeared together in a single frame, right as it settled.
+            // That snap is what read as shadows "suddenly showing up".
+            //
+            // Flipping them on early is only safe because each mesh now carries a
+            // customDepthMaterial running the same dissolve (see
+            // makeDissolveDepthMaterial): the shadow is eaten by the same noise
+            // that eats the surface, so it grows back WITH the object rather than
+            // appearing whole under a half-formed one. Killing them at full
+            // dissolve is kept purely as a saving — at uProgress 1 the depth pass
+            // discards every fragment anyway, so there is nothing to draw.
+            if (p < 0.999) {
+                if (tableState.object?.userData.shadowsKilled) {
                     tableState.object.traverse(c => { if (c.isMesh) c.castShadow = true; });
+                    tableState.object.userData.shadowsKilled = false;
                 }
                 for (const obj of stageObjects) {
-                    obj.uProgress.value = 0;
                     if (obj.shadowsKilled) {
                         obj.mesh.traverse(c => { if (c.isMesh) c.castShadow = true; });
                         obj.shadowsKilled = false;
                     }
                 }
+            }
+
+            if (p <= 0.02) {
+                // Fully home: solidify and leave the dissolved state so a later
+                // scroll-up just floats them (and Dissolve can run fresh —
+                // including re-firing each object's whoosh).
+                objectsDissolved = false;
+                tableState.uProgress.value = 0;
+                for (const obj of stageObjects) obj.uProgress.value = 0;
             }
         }
 

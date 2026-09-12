@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { injectDissolve, makeParticleMaterial, forgetDissolveMaterials, uProgress, uObjectDissolveEdge, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, PARTICLE_BLOOM_LAYER } from '../render/dissolve.js';
+import { OBJECT_LIGHT_LAYER } from '../render/lighting.js';
+import { injectDissolve, makeDissolveDepthMaterial, makeParticleMaterial, forgetDissolveMaterials, uProgress, uObjectDissolveEdge, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, PARTICLE_BLOOM_LAYER } from '../render/dissolve.js';
 
 const TABLE_PARTICLE_COUNT  = 2000;
 
@@ -572,6 +573,9 @@ function setupTableObject(tableObject, scene) {
     tableObject.traverse((child) => {
         if (!child.isMesh) return;
         child.castShadow = child.receiveShadow = true;
+        // Also lit by the objects-only key, so the table keeps its brightness
+        // when the room's key is turned down. See OBJECT_LIGHT_LAYER.
+        child.layers.enable(OBJECT_LIGHT_LAYER);
 
         // Clone the material so each submesh owns its shader independently.
         // Without cloning, all meshes would share one compiled program and
@@ -595,6 +599,14 @@ function setupTableObject(tableObject, scene) {
         // that is all the key has to separate; three's own key already covers
         // material parameters like which maps are present.
         mat.customProgramCacheKey = () => 'table_dissolve' + (child.userData.isPlinth ? '_plinth' : '');
+        // Same dissolve for the shadow pass, so the table's shadow erodes with it
+        // instead of staying solid until it vanishes. Options must mirror the
+        // injectDissolve call above exactly.
+        child.customDepthMaterial = makeDissolveDepthMaterial(uTableProgress, {
+            space: 'local', freqScale: 4.0,
+            localMatrixUniform: { value: tableChildToRoot },
+            cacheKey: 'table_dissolve_depth',
+        });
         child.material = mat;
     });
 
@@ -886,6 +898,7 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
         mesh.traverse((child) => {
             if (!child.isMesh) return;
             child.castShadow = child.receiveShadow = true;
+            child.layers.enable(OBJECT_LIGHT_LAYER); // see the table's traverse
 
             // The dissolve/rim-tint shader injected below reads vNormal and
             // vViewPosition, varyings that only lit (Standard/Physical)
@@ -921,6 +934,13 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             // which does not affect the compiled program. Keying per label per
             // uuid recompiled ~15 shaders on every return for no benefit.
             mat.customProgramCacheKey = () => 'stage_dissolve';
+            // See the table's equivalent: the shadow has to read the same noise
+            // field as the surface, or it erodes out of step with it.
+            child.customDepthMaterial = makeDissolveDepthMaterial(uObjProgress, {
+                space: 'local', freqScale: OBJECT_FREQ_SCALE, scaleUniform: uScale,
+                localMatrixUniform: { value: childToRoot },
+                cacheKey: 'stage_dissolve_depth',
+            });
             child.material = mat;
         });
 
