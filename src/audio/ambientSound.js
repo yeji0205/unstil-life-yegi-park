@@ -18,16 +18,26 @@ export const SOUND_CUSTOM_LABEL = 'Custom audio…';
 
 export const ROOM_SOUND_OPTIONS     = ['Café ambience', SOUND_NONE, SOUND_CUSTOM_LABEL];
 export const SPACE_SOUND_OPTIONS    = ['Space ambience', SOUND_NONE, SOUND_CUSTOM_LABEL];
-export const DISSOLVE_SOUND_OPTIONS = ['Slowly Whoosh', 'Spooky Air', SOUND_NONE, SOUND_CUSTOM_LABEL];
+export const DISSOLVE_SOUND_OPTIONS = ['Slowly Whoosh', 'Slowly Whoosh Short', 'Sparkle', 'Sparkle Slowed', 'Star Sparkle', SOUND_NONE, SOUND_CUSTOM_LABEL];
 
 // AAC (.m4a) rather than the original mp3/wav: the café loop was a 9.0 MB mp3
 // and the space bed a 5.5 MB wav, and the room ambience simply couldn't start
 // until enough of that had arrived. Re-encoded at 64 kbps they're 3.3 MB and
 // 169 KB — same audio, a fraction of the wait. The originals are still in
 // asset/sound/ if a higher-quality master is ever needed.
-const ROOM_SOUND_URLS     = { 'Café ambience':  'asset/sound/cafe.m4a' };
+const ROOM_SOUND_URLS     = { 'Café ambience':  'asset/sound/cafe-music.m4a' };
 const SPACE_SOUND_URLS    = { 'Space ambience': 'asset/sound/space-ambient.m4a' };
-const DISSOLVE_SOUND_URLS = { 'Slowly Whoosh': 'asset/sound/slowly-whoosh.mp3', 'Spooky Air': 'asset/sound/spooky-air.wav' };
+// Every one-shot here runs the full 5.2 s of the dissolve (dissolveDuration plus
+// its 0.2 s tail), so the sound lasts exactly as long as the particles do. The
+// 2.1 s original whoosh and 3.0 s sparkle were both time-stretched up to length;
+// the unstretched originals are still in asset/sound/.
+const DISSOLVE_SOUND_URLS = {
+    'Slowly Whoosh':       'asset/sound/whoosh-1_5x.m4a',     // 1.5x stretch: 3.13 s, covers ~60% of the dissolve
+    'Slowly Whoosh Short': 'asset/sound/slowly-whoosh.mp3',   // the 2.1 s original, ends well before the particles do
+    'Sparkle':             'asset/sound/sparkle-5s-tail.m4a',
+    'Sparkle Slowed':      'asset/sound/sparkle-5s-full.m4a',
+    'Star Sparkle':        'asset/sound/star-sparkle.m4a',
+};
 
 // One shared AudioContext + gesture-unlock, reused by every track created
 // from it via .createTrack().
