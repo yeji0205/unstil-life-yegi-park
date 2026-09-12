@@ -3,6 +3,7 @@ import { flowState } from '../render/skyboxFlow.js';
 import { scrollSmoothing, dissolveDuration } from '../simulation/phaseMachine.js';
 import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../geometry/room.js';
 import { primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../persistence/glbLoader.js';
+import { roomLighting } from '../render/lighting.js';
 
 // A small centered modal — readable padding/typography, a dimmed backdrop, and
 // up to two buttons. Used instead of the browser's cramped alert() for the
@@ -148,6 +149,23 @@ export function createDebugGUI({
     // and coast (floaty); lower = they track the wheel closely (snappy, but the
     // float/bob gets swamped and reads as dragging). See scrollSmoothing.
     sceneFolder.add(scrollSmoothing, 'tau', 0.08, 0.6, 0.01).name('Scroll Drift (float ⇢)');
+
+    // Room Key dims the key light for EVERYTHING; Object Key puts it back on the
+    // table and the objects alone, via a light they have a layer for. Together
+    // they darken the walls and floor without taking the still life with them.
+    // 1.0 / 0.0 is the original lighting exactly.
+    sceneFolder.add(roomLighting, 'roomKey',   0.05, 1.5, 0.05).name('Room Key Light');
+    sceneFolder.add(roomLighting, 'objectKey', 0.0,  4.0, 0.05).name('Object Key Light');
+    sceneFolder.add(roomLighting, 'ambient',   0.0,  1.5, 0.05).name('Room Ambient');
+    sceneFolder.add(roomLighting, 'wallFill',  0.0,  1.5, 0.05).name('Room Wall Fill');
+    // The spotlight matched to the visible shaft — this is what creates the
+    // bright pool, so it is the one to raise for more contrast, not lower.
+    sceneFolder.add(roomLighting, 'beam',      0.0,  25,  0.5 ).name('Beam Light');
+    sceneFolder.add(roomLighting, 'beamWidth', 0.4,  2.5, 0.05).name('Beam Width');
+    sceneFolder.add(roomLighting, 'beamShiftX', -4, 4, 0.1).name('Beam Shift X (→)');
+    sceneFolder.add(roomLighting, 'beamShiftZ', -4, 4, 0.1).name('Beam Shift Z (back)');
+    sceneFolder.add(roomLighting, 'beamSoftness', 0, 1, 0.05).name('Beam Softness');
+    sceneFolder.add(roomLighting, 'beamHaze', 0, 1.5, 0.05).name('Beam Haze');
 
     // Two edge widths, not one. The same number lands very differently on a
     // 10-unit wall and a 1-unit object — see uObjectDissolveEdge for the

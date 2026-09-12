@@ -9,21 +9,41 @@ import { uRimColor, uRimStrength } from './dissolve.js';
 // ConeGeometry: apex at local +Y, base at local -Y.
 // We rotate so +Y points toward the light source (upper-left, near ceiling)
 // and -Y reaches the floor.
-const BEAM_TIP  = new THREE.Vector3(-4.5,  2.8,  2.0); // upper-left, light entry
-const BEAM_BASE = new THREE.Vector3( 0.8, -3.4, -2.3); // floor intersection
+const BEAM_TIP  = new THREE.Vector3(-3.8,  3.2,  1.1); // upper-left, light entry
+const BEAM_BASE = new THREE.Vector3( 1.5, -3.4, -3.2); // floor intersection
+// Both moved +0.7 right and 0.9 further back than they were, to bring the tulips
+// into the shaft without widening it. Right alone was not enough: the blooms sit
+// ~1.0 unit deeper toward the wall than the axis did at their height, so most of
+// the gap was in DEPTH rather than sideways. Right-only closed 1.57 -> 1.33
+// against a radius of 1.32; right and back closes it to 0.79.
+// Cone radius at the floor end. Named because the spotlight below derives its
+// angle from it — the lit pool and the visible haze have to be the same cone,
+// or you see a bright patch with no shaft in it (or the reverse).
+//
+// Kept at 2.2 — the shaft's width is part of the mood, so raising the tip does
+// the work of reaching the flowers instead. With the tip at y 3.2 the blooms sit
+// about 1.57 units off the axis where the cone's radius is 1.41, so they land
+// right on its edge and catch the penumbra rather than sitting in full shadow.
+// Beam Width ~1.15 puts them fully inside if that reads as too marginal.
+const BEAM_RADIUS = 2.2;
+const BEAM_LEN    = BEAM_TIP.distanceTo(BEAM_BASE);
+const BEAM_CENTER = new THREE.Vector3().addVectors(BEAM_TIP, BEAM_BASE).multiplyScalar(0.5);
 
 function createBeam() {
     const axis    = new THREE.Vector3().subVectors(BEAM_TIP, BEAM_BASE).normalize();
-    const len     = BEAM_TIP.distanceTo(BEAM_BASE);          // ~9.2 units
+    const len     = BEAM_LEN;
     const halfLen = len * 0.5;
     const center  = new THREE.Vector3().addVectors(BEAM_TIP, BEAM_BASE).multiplyScalar(0.5);
     const quat    = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis);
 
     // uBeamFade driven each frame by updateLighting() to dissolve with the room
     const uBeamFade = { value: 1.0 };
+    // How sharply the haze fades toward its silhouette, and how dense it is.
+    const uBeamEdge = { value: 3.5 };
+    const uBeamHaze = { value: 0.45 };
 
     const beamMat = new THREE.ShaderMaterial({
-        uniforms: { uBeamFade },
+        uniforms: { uBeamFade, uBeamEdge, uBeamHaze },
         vertexShader: /* glsl */`
             varying float vTipness;
             varying float vEdgeFade;
@@ -45,12 +65,22 @@ function createBeam() {
         `,
         fragmentShader: /* glsl */`
             uniform float uBeamFade;
+            uniform float uBeamEdge;
+            uniform float uBeamHaze;
             varying float vTipness;
             varying float vEdgeFade;
             void main() {
-                // Tip-to-base fall-off (quadratic) × soft silhouette edge × room fade
-                float edge  = smoothstep(0.0, 0.5, vEdgeFade); // transparent at edge, solid toward centre
-                float alpha = vTipness * vTipness * 0.30 * edge * uBeamFade; // brighter so the shaft reads clearly
+                // A POWER CURVE, not a smoothstep. smoothstep(0.0, 0.5, ...) made
+                // every part of the shaft facing the camera more than halfway
+                // FULLY opaque, so the haze had a flat solid core and only a thin
+                // fade right at its silhouette — which is what read as a hard
+                // edge. pow() never plateaus: it falls off continuously from the
+                // centre outward, so the shaft has no boundary you can point at.
+                //
+                // Higher uBeamEdge = a narrower bright core and a wider, gentler
+                // fade, i.e. softer. 1.0 is a plain linear fade.
+                float edge  = pow(clamp(vEdgeFade, 0.0, 1.0), uBeamEdge);
+                float alpha = vTipness * vTipness * uBeamHaze * edge * uBeamFade;
                 gl_FragColor = vec4(1.0, 0.91, 0.65, alpha);
             }
         `,
@@ -60,12 +90,20 @@ function createBeam() {
         side:        THREE.DoubleSide,
     });
 
-    const beamMesh = new THREE.Mesh(new THREE.ConeGeometry(2.2, len, 48, 1, true), beamMat);
+    // 192 radial segments, up from 48. The fragment shader raises vEdgeFade to a
+    // power, and vEdgeFade is a VARYING — interpolated linearly across each flat
+    // facet while the value it approximates curves. That leaves a small kink in
+    // the gradient at every facet boundary, and pow() amplifies kinks, which is
+    // why visible straight bands appeared across the shaft only after the edge
+    // falloff was softened. Finer facets shrink the error below the point where
+    // the eye can pick the boundaries out. It is one cone, so the extra
+    // triangles cost nothing worth measuring.
+    const beamMesh = new THREE.Mesh(new THREE.ConeGeometry(BEAM_RADIUS, len, 192, 1, true), beamMat);
     beamMesh.position.copy(center);
     beamMesh.quaternion.copy(quat);
     beamMesh.renderOrder = 1;
 
-    return { beamMesh, uBeamFade };
+    return { beamMesh, uBeamFade, uBeamEdge, uBeamHaze };
 }
 
 // ─── Key-light direction ─────────────────────────────────────────────────────
@@ -100,6 +138,66 @@ export const lightAngle = { elevation: 55, azimuth: -50 };
 // at the preset's). Multiplying here instead means the sliders work at any point
 // in the transition, including at full space. 1 = exactly the preset.
 export const lightBoost = { ambient: 1.0, directional: 1.0 };
+
+// ─── Lighting the objects without lighting the room ──────────────────────────
+// A three.js light only illuminates objects that share a LAYER with it, which is
+// the one mechanism that can separate the two. Dimming the key light alone
+// cannot: it reaches the still life as well as the walls, so the objects go down
+// with the room and the whole frame just gets murky.
+//
+// So the key light is turned down for everything, and a second light — on this
+// layer, which only the table and the stage objects enable — puts the objects
+// back where they were. The room keeps only the dimmed key, the objects get
+// dimmed key + this.
+//
+// Layer 1 is already the particle bloom layer (see dissolve.js), hence 2.
+export const OBJECT_LIGHT_LAYER = 2;
+
+// All four scale the ROOM end of the blend only, so space always lands on
+// exactly the preset it did before and none of this can disturb it.
+//
+//   roomKey   multiplier on the main key light, which reaches everything
+//   objectKey the objects-only light that compensates for it
+//   ambient   the flat fill that lifts every surface equally
+//   wallFill  the second directional that exists to lift the far wall
+//
+// The first two separate the room from the still life. The last two are what
+// decide how DEEP the falloff is: ambient and the wall fill both lift the
+// shadows, so leaving them at full keeps the dark parts of the room grey and
+// the objects' shadow sides soft. Pulling them down is what lets the room drop
+// away to near-black at the edges while the lit pool stays bright — one source,
+// deep falloff, very little fill.
+//
+// 1 / 0 / 1 / 1 is the original lighting exactly.
+// The beam is a fixed additive contribution, so the contrast between "inside
+// the shaft" and "outside it" is that fixed amount divided by the UNIFORM room
+// light. A directional light lights the whole wall evenly whatever the beam is
+// doing, so the only way to make the shaft stand out — without touching the
+// beam itself — is to push everything uniform well down.
+//
+// Room now receives  0.52 + 0.16 + 0.07 = 0.75  against the original 3.55, so
+// about a fifth. Objects receive 0.52 + 2.2 + 0.16 = 2.88, near enough what
+// they always had, because the object key rises as the room key falls.
+export const roomLighting = {
+    roomKey:   0.20,
+    objectKey: 0.6,
+    ambient:   0.40,
+    wallFill:  0.12,
+    beam:      6.0,   // the spotlight that makes the shaft actually light things
+    beamWidth: 1.0,   // scales the shaft; mesh and spotlight together
+    // Slide the whole shaft without changing its angle. Applied to the mesh, the
+    // spotlight and its target together, so the visible haze and the lit pool
+    // never come apart.
+    beamShiftX: 0.0,
+    beamShiftZ: 0.0,
+    // ONE softness for the whole shaft. Drives the visible haze's edge falloff
+    // and the spotlight's penumbra together, for the same reason beamWidth does:
+    // a soft haze over a hard-edged pool (or the reverse) reads as two effects
+    // rather than one shaft.
+    beamSoftness: 0.85,
+    // Density of the visible haze, separate from how much light it casts.
+    beamHaze: 0.45,
+};
 
 // ─── Visible light source ("sun") ────────────────────────────────────────────
 // A directional light has no position on screen — it's a sun at infinity — so in
@@ -248,6 +346,19 @@ export function setupLighting(scene) {
     wallFill.castShadow = false;
     scene.add(wallFill);
 
+    // The objects-only key. Restricted to OBJECT_LIGHT_LAYER, so the walls,
+    // ceiling and floor never receive it however bright it gets.
+    //
+    // Aimed down the beam's own axis, so what appears to light the still life is
+    // the shaft you can see. castShadow stays false: the dimmed main key still
+    // casts the table and object shadows, and a second set thrown from the same
+    // direction would only double the edges.
+    const objectKey = new THREE.DirectionalLight(0xffe8b0, roomLighting.objectKey);
+    objectKey.castShadow = false;
+    objectKey.layers.set(OBJECT_LIGHT_LAYER);
+    objectKey.position.copy(new THREE.Vector3().subVectors(BEAM_TIP, BEAM_BASE).normalize().multiplyScalar(12));
+    scene.add(objectKey);
+
     // Converts the two angles above into the light's XYZ position. Called once
     // now (so the default matches the original hardcoded position) and again
     // from the GUI whenever a slider moves. The light always aims at the origin,
@@ -271,8 +382,48 @@ export function setupLighting(scene) {
     }
     applyLightAngle();
 
-    const { beamMesh, uBeamFade } = createBeam();
+    const { beamMesh, uBeamFade, uBeamEdge, uBeamHaze } = createBeam();
     scene.add(beamMesh);
+
+    // ─── The shaft as an actual light ────────────────────────────────────────
+    // The beam mesh is additive haze in the air: it is VISIBLE but it illuminates
+    // nothing, so the wall and floor it crosses received exactly what the corners
+    // did. Turning the room lights down therefore darkened everything evenly and
+    // produced a dim frame rather than a contrasty one — the lit pool has to come
+    // from somewhere, and there was nothing making one.
+    //
+    // A spotlight down the same axis, with its angle taken from the same cone,
+    // is what makes the shaft light the surfaces it lands on. Now the room can be
+    // pushed far down and the pool stays bright, which is the contrast itself.
+    //
+    // It casts: otherwise the beam would shine through the table and light the
+    // floor underneath it as if nothing were in the way.
+    const beamLight = new THREE.SpotLight(0xffe8b0, roomLighting.beam);
+    beamLight.position.copy(BEAM_TIP);
+    beamLight.target.position.copy(BEAM_BASE);
+    beamLight.angle    = Math.atan(BEAM_RADIUS / BEAM_LEN);
+    beamLight.penumbra = roomLighting.beamSoftness;
+    beamLight.decay    = 0;     // no distance falloff: the shaft reads as even
+    beamLight.castShadow = true;
+    beamLight.shadow.mapSize.set(1024, 1024);
+    beamLight.shadow.camera.near = 0.5;
+    beamLight.shadow.camera.far  = 20;
+    beamLight.shadow.bias        = -0.0005;
+    // normalBias, not just bias, and this was missing. bias alone offsets along
+    // the light direction, which does nothing for a face nearly PARALLEL to the
+    // light — and a scanned rock is full of those. normalBias offsets the lookup
+    // along the surface normal instead, which is what stops a curved surface
+    // shadowing itself and drawing thin dark streaks across its own face. The
+    // directional light has had one all along (derived from its texel size); the
+    // spotlight went in without.
+    //
+    // 0.02 is about four texels at this cone's far end (the lit disc is ~4.4
+    // units across against a 1024 map). Small next to the objects themselves —
+    // the stone is 0.35 tall — so it clears the acne without lifting contact
+    // shadows off the surfaces they belong to.
+    beamLight.shadow.normalBias  = 0.02;
+    scene.add(beamLight);
+    scene.add(beamLight.target);
 
     // The color AND intensity the lights ease toward at p=1 — swapped by
     // setSpacePreset() whenever the background changes (see
@@ -297,7 +448,13 @@ export function setupLighting(scene) {
         // then fades out gradually, gone by ~0.9 — so it never looks like the
         // light "disappears shortly" right after the intro. (Old 1−p/0.85 began
         // dimming from the very first bit of scroll.)
-        uBeamFade.value = THREE.MathUtils.clamp((0.9 - p) / 0.7, 0, 1);
+        // Gone by p = 0.4 rather than 0.9. The old curve deliberately held the
+        // beam most of the way into the transition so it would not look like the
+        // light "disappeared shortly" after the intro — but that reads as the
+        // shaft outstaying the room it belongs to, still hanging in the air while
+        // the walls are visibly breaking up. Leaving early makes the room's
+        // dissolve the thing you watch.
+        uBeamFade.value = THREE.MathUtils.clamp((0.4 - p) / 0.35, 0, 1);
 
         // Recomputed every frame — even at settled p=0/p=1 — so switching the
         // skybox preset while sitting still in 'room' or 'space' takes effect
@@ -313,7 +470,7 @@ export function setupLighting(scene) {
             THREE.MathUtils.lerp(0.13, ag, p),   // G  (0x20 = 32 → 0.13)
             THREE.MathUtils.lerp(0.06, ab, p)    // B  (0x10 = 16 → 0.06)
         );
-        ambientLight.intensity = THREE.MathUtils.lerp(0.4, spacePreset.ambientIntensity, p) * lightBoost.ambient;
+        ambientLight.intensity = THREE.MathUtils.lerp(0.4 * roomLighting.ambient, spacePreset.ambientIntensity, p) * lightBoost.ambient;
 
         // Directional: warm amber key (0xffe8b0) → space preset
         directionalLight.color.setRGB(
@@ -321,14 +478,42 @@ export function setupLighting(scene) {
             THREE.MathUtils.lerp(0.91, dg, p),   // 0xe8 = 232 → 0.91
             THREE.MathUtils.lerp(0.69, db, p)    // 0xb0 = 176 → 0.69
         );
-        directionalLight.intensity = THREE.MathUtils.lerp(2.6, spacePreset.directionalIntensity, p) * lightBoost.directional;
+        // roomKey applies to the ROOM end of the blend only, so space still lands
+        // on exactly the preset intensity it always did and this change cannot
+        // alter the look once the room is gone.
+        directionalLight.intensity = THREE.MathUtils.lerp(2.6 * roomLighting.roomKey, spacePreset.directionalIntensity, p) * lightBoost.directional;
+
+        // Fades out with the room for the same reason wallFill does: it exists to
+        // solve a room-lighting problem, and in space the preset is meant to be
+        // the whole look rather than something with an extra key added on top.
+        objectKey.intensity = THREE.MathUtils.lerp(roomLighting.objectKey, 0.0, p);
+
+        // Tied to the beam's own fade so the light and the visible shaft leave
+        // together — a lit pool with no shaft above it reads as a mistake.
+        beamLight.intensity = roomLighting.beam * uBeamFade.value;
+
+        // Width drives the visible cone and the spotlight TOGETHER. Scaling only
+        // the mesh would give a wider haze lighting nothing at its new edges;
+        // only the angle would light a pool with no shaft over part of it.
+        beamMesh.scale.set(roomLighting.beamWidth, 1, roomLighting.beamWidth);
+        beamLight.angle = Math.atan((BEAM_RADIUS * roomLighting.beamWidth) / BEAM_LEN);
+        beamLight.penumbra = roomLighting.beamSoftness;
+        // Softness 0 -> exponent 1 (linear fade); 1 -> 5 (tight core, wide fade).
+        uBeamEdge.value = 1.0 + roomLighting.beamSoftness * 4.0;
+        uBeamHaze.value = roomLighting.beamHaze;
+
+        const sx = roomLighting.beamShiftX, sz = roomLighting.beamShiftZ;
+        beamMesh.position.set(BEAM_CENTER.x + sx, BEAM_CENTER.y, BEAM_CENTER.z + sz);
+        beamLight.position.set(BEAM_TIP.x + sx, BEAM_TIP.y, BEAM_TIP.z + sz);
+        beamLight.target.position.set(BEAM_BASE.x + sx, BEAM_BASE.y, BEAM_BASE.z + sz);
+        beamLight.target.updateMatrixWorld();
 
         // The wall fill exists to solve a ROOM problem — a wall the key light
         // can't reach. Once the room has dissolved there's no wall left to lift,
         // and in space the preset lighting is meant to be the whole look, so it
         // fades out with the transition rather than quietly brightening one side
         // of every floating object.
-        wallFill.intensity = THREE.MathUtils.lerp(0.55, 0.0, p) * lightBoost.ambient;
+        wallFill.intensity = THREE.MathUtils.lerp(0.55 * roomLighting.wallFill, 0.0, p) * lightBoost.ambient;
 
         // Fade the visible sun in with the transition: hidden in the room (we're
         // indoors — the window beam is the source there), easing in over the
