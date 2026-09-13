@@ -115,17 +115,22 @@ export function createDebugGUI({
     // Flipping it writes one uniform and swaps the render path in main.js, so it
     // takes effect on the very next frame and can be switched mid-stream. Shiny
     // mode adds a particles-only render pass plus the bloom mip chain (see
-    // render/particleBloom.js), so leaving it off is also the fast path.
+    // render/particleBloom.js), so switching to flat is also the fast path.
     // See uParticleShiny in dissolve.js.
+    //
+    // The label names what the NEXT click will do, so it is the OPPOSITE of the
+    // current mode. Derived from the uniform rather than hard-coded, so it stays
+    // correct whatever uParticleShiny defaults to.
+    const shinyLabel = () => (uParticleShiny.value > 0.5
+        ? '⚪ Flat White Particles'
+        : '✨ Shiny Particles');
     const particleShinyAction = {
         toggle: () => {
             uParticleShiny.value = uParticleShiny.value > 0.5 ? 0.0 : 1.0;
-            particleShinyController.name(uParticleShiny.value > 0.5
-                ? '⚪ Flat White Particles'
-                : '✨ Shiny Particles');
+            particleShinyController.name(shinyLabel());
         },
     };
-    const particleShinyController = gui.add(particleShinyAction, 'toggle').name('✨ Shiny Particles');
+    const particleShinyController = gui.add(particleShinyAction, 'toggle').name(shinyLabel());
 
     // ─── Panel layout ────────────────────────────────────────────────────────
     // The four buttons above are the only things left loose at the top level:

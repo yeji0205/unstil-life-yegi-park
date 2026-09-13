@@ -420,7 +420,11 @@ export const uParticleDrift = { value: 4.5 };
 // costs no shader recompile — it's meant to be flipped back and forth mid
 // dissolve to compare. Treated as a boolean (the shader branches on < 0.5);
 // intermediate values don't cross-fade.
-export const uParticleShiny = { value: 0.0 };
+//
+// ON by default: the glint IS the intended look for the dissolve, and leaving it
+// off meant a first-time visitor only ever saw the flat dots unless they found
+// the GUI toggle. The flat circle is still one click away for comparison.
+export const uParticleShiny = { value: 1.0 };
 
 // The camera layer the particle Points objects are put on, so the bloom pass
 // can render them and nothing else. Set on the Points in glbLoader; read by
