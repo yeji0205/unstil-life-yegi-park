@@ -85,13 +85,13 @@ import { PARTICLE_BLOOM_LAYER } from './dissolve.js';
 // strength to read against a bright nebula than against the flat black void.
 export const bloomSettings = {
     strength:  0.6,   // multiplier on the blurred glow
-    radius:    0.20,  // how far the glow bleeds outward (drives the blur width)
+    radius:    0.14,  // how far the glow bleeds outward (drives the blur width)
     threshold: 0.15,  // luminance below which nothing blooms
     // Higher than it looks, because the overlay adds the glow linearly rather
     // than sRGB-encoding it first (see the overlay shader). The encode used to
     // inflate this number's apparent effect by lifting every dim value; without
     // it the core needs the multiplier the core actually wants.
-    composite: 2.5,   // multiplier on the glow when it is added over the scene
+    composite: 1.8,   // multiplier on the glow when it is added over the scene
 };
 
 const BLACK = new THREE.Color(0x000000);

@@ -61,7 +61,7 @@ function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Ca
 // logic (only fires once in the 'space' phase) and enables/disables the
 // button returned here as `dissolveController`.
 export function createDebugGUI({
-    uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleShrink,
+    uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink,
     uParticleShiny, bloomSettings,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     skyboxNoneLabel, voidColor, onVoidColorChange,
@@ -227,6 +227,13 @@ export function createDebugGUI({
     dissolveFolder.add(dissolveDuration, 'value', 1.5, 12, 0.5).name('Dissolve Duration (s)');
     dissolveFolder.add(uParticleTwinkle, 'value', 0, 1, 0.05).name('Particle Twinkle');
     dissolveFolder.add(uParticleSpikes,  'value', 0, 1, 0.05).name('Particle Spikes');
+    // Sharpness is a ray WIDTH, and it is the control that decides whether the
+    // star is visible at all: half-width in pixels = (1/value) * sprite radius,
+    // against a sprite clamped to 3-8 px. Range stops at 40 because anything
+    // beyond that is already thinner than a pixel and indistinguishable.
+    dissolveFolder.add(uParticleSpikeSharp,  'value', 2, 40, 0.5).name('Spike Sharpness');
+    // Lower = longer rays (it is the exponent on the radial fade).
+    dissolveFolder.add(uParticleSpikeLength, 'value', 0.5, 4, 0.1).name('Spike Length');
     dissolveFolder.add(uParticleShrink,  'value', 0, 5, 0.1 ).name('Particle Shrink');
 
 

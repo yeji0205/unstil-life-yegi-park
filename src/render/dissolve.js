@@ -329,7 +329,7 @@ export const uParticleSwirl = { value: 0.05 };
 // camera is when you happen to be watching.
 // A multiplier on top of the size clamp below, which is what actually decides
 // how big a speck lands on screen. 1.0 = the clamp's own range.
-export const uParticleSize = { value: 1.0 };
+export const uParticleSize = { value: 0.8 };
 
 // Depth of the per-particle twinkle. Each speck swings between (1 - twinkle)
 // and (1 + twinkle) of its base SIZE, and half that in brightness, on its own
@@ -352,6 +352,23 @@ export const uParticleTwinkle = { value: 0.6 };
 // shrinks the rays rather than only dimming them, which is how a star actually
 // reads as twinkling.
 export const uParticleSpikes = { value: 0.7 };
+
+// How SHARP each ray is, i.e. the k in 1/(1 + |x|*k). This is a width, not a
+// length, and it was the reason the star never showed: at the old hard-coded 110
+// a ray is 0.03 px wide on a 6 px sprite, so no pixel centre ever lands on one
+// and the glint collapses back to the round core it is drawn on top of.
+//
+// Ray half-width in pixels = (1/k) * spriteRadius. At the 3-8 px sprite this
+// shader clamps to, k = 8 gives ~0.4 px and k = 4 gives ~0.75 px. Lower = wider
+// and blunter; much below 4 the rays fatten until the speck is a blob again.
+export const uParticleSpikeSharp = { value: 8.0 };
+
+// How far the rays reach before tapering out: the exponent on the radial fade.
+// LOWER is longer, because the taper is fade^n with fade falling to 0 at the
+// quad edge — 3.0 pulls the tips in hard, 1.0 lets them run almost to the edge.
+// The taper exists so the rays end in points rather than being cut off square
+// against the sprite's boundary.
+export const uParticleSpikeLength = { value: 2.0 };
 
 // How much a speck shrinks over its life, as 1 / (1 + t * shrink): at 2.0 it
 // ends a third of the size it started. 0 disables it.
@@ -649,6 +666,8 @@ export const objectParticleFragmentShader = /* glsl */`
     uniform vec3      uParticleColor;
     uniform float     uShiny;
     uniform float     uSpikes;
+    uniform float     uSpikeSharp;
+    uniform float     uSpikeLength;
     varying float vAlpha;
     varying float vSparkle;
     varying float vStreakAngle;
@@ -690,9 +709,17 @@ export const objectParticleFragmentShader = /* glsl */`
         // particle so the field is not uniform, and rides vSparkle so the rays
         // extend and retract as the speck twinkles.
         float fade = max(0.0, 1.0 - r);
-        float sx   = 1.0 / (1.0 + abs(p.x) * 110.0);
-        float sy   = 1.0 / (1.0 + abs(p.y) * 110.0);
-        float arms = (sx + sy) * fade * fade * fade * (0.6 + 0.8 * vRandom);
+        float sx   = 1.0 / (1.0 + abs(p.x) * uSpikeSharp);
+        float sy   = 1.0 / (1.0 + abs(p.y) * uSpikeSharp);
+        float arms = (sx + sy) * pow(fade, uSpikeLength) * (0.6 + 0.8 * vRandom);
+
+        // Rays start OUTSIDE the core instead of stacking on it. At the centre
+        // core, sx and sy are all 1.0, so adding them put the middle of every
+        // speck at up to 3.7x white — it clipped to a flat slab that hid the
+        // surface the particles were coming off. Masked, the peak is the core
+        // alone (1.04 at full twinkle) and the rays beyond r ~ 0.35 are exactly
+        // as before, so the star keeps its shape and loses only the clipping.
+        arms *= smoothstep(0.08, 0.35, r);
 
         float shape = core + arms * uSpikes * vSparkle;
         if (shape < 0.01) discard;
@@ -721,6 +748,8 @@ export function makeParticleMaterial(progressUniform, timeUniform, { freqScale =
             uSwirl:          uParticleSwirl,
             uSize:           uParticleSize,
             uSpikes:         uParticleSpikes,
+            uSpikeSharp:     uParticleSpikeSharp,
+            uSpikeLength:    uParticleSpikeLength,
             uTwinkle:        uParticleTwinkle,
             uShrink:         uParticleShrink,
             uLife:           uParticleLife,

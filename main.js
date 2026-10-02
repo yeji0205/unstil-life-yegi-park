@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import { createRenderer, createCamera, setupResize, createAdaptiveQuality } from './src/render/renderer.js';
 import { setupLighting } from './src/render/lighting.js';
-import { uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleShrink, uParticleShiny, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, updateDissolveTransparency } from './src/render/dissolve.js';
+import { uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink, uParticleShiny, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, updateDissolveTransparency } from './src/render/dissolve.js';
 import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
 import { createPaintingIntro } from './src/render/paintingIntro.js';
 import { createParticleBloom, bloomSettings } from './src/render/particleBloom.js';
@@ -162,7 +162,7 @@ const ambientSound = createAmbientSoundTracks();
 
 // ─── Debug GUI ───────────────────────────────────────────────────────────────
 const gui = createDebugGUI({
-    uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleShrink, uParticleShiny,
+    uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink, uParticleShiny,
     bloomSettings,
     skyboxOptions: SKYBOX_OPTIONS, defaultSkybox: SKYBOX_OPTIONS[0], skyboxCustomLabel: SKYBOX_CUSTOM_LABEL,
     onSkyboxChange: selectBackground,
