@@ -48,6 +48,20 @@ export function createCameraControls(camera, domElement) {
     controls.enablePan     = false;
     controls.enableZoom    = false;
     controls.rotateSpeed   = 1.0;
+    // NEGATIVE, to reverse the wheel: scroll up zooms OUT, down zooms IN.
+    //
+    // The room scroll goes up = toward space (phaseMachine's wheel handler), and
+    // in space the wheel is handed between this zoom and that scroll. With
+    // three's default sense the hand-back to the room needed a reversal in the
+    // middle of the gesture: scroll up to zoom in close, then switch to scrolling
+    // down to bring the room back. Reversed, one direction does one thing all
+    // the way — up is always away and out, down is always closer and home.
+    //
+    // It works because OrbitControls uses zoomSpeed as an exponent,
+    // 0.95^(zoomSpeed * |delta|), so a negative value swaps zoom in for out.
+    // That function is shared by every dolly input, so trackpad pinch and
+    // middle-drag are reversed too.
+    controls.zoomSpeed     = -1.0;
     controls.target.set(0, -0.69, -0.5); // aimed at scene center, shifted up with camera
     // Disabled until the painting intro (if any) finishes dissolving — see
     // main.js, which flips this to true once createPaintingIntro's reveal

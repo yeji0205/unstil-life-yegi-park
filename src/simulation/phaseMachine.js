@@ -109,7 +109,10 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
             const dist = camera.position.distanceTo(controls.target);
             if (!zoomState.hasZoomedOut || dist > ROOM_RETURN_DIST) return;
         }
-        targetP = Math.min(1.0, Math.max(0.0, targetP + e.deltaY * 0.001));
+        // Scrolling UP (negative deltaY) travels up, out of the room into space;
+        // scrolling down comes back. Paired with the negative zoomSpeed in
+        // cameraControls.js so the zoom in space keeps the same sense — see there.
+        targetP = Math.min(1.0, Math.max(0.0, targetP - e.deltaY * 0.001));
         if (targetP < 0.95) resetToRoom();
         applyControlMode(uProgress.value);
     });
