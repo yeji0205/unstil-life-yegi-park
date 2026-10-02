@@ -197,6 +197,20 @@ export const roomLighting = {
     beamSoftness: 0.85,
     // Density of the visible haze, separate from how much light it casts.
     beamHaze: 0.45,
+    // How strongly each light's SHADOW is drawn, 0..1. Both lights cast, so
+    // every object throws two shadows — a dark one from the beam and a lighter
+    // one from the dimmed key. These fade one or the other WITHOUT touching the
+    // light itself (the key still lights the walls), via shadow.intensity: a
+    // uniform the renderer reads every frame, so adjusting never recompiles a
+    // shader — unlike flipping castShadow, which changes the shadow-map count.
+    //
+    // 1 is the ceiling, not an arbitrary default. three applies it as
+    // mix(1.0, shadow, intensity) on the light reaching the pixel, so 1 already
+    // removes ALL of that light inside the shadow; past 1 the factor goes
+    // negative and subtracts light, darkening below what the other lights give.
+    // A darker shadow can only come from a stronger light.
+    beamShadow: 1.0,
+    keyShadow:  1.0,
 };
 
 // ─── Visible light source ("sun") ────────────────────────────────────────────
@@ -491,6 +505,8 @@ export function setupLighting(scene) {
         // Tied to the beam's own fade so the light and the visible shaft leave
         // together — a lit pool with no shaft above it reads as a mistake.
         beamLight.intensity = roomLighting.beam * uBeamFade.value;
+        beamLight.shadow.intensity        = roomLighting.beamShadow;
+        directionalLight.shadow.intensity = roomLighting.keyShadow;
 
         // Width drives the visible cone and the spotlight TOGETHER. Scaling only
         // the mesh would give a wider haze lighting nothing at its new edges;

@@ -185,6 +185,12 @@ export function createDebugGUI({
     // The spotlight matched to the visible shaft — this is what creates the
     // bright pool, so it is the one to raise for more contrast, not lower.
     sceneFolder.add(roomLighting, 'beam',      0.0,  25,  0.5 ).name('Beam Light');
+    // Fade each light's shadow on its own: 0 = gone, 1 = full. The beam's is the
+    // dark one inside the lit pool; the key's is the lighter one that reaches
+    // beyond it. Only the shadow changes — the light stays. Capped at 1, see
+    // roomLighting.beamShadow for why.
+    sceneFolder.add(roomLighting, 'beamShadow', 0, 1, 0.01).name('Beam Shadow');
+    sceneFolder.add(roomLighting, 'keyShadow',  0, 1, 0.01).name('Key Light Shadow');
     sceneFolder.add(roomLighting, 'beamWidth', 0.4,  2.5, 0.05).name('Beam Width');
     sceneFolder.add(roomLighting, 'beamShiftX', -4, 4, 0.1).name('Beam Shift X (→)');
     sceneFolder.add(roomLighting, 'beamShiftZ', -4, 4, 0.1).name('Beam Shift Z (back)');
