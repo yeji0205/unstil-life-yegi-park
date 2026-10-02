@@ -203,6 +203,17 @@ const gui = createDebugGUI({
     // Late-bound like onDissolveClick above: the GUI is built before the phase
     // machine that owns the dissolve clock.
     onDissolvePauseToggle: (paused) => phaseMachine.setDissolvePaused(paused),
+    // Closures, not direct references: the GUI is built before the phase
+    // machine exists, so these must look it up at call time.
+    onDissolveSeek:      (fraction) => phaseMachine.seekDissolve(fraction),
+    // lil-gui reads this the moment the controller is created, which is BEFORE
+    // `const phaseMachine` below has run — reading it then is a temporal-dead-zone
+    // ReferenceError, and an exception here would abort the rest of the panel.
+    // Only that case is caught; anything else still throws.
+    getDissolveFraction: () => {
+        try { return phaseMachine.getDissolveFraction(); }
+        catch (e) { if (e instanceof ReferenceError) return 0; throw e; }
+    },
 });
 customSkyboxReport = gui.reportSkyboxImages;
 

@@ -133,6 +133,30 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     // particle drift keep running, so a paused frame is still a live scene.
     function setDissolvePaused(value) { dissolvePaused = value; }
 
+    // Scrubbing: jump the dissolve to a fraction of its length, either way.
+    //
+    // Only while 'dissolving' — the one phase where dissolveElapsed is what
+    // drives the objects. Elsewhere the scroll owns them (the reverse dissolve
+    // is driven by p), and writing elapsed would do nothing until the next
+    // Dissolve press, where it would make that one start part-way through.
+    //
+    // Clamped to the dissolve's own length, NOT the +0.2 s tail that ends the
+    // phase. Reaching the end of the bar therefore holds at "fully dissolved"
+    // without firing onObjectsDissolved, which swaps the models; that only
+    // happens once playback is resumed and runs out the tail on its own.
+    // Returns whether the seek applied, so the GUI can tell.
+    function seekDissolve(fraction) {
+        if (phase !== 'dissolving') return false;
+        const f = Math.min(1, Math.max(0, fraction));
+        dissolveElapsed = f * dissolveDuration.value;
+        return true;
+    }
+
+    // What the bar should show: the progress the surfaces are actually at, in
+    // every phase — the forward dissolve, the scroll-driven return, or nothing
+    // having started. The table's uniform is the shared value they all follow.
+    function getDissolveFraction() { return tableState.uProgress.value; }
+
     // Advances uProgress toward targetP and runs the phase transitions. Called
     // once per frame; returns the values other simulation/render modules need.
     function update(t) {
@@ -176,17 +200,24 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
             const elapsed = dissolveElapsed;
             // Everything — all objects AND the table — dissolves together over 3s.
             const d = Math.min(1.0, Math.max(0.0, elapsed / dissolveDuration.value));
+            // Shadows are dropped at full dissolve purely as a saving (the depth
+            // pass would discard everything anyway), and restored the moment d
+            // falls back below 1 — which only happens when the bar is scrubbed
+            // backwards. customDepthMaterial makes that safe: the shadow erodes
+            // with the surface, so it never reappears whole under a half-formed
+            // object.
+            const gone = d >= 1.0;
             for (const obj of stageObjects) {
                 obj.uProgress.value = d;
-                if (obj.uProgress.value >= 1.0 && !obj.shadowsKilled) {
-                    obj.mesh.traverse(c => { if (c.isMesh) c.castShadow = false; });
-                    obj.shadowsKilled = true;
+                if (gone !== !!obj.shadowsKilled) {
+                    obj.mesh.traverse(c => { if (c.isMesh) c.castShadow = !gone; });
+                    obj.shadowsKilled = gone;
                 }
             }
             tableState.uProgress.value = d;
-            if (tableState.uProgress.value >= 1.0 && tableState.object && !tableState.object.userData.shadowsKilled) {
-                tableState.object.traverse(c => { if (c.isMesh) c.castShadow = false; });
-                tableState.object.userData.shadowsKilled = true;
+            if (tableState.object && gone !== !!tableState.object.userData.shadowsKilled) {
+                tableState.object.traverse(c => { if (c.isMesh) c.castShadow = !gone; });
+                tableState.object.userData.shadowsKilled = gone;
             }
             if (elapsed >= dissolveDuration.value + 0.2) {
                 phase         = 'done';
@@ -257,5 +288,5 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     // Called once the painting intro finishes dissolving (or there is none).
     function enableInteraction() { interactionEnabled = true; }
 
-    return { update, triggerDissolve, setDissolvePaused, enableInteraction };
+    return { update, triggerDissolve, setDissolvePaused, seekDissolve, getDissolveFraction, enableInteraction };
 }

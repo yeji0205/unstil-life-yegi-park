@@ -73,7 +73,7 @@ export function createDebugGUI({
     onRoomSoundChange, onCustomRoomSoundFile, roomSoundVolume,
     onSpaceSoundChange, onCustomSpaceSoundFile, spaceSoundVolume,
     onDissolveSoundChange, onCustomDissolveSoundFile, dissolveSoundVolume,
-    onDissolveClick, onDissolvePauseToggle,
+    onDissolveClick, onDissolvePauseToggle, onDissolveSeek, getDissolveFraction,
 }) {
     const gui = new GUI({ title: 'Unstil Life Debug' });
     gui.hide(); // hidden during loading screen; shown once the loading dissolve completes
@@ -97,6 +97,25 @@ export function createDebugGUI({
         },
     };
     const dissolvePauseController = gui.add(dissolvePauseAction, 'toggle').name('⏸ Pause Dissolve');
+
+    // Scrub bar for the dissolve: drag back to rewind, forward to advance.
+    //
+    // The value is a getter/setter onto the phase machine rather than a stored
+    // number, and .listen() re-reads it every frame, so the bar tracks playback
+    // and the scroll-driven return without anything having to push updates to it.
+    //
+    // Dragging pauses. Without that a seek lands and playback carries straight
+    // on from there, so the bar can't hold a moment — which is the point of it.
+    // The pause only happens if the seek actually applied (i.e. mid-dissolve):
+    // pausing is armable in advance, so arming it from a drag that did nothing
+    // would make the next Dissolve press silently hold at the very start.
+    const dissolveScrub = {
+        get position() { return getDissolveFraction(); },
+        set position(v) {
+            if (onDissolveSeek(v) && !dissolvePaused) dissolvePauseAction.toggle();
+        },
+    };
+    gui.add(dissolveScrub, 'position', 0, 1, 0.001).name('⏯ Dissolve Position').listen();
 
     // Toggles the swirling curl-noise UV warp on the skybox texture (see
     // render/skyboxFlow.js). Label flips to reflect state, same pattern as
