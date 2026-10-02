@@ -274,7 +274,7 @@ function animate() {
 
     const { p, phase } = phaseMachine.update(t);
 
-    cameraControls.updateZoom(uProgress.value);
+    cameraControls.updateZoom(uProgress.value, { roomReturnBlocked: phase === 'dissolving' });
     updateLighting(p);
     updateSkyboxFlow(t);
     updateStars(dt);

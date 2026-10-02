@@ -187,11 +187,19 @@ export function createCameraControls(camera, domElement) {
     // Zoom is ON whenever fully in space AND (not yet zoomed out OR still far).
     // Turns OFF only after the user zoomed out past ROOM_RETURN_DIST and has
     // now zoomed back in — at that point scroll restores the room instead.
-    function updateZoom(progressValue) {
+    //
+    // That hand-off only works if the phase machine is LISTENING to the wheel.
+    // Mid-dissolve it is not (scroll is blocked), so handing off there turned
+    // the wheel off completely: zoom disabled, and the scroll it handed to
+    // ignored — the camera was stuck wherever it was. Pause made that a dead end
+    // you could sit in indefinitely instead of for a few seconds. So while the
+    // room cannot be returned to, zoom simply stays on; the hand-off resumes as
+    // normal once the dissolve is over and the wheel is live again.
+    function updateZoom(progressValue, { roomReturnBlocked = false } = {}) {
         if (progressValue >= 1.0) {
             const dist = camera.position.distanceTo(controls.target);
             if (dist > ROOM_RETURN_DIST) zoomState.hasZoomedOut = true;
-            controls.enableZoom = !zoomState.hasZoomedOut || dist > ROOM_RETURN_DIST;
+            controls.enableZoom = roomReturnBlocked || !zoomState.hasZoomedOut || dist > ROOM_RETURN_DIST;
         } else {
             controls.enableZoom = false;
         }
