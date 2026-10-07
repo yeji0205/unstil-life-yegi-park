@@ -1,27 +1,15 @@
 import * as THREE from 'three';
 import { PARTICLE_BLOOM_LAYER } from './dissolve.js';
 
-// ─── Selective bloom on the dissolve particles ───────────────────────────────
-// The glow has to spread onto neighbouring pixels, which a point sprite can't do
-// (drawing a glow inside the sprite only makes fatter dots). Each frame:
-//   1. render ONLY the particles, on black, into a half-resolution target;
-//   2. threshold that and blur it with a separable gaussian → the glow map;
-//   3. draw the real frame, then add the glow map over it as a full-screen quad.
-//
-// Why not UnrealBloomPass: it blurs a mip pyramid, and a few-pixel speck lands
-// in one texel of the coarse levels, which upsamples into a faint SQUARE around
-// every particle. One gaussian at a single resolution blurs a dot into a round
-// dot, and is cheaper.
-//
-// Why the frame isn't rendered through an EffectComposer: it blends the scene's
-// additive layers (light cone, stars, particles) in linear space, then encodes to
-// sRGB, which washed out the whole scene. So the frame is a plain
-// renderer.render() and only the glow is added on top. This also keeps the
-// canvas's own anti-aliasing.
-//
-// The particles are isolated by camera LAYER, not by swapping the background:
-// the skybox is a mesh, and the lit room walls would bloom too. Downside: the
-// glow isn't hidden behind objects, which is barely visible in practice.
+// ─── Glow around the dissolve particles ──────────────────────────────────────
+// Each frame (only while particles exist):
+//   1. draw only the particles, on black, into a small hidden image;
+//   2. blur it, so each dot becomes a soft halo;
+//   3. draw the normal scene, then add the blurred image on top.
+// Why not the usual three.js tools (both were tried):
+// - UnrealBloomPass drew a faint grey square box around every particle.
+// - An EffectComposer made the whole picture lighter and greyer, even with no
+//   particles: the dark room and dark space lost their deep blacks.
 
 // GUI-tunable ("Particle Bloom"): the right values depend on the background.
 export const bloomSettings = {
