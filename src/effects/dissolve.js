@@ -35,13 +35,6 @@ const EDGE_GAIN_UNUSED = { value: 1.0 };
 // Default for meshes already in their root's space.
 const IDENTITY_MATRIX = { value: new THREE.Matrix4() };
 
-// Outline tint (a separate effect from the dissolve edge): where an object's
-// surface turns away from the camera, at its outline, it blends toward this
-// colour, so objects pick up the colour around them (warm in the room, bluish in
-// space). Set every frame from the ambient light in lighting.js.
-export const uRimColor    = { value: new THREE.Color(0xffffff) };
-export const uRimStrength = { value: 0.0 };
-
 // ─── Transparency, only while dissolving ─────────────────────────────────────
 // Transparent materials are expensive (no early-Z, sorting, blending), so they
 // are made transparent only while dissolving. Flipping `transparent` does not
@@ -89,8 +82,6 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
         shader.uniforms.uEdgeFollow  = edgeFollowUniform;
         shader.uniforms.uEdgeGain    = edgeGainUniform;
         shader.uniforms.uLocalMatrix = localMatrixUniform;
-        shader.uniforms.uRimColor    = uRimColor;
-        shader.uniforms.uRimStrength = uRimStrength;
         shader.uniforms.uScale       = scaleUniform;
 
         // 'local' samples in the ROOT's space, matching the particles, which are
@@ -116,8 +107,6 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
              uniform vec3  uEdgeColor;
              uniform float uEdgeFollow;
              uniform float uEdgeGain;
-             uniform vec3  uRimColor;
-             uniform float uRimStrength;
              varying vec3  vDissolvePos;
              ${NOISE_GLSL}` +
             shader.fragmentShader;
@@ -126,13 +115,6 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
         shader.fragmentShader = shader.fragmentShader.replace(
             '#include <dithering_fragment>',
             `#include <dithering_fragment>
-
-            // Outline tint: the object's outline blends toward the surroundings' colour.
-            {
-                vec3  rimViewDir = normalize(vViewPosition);
-                float rimFactor  = pow(1.0 - max(dot(normalize(vNormal), rimViewDir), 0.0), 3.0);
-                gl_FragColor.rgb = mix(gl_FragColor.rgb, uRimColor, rimFactor * uRimStrength);
-            }
 
             if (uProgress > 0.01) {
                 float threshold = mix(-1.2, 1.2, uProgress);

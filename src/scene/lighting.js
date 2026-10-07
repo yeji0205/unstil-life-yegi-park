@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { uRimColor, uRimStrength } from '../effects/dissolve.js';
 
 // All scene lights, the fake volumetric light beam, and the visible sun in space.
 // updateLighting(p) blends everything from the room look (p = 0) to space (p = 1).
@@ -120,6 +119,12 @@ export const roomLighting = {
     beamShadow: 1.0,
     keyShadow:  1.0,
 };
+
+// ─── Environment map: objects reflect their surroundings in space ────────────
+// three.js's built-in reflections of the background (scene.environment, built
+// from the skybox in main.js): sharp on glossy or metal parts, soft light on
+// matte ones. Only in space; strength is a GUI slider (Env Map Strength).
+export const environmentMap = { strength: 1.0 };
 
 // ─── Visible light source ("sun") ────────────────────────────────────────────
 // A directional light has no position, so in space there was nothing showing
@@ -333,9 +338,9 @@ export function setupLighting(scene) {
         sunGlowMat.opacity = sunEase * 0.85;
         sunGroup.visible   = sunEase > 0.001; // skip drawing it entirely in the room
 
-        // Objects' edges pick up the current ambient colour.
-        uRimColor.value.copy(ambientLight.color);
-        uRimStrength.value = THREE.MathUtils.clamp(ambientLight.intensity * 0.3, 0.05, 0.6);
+        // The environment map fades in with the sun: none in the room, where
+        // objects shouldn't reflect the nebula.
+        scene.environmentIntensity = environmentMap.strength * sunEase;
     }
 
     return { ambientLight, directionalLight, updateLighting, setSpacePreset, applyLightAngle, setShadowQuality };

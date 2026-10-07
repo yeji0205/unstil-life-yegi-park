@@ -48,12 +48,12 @@ export const LIGHTING_PRESETS = {
         directionalIntensity: 5.4,
     },
     [SKYBOX_NONE]: {
-        // Flat void: strong ambient (it reaches every side equally), weak key, so
-        // objects have no dark sides. These are the values for WHITE; for other
-        // colours setVoidColor sets the ambient's hue to the colour and scales its
-        // intensity by the colour's brightness, so 3.2 is the maximum.
+        // Flat colour: no ambient, because the environment map already lights the
+        // objects evenly with the background's colour (a dark colour gives dark
+        // objects). With an ambient as well, light objects were lit twice and
+        // washed out. Weak key light, so objects have no dark sides.
         ambientColor:         [1.00, 1.00, 1.00],
-        ambientIntensity:     3.2,
+        ambientIntensity:     0,
         directionalColor:     [1.00, 1.00, 1.00],
         directionalIntensity: 1.2,
     },
@@ -176,7 +176,7 @@ export function buildSkybox(scene) {
             skybox.visible   = false;
             const c = new THREE.Color(voidColor.hex);
             scene.background = c;
-            onAverageColor?.(normalizeHue(c.r, c.g, c.b), voidBrightness(c));
+            onAverageColor?.(normalizeHue(c.r, c.g, c.b));
             return;
         }
         scene.background = null; // let the skybox mesh show through again
@@ -269,23 +269,16 @@ export function buildSkybox(scene) {
     }
 
     // Changes the flat background colour live (only shown when the skybox is
-    // hidden), and reports the new hue so the fill light follows it.
+    // hidden), and reports the new hue.
     function setVoidColor(hex, onAmbientColor) {
         voidColor.hex = hex;
         const c = new THREE.Color(hex);
         if (!skybox.visible) scene.background = c;
-        onAmbientColor?.(normalizeHue(c.r, c.g, c.b), voidBrightness(c));
+        onAmbientColor?.(normalizeHue(c.r, c.g, c.b));
     }
 
-    // How much fill a flat colour gives, 0–1, so a black void is actually dark.
-    // Only for flat colours: a starfield is dark by accident, a chosen black is
-    // a decision. Uses the brightest channel, so all vivid colours count as
-    // fully bright. The key light is left on, so black reads as dramatic.
-    function voidBrightness(c) {
-        return Math.max(c.r, c.g, c.b);
-    }
-
-    return { loadSkybox, loadCustomSkybox, setVoidColor };
+    // `skybox` is also returned so main.js can render it into the environment map.
+    return { loadSkybox, loadCustomSkybox, setVoidColor, skybox };
 }
 
 // ─── Stars ───────────────────────────────────────────────────────────────────

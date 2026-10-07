@@ -3,7 +3,7 @@ import { flowState } from '../effects/skyboxFlow.js';
 import { scrollSmoothing, dissolveDuration } from '../scene/phaseMachine.js';
 import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../scene/room.js';
 import { primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../objects/glbLoader.js';
-import { roomLighting } from '../scene/lighting.js';
+import { roomLighting, environmentMap } from '../scene/lighting.js';
 
 // A centred dialog with a dimmed backdrop and up to two buttons, used instead
 // of alert() for the custom-skybox instructions. Buttons close it and run their
@@ -161,6 +161,8 @@ export function createDebugGUI({
     // roomLighting.beamShadow for why.
     sceneFolder.add(roomLighting, 'beamShadow', 0, 1, 0.01).name('Beam Shadow');
     sceneFolder.add(roomLighting, 'keyShadow',  0, 1, 0.01).name('Key Light Shadow');
+    // How strongly objects reflect their surroundings in space (see lighting.js).
+    sceneFolder.add(environmentMap, 'strength', 0, 3, 0.05).name('Env Map Strength');
     sceneFolder.add(roomLighting, 'beamWidth', 0.4,  2.5, 0.05).name('Beam Width');
     sceneFolder.add(roomLighting, 'beamShiftX', -4, 4, 0.1).name('Beam Shift X (→)');
     sceneFolder.add(roomLighting, 'beamShiftZ', -4, 4, 0.1).name('Beam Shift Z (back)');

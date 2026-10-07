@@ -48,7 +48,26 @@ setupResize(camera, renderer);
 const particleBloom = createParticleBloom(renderer, scene, camera);
 
 // ─── Geometry ────────────────────────────────────────────────────────────────
-const { loadSkybox, loadCustomSkybox, setVoidColor } = buildSkybox(scene);
+const { loadSkybox, loadCustomSkybox, setVoidColor, skybox } = buildSkybox(scene);
+
+// ─── Environment map ─────────────────────────────────────────────────────────
+// Renders the current background once into a pre-blurred map (PMREM), so
+// surfaces can reflect it: sharp on glossy parts, blurry on rough ones. Rebuilt
+// whenever the background changes. Its strength is set every frame in
+// lighting.js (environmentMap).
+const pmremGenerator = new THREE.PMREMGenerator(renderer);
+const envScene = new THREE.Scene();
+const envSky = new THREE.Mesh(skybox.geometry, skybox.material); // shares the skybox's textures
+envScene.add(envSky);
+let envTarget = null;
+function refreshEnvironment() {
+    envSky.visible = skybox.visible;
+    envScene.background = skybox.visible ? null : scene.background; // the flat colour, if chosen
+    const next = pmremGenerator.fromScene(envScene, 0, 0.1, 2000); // far enough to reach the 1000-unit skybox
+    envTarget?.dispose();
+    envTarget = next;
+    scene.environment = envTarget.texture;
+}
 const { updateStars } = buildStars(scene);
 buildRoom(scene);
 
@@ -60,26 +79,23 @@ const { updateLighting, setSpacePreset } = setupLighting(scene);
 function selectBackground(name) {
     const preset = LIGHTING_PRESETS[name] ?? LIGHTING_PRESETS.space_blue;
     setSpacePreset(preset); // apply immediately; textures load asynchronously
-    // When the faces have loaded, the fill light takes the background's measured
-    // colour (hue only; the preset keeps the intensity). Only a flat colour passes
-    // `brightness`, so a dark colour darkens the scene (see environment.js).
-    loadSkybox(name, (skyColor, brightness) => setSpacePreset({
-        ...preset,
-        ambientColor:     skyColor,
-        ambientIntensity: preset.ambientIntensity * (brightness ?? 1),
-    }));
+    // When the faces have loaded: the fill light takes the background's measured
+    // colour (hue only; the preset keeps the intensity), and the environment map
+    // is rebuilt from the new background.
+    loadSkybox(name, (skyColor) => {
+        setSpacePreset({ ...preset, ambientColor: skyColor });
+        refreshEnvironment();
+    });
 }
 selectBackground(SKYBOX_OPTIONS[0]);
 
-// Changes the flat background colour and tints the fill light to match, like
-// selectBackground does for a skybox.
+// Changes the flat background colour, and rebuilds the environment map from it.
 function selectVoidColor(hex) {
     const preset = LIGHTING_PRESETS[SKYBOX_NONE];
-    setVoidColor(hex, (hue, brightness) => setSpacePreset({
-        ...preset,
-        ambientColor:     hue,
-        ambientIntensity: preset.ambientIntensity * brightness,
-    }));
+    setVoidColor(hex, (hue) => {
+        setSpacePreset({ ...preset, ambientColor: hue });
+        refreshEnvironment();
+    });
 }
 
 // Set once the GUI exists (it's created after the skybox), so the report on
@@ -94,7 +110,7 @@ function selectCustomSkybox(files) {
     // The third callback reports image problems that cause seams (see inspectFaces).
     const result = loadCustomSkybox(
         files,
-        (skyColor) => setSpacePreset({ ...base, ambientColor: skyColor }),
+        (skyColor) => { setSpacePreset({ ...base, ambientColor: skyColor }); refreshEnvironment(); },
         (report) => customSkyboxReport?.(report),
     );
     if (result === true) { setSpacePreset(base); return true; }

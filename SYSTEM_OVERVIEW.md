@@ -164,43 +164,23 @@ git history (`src/render/paintingIntro.js`).
 - **Space** (per-background preset, `LIGHTING_PRESETS` in `environment.js`):
   - `space_blue` / `space_red` / `sky`: ambient stays low, directional climbs — moody,
     high-contrast, "the sun does all the work" look.
-  - `None (solid color)`: ambient instead climbs to 3.2 (**above** the
-    directional's 1.2) — because ambient is non-directional and lights every
-    surface orientation equally, this is what actually removes dark/shadowed
-    sides from objects, which a bright-but-still-directional-dominant setup
-    cannot do. This was tuned twice: first just "brighter," which didn't fix
-    shadow sides; then ambient made dominant, which did.
-    The background colour is live (`voidColor`, white by default) and the GUI
-    exposes a swatch for it. Picking a colour overrides **both** halves of the
-    preset's ambient via `setVoidColor`:
-    - **hue** from the colour, on the same rule as the cube maps — the fill light
-      comes from whatever is actually behind the objects.
-    - **intensity** scaled by the colour's brightest channel, so 3.2 is the
-      ceiling at pure white and black gives 0. Without this, black fell back to a
-      bright neutral fill (black has no channel ratio for `normalizeHue` to
-      preserve), which surprised users who expected a dark background to be dark.
-      The key light is left alone, so a black void reads as dramatic and
-      directional rather than as a blank screen.
-
-    Brightness scaling applies to the flat colour **only**, not to cube maps: a
-    starfield is black by accident and dimming to match would leave nothing
-    visible, whereas a flat colour is a deliberate choice. See `voidBrightness`
-    for why it measures the brightest channel rather than Rec.709 luminance.
+  - `None (solid color)`: no ambient; the environment map (below) lights the
+    objects evenly with the background colour, so a dark colour gives dark
+    objects. Weak directional key (1.2). The colour is live (`voidColor`, white
+    by default, GUI swatch).
   - Switching the "Skybox" GUI dropdown updates both together
     (`selectBackground()` in `main.js`) and takes effect **immediately**
-    even if not currently mid-scroll (a bug where the update was skipped
-    at settled `p=0`/`p=1` was fixed).
-- **Fresnel rim tint** (`uRimColor`/`uRimStrength` in `dissolve.js`, applied
-  inside the same `injectDissolve` shader): every dissolve-capable surface's
-  silhouette edges blend toward the *current* ambient light's color, updated
-  every frame — so objects visually "pick up" whatever's actually around them
-  (warm room, blue nebula, white void) instead of just uniformly
-  brightening/dimming.
-- **Not currently used**: a `scene.environment` (via `RoomEnvironment` +
-  `PMREMGenerator`) was tried to give the glass cup believable specular
-  highlights, but was reverted — it affects *all* materials scene-wide
-  unconditionally, causing objects to show unwanted extra color/brightness
-  even in the room phase regardless of background selection.
+    even if not currently mid-scroll.
+- **Environment map** (`scene.environment`, built in `main.js` with
+  `PMREMGenerator.fromScene` from the current skybox or flat colour, rebuilt
+  whenever the background changes): objects reflect their real surroundings,
+  sharply on glossy or metal parts and as soft light on matte ones. Its
+  strength (`environmentMap.strength`, GUI "Env Map Strength") fades in with
+  the sun, so it is 0 in the room. (An earlier `RoomEnvironment` attempt was
+  reverted because it also lit the room; the fade-in avoids that.) It replaced
+  a Fresnel "rim tint" that mixed one average colour into object outlines.
+  Note: the table top and the vase are marked fully metallic in their GLB
+  files, so they show the strongest reflections.
 
 ## 7. Background motion (not in the original plan)
 
