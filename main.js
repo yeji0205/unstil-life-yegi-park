@@ -25,7 +25,7 @@ import { createAmbientSoundTracks, ROOM_SOUND_OPTIONS, SPACE_SOUND_OPTIONS, DISS
 
 import { createCameraControls } from './src/setup/cameraControls.js';
 import { createPhaseMachine } from './src/scene/phaseMachine.js';
-import { updateFloating } from './src/objects/floating.js';
+import { updateFloating } from './src/effects/floating.js';
 
 // ─── Renderer, scene, camera ─────────────────────────────────────────────────
 const renderer = createRenderer();

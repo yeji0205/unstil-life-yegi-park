@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { FLOAT_START } from '../objects/floating.js';
+import { FLOAT_START } from '../effects/floating.js';
 
 // Room-mode limits (applied initially, relaxed when in space)
 // Limits calculated from orbital radius (r≈6.1) and room bounds.
@@ -248,7 +248,7 @@ export function createCameraControls(camera, domElement) {
         }
         if (p >= 0.999) { leftSpace = true; return; }
         // smoothstep-eased so the pull-back starts and ends gently, matching the
-        // eased object float (objects/floating.js) — a linear ramp jerked the
+        // eased object float (effects/floating.js) — a linear ramp jerked the
         // camera into motion the instant scrolling crossed ZOOM_OUT_START.
         const rawZoomT = Math.max(0, (p - ZOOM_OUT_START) / (1 - ZOOM_OUT_START));
         const zoomT  = rawZoomT * rawZoomT * (3 - 2 * rawZoomT);

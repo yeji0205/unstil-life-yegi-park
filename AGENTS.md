@@ -60,10 +60,10 @@ Everything is in `main.js`. Sections in order:
 main.js          — scene assembly + animation loop; picks the render path
 src/             — grouped by what each part is in the artwork:
   setup/           renderer, camera, camera controls
-  effects/         visual effects (dissolve, noise, skyboxFlow, particleBloom — the only post-process)
+  effects/         visual effects (dissolve, noise, skyboxFlow, floating, particleBloom — the only post-process)
   scene/           the scenes and how they change (room, environment = skybox + stars,
                    lighting, phaseMachine)
-  objects/         table + still-life objects (glbLoader, floating)
+  objects/         table + still-life objects (glbLoader)
   ui/, audio/
 index.html       — minimal shell, loads main.js
 vite.config.js   — sets base: '/unstil-life-yegi-park/' for GitHub Pages
