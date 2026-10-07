@@ -25,16 +25,15 @@ const ADAPT = {
     fastMs:    17,    // below this (≈59 fps) → we can afford more
     step:      0.08,  // per adjustment
     min:       0.55,  // never go below this fraction of the ceiling
+    max:       1.0,   // full resolution (never above the ceiling)
 };
 
 export function createAdaptiveQuality(renderer) {
-    let elapsed = 0, frames = 0, enabled = true;
-    let ceiling = 1.0; // highest scale allowed (setCeiling; currently never changed)
+    let elapsed = 0, frames = 0;
 
     return {
         // Called from the render loop with the frame's delta in seconds.
         update(dt) {
-            if (!enabled) return;
             elapsed += dt * 1000;
             frames++;
             if (elapsed < ADAPT.sampleMs) return;
@@ -45,16 +44,10 @@ export function createAdaptiveQuality(renderer) {
             let next = renderScale.value;
             if (avg > ADAPT.slowMs)      next -= ADAPT.step;
             else if (avg < ADAPT.fastMs) next += ADAPT.step;
-            next = Math.min(ceiling, Math.max(ADAPT.min, next));
+            next = Math.min(ADAPT.max, Math.max(ADAPT.min, next));
 
             if (Math.abs(next - renderScale.value) > 0.001) setRenderScale(renderer, next);
         },
-        // Sets the highest scale the controller may reach. (Not called at the moment.)
-        setCeiling(v) {
-            ceiling = v;
-            if (renderScale.value > v) setRenderScale(renderer, v);
-        },
-        setEnabled(v) { enabled = v; },
     };
 }
 

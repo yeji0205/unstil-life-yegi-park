@@ -86,10 +86,6 @@ const LIGHT_DISTANCE = 10.5; // magnitude of the original (-6, 7, 5) position
 // sits in space. Keep elevation ≥ 0°, or shadows fall upward onto the wall.
 export const lightAngle = { elevation: 55, azimuth: -50 };
 
-// Multipliers on the ambient and key light, applied after the room→space blend.
-// Nothing changes them at the moment, so they stay at 1.
-export const lightBoost = { ambient: 1.0, directional: 1.0 };
-
 // ─── Lighting the objects without lighting the room ──────────────────────────
 // A light only reaches meshes on its layer. The key light is dimmed for
 // everything; a second light on this layer, which only the table and objects
@@ -294,7 +290,7 @@ export function setupLighting(scene) {
             THREE.MathUtils.lerp(0.13, ag, p),   // G  (0x20 = 32 → 0.13)
             THREE.MathUtils.lerp(0.06, ab, p)    // B  (0x10 = 16 → 0.06)
         );
-        ambientLight.intensity = THREE.MathUtils.lerp(0.4 * roomLighting.ambient, spacePreset.ambientIntensity, p) * lightBoost.ambient;
+        ambientLight.intensity = THREE.MathUtils.lerp(0.4 * roomLighting.ambient, spacePreset.ambientIntensity, p);
 
         // Directional: warm amber key (0xffe8b0) → space preset
         directionalLight.color.setRGB(
@@ -302,7 +298,7 @@ export function setupLighting(scene) {
             THREE.MathUtils.lerp(0.91, dg, p),   // 0xe8 = 232 → 0.91
             THREE.MathUtils.lerp(0.69, db, p)    // 0xb0 = 176 → 0.69
         );
-        directionalLight.intensity = THREE.MathUtils.lerp(2.6 * roomLighting.roomKey, spacePreset.directionalIntensity, p) * lightBoost.directional;
+        directionalLight.intensity = THREE.MathUtils.lerp(2.6 * roomLighting.roomKey, spacePreset.directionalIntensity, p);
 
         // Room-only light: in space the preset is the whole look.
         objectKey.intensity = THREE.MathUtils.lerp(roomLighting.objectKey, 0.0, p);
@@ -327,7 +323,7 @@ export function setupLighting(scene) {
         beamLight.target.updateMatrixWorld();
 
         // Room-only too: there's no wall left to light in space.
-        wallFill.intensity = THREE.MathUtils.lerp(0.55 * roomLighting.wallFill, 0.0, p) * lightBoost.ambient;
+        wallFill.intensity = THREE.MathUtils.lerp(0.55 * roomLighting.wallFill, 0.0, p);
 
         // The sun fades in over the second half of the scroll, after the beam has
         // gone, so one light source hands over to the other.

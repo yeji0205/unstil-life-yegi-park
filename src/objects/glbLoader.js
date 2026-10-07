@@ -100,13 +100,12 @@ export const stageObjects = [];
 // phaseOffset shifts each object's float waves. The tulip shares the vase's
 // phase on purpose, so it can never bob down into the vase while it rises; its
 // higher H (2.5 vs 2.2) makes it rise slightly ahead of the vase instead.
-// dissolveStart is stored but not used: all objects dissolve together.
 export const OBJECT_DEFS = [
-    { file: 'asset/model/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0, dissolveStart: 0 },
-    { file: 'asset/model/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart: 0 },
-    { file: 'asset/model/agate.glb', label: 'stone', targetHeight: 0.35,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.02, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, dissolveStart: 0, recenterXZ: true },
-    { file: 'asset/model/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2, dissolveStart: 0 },
-    { file: 'asset/model/bear_ribbon.glb',  label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4, dissolveStart: 0 },
+    { file: 'asset/model/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0 },
+    { file: 'asset/model/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0 },
+    { file: 'asset/model/agate.glb', label: 'stone', targetHeight: 0.35,  offsetX: -0.24, offsetZ: -0.76, offsetY: -0.02, rotYOffset: 0, H: 1.8, phaseOffset: 0.6, recenterXZ: true },
+    { file: 'asset/model/Wooden_dummy.glb', label: 'dummy', targetHeight: 1.04,  offsetX:  0.42, offsetZ: -1.50, rotYOffset: -1.7216, H: 2.0, phaseOffset: 1.2 },
+    { file: 'asset/model/bear_ribbon.glb',  label: 'teddy', targetHeight: 0.84,  offsetX:  0.35, offsetZ: -0.76, rotYOffset: -0.6415, H: 2.2, phaseOffset: 2.4 },
 ];
 
 // ─── Table geometry options ───────────────────────────────────────────────────
@@ -667,8 +666,6 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
                     }
                     mesh.rotation.set(best.rx, 0, best.rz);
                 }
-                // The automatic pose (stored, not currently read anywhere).
-                mesh.userData.baseRot = mesh.rotation.clone();
                 // Manual extra rotation on top, see stoneOrientation.
                 mesh.rotation.x += THREE.MathUtils.degToRad(stoneOrientation.xDeg);
                 mesh.rotation.y += THREE.MathUtils.degToRad(stoneOrientation.yDeg);
@@ -781,8 +778,6 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
 
         const entry = {
             mesh:         obj3d, // the node that floats/rotates (group for recenterXZ, else the mesh)
-            // The model inside the group (not currently read anywhere).
-            innerMesh:    def.recenterXZ ? mesh : null,
             offsetY:      def.offsetY ?? 0, // placement offset, also used by the table collision
             label:        def.label,
             uProgress:    uObjProgress,
@@ -792,7 +787,6 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             restZ:        obj3d.position.z,
             H:            def.H,
             phaseOffset:  def.phaseOffset,
-            dissolveStart: def.dissolveStart,
             shadowsKilled: false,
             rotYOffset:   def.rotYOffset ?? 0, // initial facing direction baked from GUI
             bottomLocalY,          // lowest vertex Y relative to the pivot (table contact)
