@@ -2,7 +2,8 @@
 // Two looping tracks and a one-shot, sharing one Web Audio graph:
 //  - room track:  café ambience, gain = volume × (1 − p), fading out toward space
 //  - space track: fades in over a few seconds once space is reached (volume 0 by default)
-//  - dissolve:    a one-shot played when the objects dissolve
+//  - dissolve:    a recording that plays in step with the dissolve: it pauses,
+//                 resumes and jumps with it (see follow())
 //
 // Browsers play no sound until a click, tap or key press (Chrome ignores
 // scrolling), so the audio unlock retries on every gesture until it succeeds.
@@ -158,9 +159,9 @@ function createSoundSystem() {
         return { setSound, setCustomFile, update, volume };
     }
 
-    // A one-shot (the dissolve sound): decoded once, played from the start each
-    // time. Loaded right away, not after the first click, so it's ready when
-    // Dissolve is pressed; decoding works before the audio is unlocked.
+    // The dissolve sound: decoded once, at load (decoding works before the audio
+    // is unlocked), so it's ready when Dissolve is pressed. Its playback position
+    // is tied to the dissolve (see follow()).
     function createOneShot({ urlMap, defaultLabel }) {
         let buffer     = null;
         let desiredUrl = urlMap[defaultLabel];
@@ -195,20 +196,57 @@ function createSoundSystem() {
             desiredUrl = url;
             load(url).then(() => URL.revokeObjectURL(url));
         }
-        // Plays from the start. Web Audio sources are single-use, so each play
-        // makes a new one, with its own gain for the current volume.
-        function play() {
-            if (!buffer || !ctx) return;
+        // The sound currently playing, if any.
+        let current = null;
+        let lastSeekCount = 0;
+        // True once the recording has played to its end, so it isn't restarted
+        // (on a slow machine the dissolve's clock can lag behind the audio).
+        let finished = false;
+
+        // Plays from `offset` seconds into the recording. Web Audio sources can't
+        // pause or jump, so every start makes a new one. A 20 ms fade-in avoids a click.
+        function startAt(offset) {
             const src = ctx.createBufferSource();
             src.buffer = buffer;
             const g = ctx.createGain();
-            g.gain.value = volume.value;
+            const now = ctx.currentTime;
+            g.gain.setValueAtTime(0, now);
+            g.gain.linearRampToValueAtTime(volume.value, now + 0.02);
             src.connect(g);
             g.connect(ctx.destination);
-            src.start();
+            src.start(now, offset);
+            current = { src, gain: g };
+            // Only a natural end counts as finished; stopCurrent() clears `current` first.
+            src.onended = () => { if (current?.src === src) { current = null; finished = true; } g.disconnect(); };
         }
 
-        return { setSound, setCustomFile, play, volume };
+        // Stops with a 40 ms fade-out, so it doesn't click.
+        function stopCurrent() {
+            if (!current) return;
+            const { src, gain } = current;
+            const now = ctx.currentTime;
+            gain.gain.cancelScheduledValues(now);
+            gain.gain.setValueAtTime(gain.gain.value, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.04);
+            src.stop(now + 0.05);
+            current = null;
+        }
+
+        // Called every frame with the dissolve's state (getDissolvePlayback):
+        // starts when it plays, stops when it's paused or over, continues from the
+        // right point on resume, and jumps when the scrub bar is used.
+        function follow({ playing, time, seekCount }) {
+            const jumped = seekCount !== lastSeekCount;
+            lastSeekCount = seekCount;
+            if (!buffer || !started) return;
+            if (!playing) { stopCurrent(); finished = false; return; }
+            if (jumped) { stopCurrent(); finished = false; }
+            // Past the end of the recording: nothing left to play.
+            if (time >= buffer.duration - 0.05) { stopCurrent(); return; }
+            if (!current && !finished) startAt(time);
+        }
+
+        return { setSound, setCustomFile, follow, volume };
     }
 
     return { createTrack, createOneShot, whenStarted };
@@ -242,6 +280,11 @@ export function createAmbientSoundTracks() {
         // Runs once audio is actually playing; the "click to play sound" hint
         // uses it to remove itself.
         onStarted: system.whenStarted,
-        update(p, t) { room.update(p, t); space.update(p, t); },
+        // dissolvePlayback: from phaseMachine.getDissolvePlayback().
+        update(p, t, dissolvePlayback) {
+            room.update(p, t);
+            space.update(p, t);
+            if (dissolvePlayback) dissolve.follow(dissolvePlayback);
+        },
     };
 }

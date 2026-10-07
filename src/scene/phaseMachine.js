@@ -38,6 +38,8 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     // what makes it pausable; a backgrounded tab resumes where it left off.
     let dissolveElapsed = 0;
     let dissolvePaused  = false;
+    // Counts scrub-bar jumps, so the dissolve sound knows when to jump too.
+    let dissolveSeekCount = 0;
     // True from the end of a dissolve until the objects have re-formed in the room.
     // Meanwhile their dissolve follows the scroll (see the reverse dissolve below).
     let objectsDissolved = false;
@@ -89,7 +91,7 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
         dissolveElapsed = 0;
         scrollBlocked   = true;
         dissolveController.disable();
-        return true; // caller plays the single dissolve sound when this returns true
+        return true;
     }
 
     // Pause/resume the dissolve. Only the dissolve stops; floating and particle
@@ -104,7 +106,14 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
         if (phase !== 'dissolving') return false;
         const f = Math.min(1, Math.max(0, fraction));
         dissolveElapsed = f * dissolveDuration.value;
+        dissolveSeekCount++;
         return true;
+    }
+
+    // For the dissolve sound: whether the dissolve is running (not paused, not
+    // finished), how many seconds in it is, and the scrub-jump counter.
+    function getDissolvePlayback() {
+        return { playing: phase === 'dissolving' && !dissolvePaused, time: dissolveElapsed, seekCount: dissolveSeekCount };
     }
 
     // What the scrub bar shows: the table's dissolve progress, which all objects share.
@@ -204,5 +213,5 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     // Called by main.js once the loading screen is gone.
     function enableInteraction() { interactionEnabled = true; }
 
-    return { update, triggerDissolve, setDissolvePaused, seekDissolve, getDissolveFraction, enableInteraction };
+    return { update, triggerDissolve, setDissolvePaused, seekDissolve, getDissolveFraction, getDissolvePlayback, enableInteraction };
 }

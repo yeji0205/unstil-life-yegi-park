@@ -154,8 +154,8 @@ const gui = createDebugGUI({
     onDissolveSoundChange: (label) => ambientSound.dissolve.setSound(label),
     onCustomDissolveSoundFile: (file) => ambientSound.dissolve.setCustomFile(file),
     dissolveSoundVolume: ambientSound.dissolve.volume,
-    // Plays the sound only if the dissolve actually started (only in 'space').
-    onDissolveClick: () => { if (phaseMachine.triggerDissolve()) ambientSound.dissolve.play(); },
+    // The dissolve sound starts by itself: it follows the dissolve every frame.
+    onDissolveClick: () => phaseMachine.triggerDissolve(),
     // Functions, not direct references: the GUI is built before phaseMachine,
     // so it's looked up when called.
     onDissolvePauseToggle: (paused) => phaseMachine.setDissolvePaused(paused),
@@ -217,7 +217,7 @@ function animate() {
     updateLighting(p);
     updateSkyboxFlow(t);
     updateStars(dt);
-    ambientSound.update(p, t);
+    ambientSound.update(p, t, phaseMachine.getDissolvePlayback());
     updateFloating({ t, p, stageObjects, tableState });
     updateDissolveTransparency(); // keep materials opaque unless mid-dissolve
     cameraControls.updateAutoZoomOut(p);
