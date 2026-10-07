@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 
-import { createRenderer, createCamera, setupResize, createAdaptiveQuality } from './src/render/renderer.js';
+import { createRenderer, createCamera, setupResize, createAdaptiveQuality } from './src/setup/renderer.js';
 import { setupLighting } from './src/scene/lighting.js';
 import { uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink, uParticleShiny, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, updateDissolveTransparency } from './src/effects/dissolve.js';
 import { updateSkyboxFlow } from './src/effects/skyboxFlow.js';
-import { createParticleBloom, bloomSettings } from './src/render/particleBloom.js';
+import { createParticleBloom, bloomSettings } from './src/effects/particleBloom.js';
 import { PARTICLE_BLOOM_LAYER } from './src/effects/dissolve.js';
 
 import { buildRoom, setRoomTexture, resetRoomTextures } from './src/scene/room.js';
@@ -23,8 +23,8 @@ import { createDebugGUI } from './src/ui/gui.js';
 
 import { createAmbientSoundTracks, ROOM_SOUND_OPTIONS, SPACE_SOUND_OPTIONS, DISSOLVE_SOUND_OPTIONS, SOUND_CUSTOM_LABEL } from './src/audio/ambientSound.js';
 
-import { createCameraControls } from './src/controls/cameraControls.js';
-import { createPhaseMachine } from './src/story/phaseMachine.js';
+import { createCameraControls } from './src/setup/cameraControls.js';
+import { createPhaseMachine } from './src/scene/phaseMachine.js';
 import { updateFloating } from './src/objects/floating.js';
 
 // ─── Renderer, scene, camera ─────────────────────────────────────────────────
@@ -36,7 +36,7 @@ const camera   = createCamera();
 const scene    = new THREE.Scene();
 
 // The dissolve particles live on their own layer so the bloom pass can render
-// them in isolation (see render/particleBloom.js). The camera has to be told to
+// them in isolation (see effects/particleBloom.js). The camera has to be told to
 // draw that layer as well, or they are simply never rendered: a camera's default
 // mask is layer 0 only.
 //
@@ -50,7 +50,7 @@ setupResize(camera, renderer);
 // ─── Selective particle bloom ────────────────────────────────────────────────
 // The post-process behind "shiny" particle mode. Built once, but only rendered
 // through while uParticleShiny is on — flat mode never touches it and keeps the
-// single straight render it always had. See render/particleBloom.js for the
+// single straight render it always had. See effects/particleBloom.js for the
 // whole mechanism, how it differs from the Codrops demo it comes from, and why
 // the base frame is deliberately NOT routed through an EffectComposer.
 const particleBloom = createParticleBloom(renderer, scene, camera);

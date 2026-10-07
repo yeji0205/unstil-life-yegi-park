@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PARTICLE_BLOOM_LAYER } from '../effects/dissolve.js';
+import { PARTICLE_BLOOM_LAYER } from './dissolve.js';
 
 // ─── Selective bloom on the dissolve particles ───────────────────────────────
 // This is the mechanism the Codrops dissolve demo uses for its shiny particles,

@@ -50,7 +50,7 @@ export const dissolveDuration = { value: 5.0 };
 // exact same objects re-materialize by playing the dissolve effect backwards.
 export function createPhaseMachine({ scene, camera, cameraControls, tableState, stageObjects, dissolveController, onObjectsDissolved }) {
     const { controls, zoomState, applyControlMode } = cameraControls;
-    const ROOM_RETURN_DIST = 5.5; // kept in sync with controls/cameraControls.js
+    const ROOM_RETURN_DIST = 5.5; // kept in sync with setup/cameraControls.js
 
     const MAX_DT = 0.1; // ignore huge frame gaps (tab backgrounded, GPU stall)
     // Smoothing time constant for the journey home, replacing scrollSmoothing.tau

@@ -254,7 +254,7 @@ export const uParticleDrift = { value: 4.5 };
 
 // 0 = flat: plain soft white dots.
 // 1 = shiny: star glint, twinkle, tint and the selective bloom pass
-//     (render/particleBloom.js). The bloom does most of the "shine": only a
+//     (effects/particleBloom.js). The bloom does most of the "shine": only a
 //     post-process can spread light onto neighbouring pixels.
 // A uniform, not two materials, so switching is instant. Treated as on/off.
 export const uParticleShiny = { value: 1.0 };

@@ -59,12 +59,11 @@ Everything is in `main.js`. Sections in order:
 ```
 main.js          — scene assembly + animation loop; picks the render path
 src/             — grouped by what each part is in the artwork:
-  render/          how the frame is drawn (renderer, particleBloom — the only post-process)
-  effects/         visual effects / shaders (dissolve, noise, skyboxFlow)
-  scene/           what is in the world (room, environment = skybox + stars, lighting)
+  setup/           renderer, camera, camera controls
+  effects/         visual effects (dissolve, noise, skyboxFlow, particleBloom — the only post-process)
+  scene/           the scenes and how they change (room, environment = skybox + stars,
+                   lighting, phaseMachine)
   objects/         table + still-life objects (glbLoader, floating)
-  story/           the sequence of the piece (phaseMachine)
-  controls/        viewer input (cameraControls)
   ui/, audio/
 index.html       — minimal shell, loads main.js
 vite.config.js   — sets base: '/unstil-life-yegi-park/' for GitHub Pages
@@ -158,7 +157,7 @@ For each object:
    (`✨ Shiny Particles` button in the GUI): `0` = flat evenly-lit white dots
    (the default and the fast path), `1` = the Codrops demo's shiny look.
    Shiny is **two** things, and neither works alone:
-   - **Selective bloom** (`src/render/particleBloom.js`) does all the work. A
+   - **Selective bloom** (`src/effects/particleBloom.js`) does all the work. A
      point sprite can only fill its own quad, so a "glow" drawn inside one just
      makes fatter dots — tried, and that is exactly what it looked like. Glow
      has to spread onto NEIGHBOURING pixels, which needs a post-process.
@@ -278,7 +277,7 @@ background motion, and the flat/shiny particle A/B toggle.
 - Do not add physics engine — floating is purely mathematical (sinusoidal)
 - Do not use CSS or HTML elements for UI — canvas only
 - Do not add post-processing without confirming. There is now exactly ONE
-  post-process — the selective particle bloom in `src/render/particleBloom.js` —
+  post-process — the selective particle bloom in `src/effects/particleBloom.js` —
   and it is opt-in, only rendering while shiny particle mode is on. Do not move
   it onto the default path, and do not add a second (FXAA, DOF, vignette)
   without asking.

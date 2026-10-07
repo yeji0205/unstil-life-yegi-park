@@ -1,6 +1,6 @@
 import GUI from 'lil-gui';
 import { flowState } from '../effects/skyboxFlow.js';
-import { scrollSmoothing, dissolveDuration } from '../story/phaseMachine.js';
+import { scrollSmoothing, dissolveDuration } from '../scene/phaseMachine.js';
 import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../scene/room.js';
 import { primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../objects/glbLoader.js';
 import { roomLighting } from '../scene/lighting.js';
@@ -134,7 +134,7 @@ export function createDebugGUI({
     // Flipping it writes one uniform and swaps the render path in main.js, so it
     // takes effect on the very next frame and can be switched mid-stream. Shiny
     // mode adds a particles-only render pass plus the bloom mip chain (see
-    // render/particleBloom.js), so switching to flat is also the fast path.
+    // effects/particleBloom.js), so switching to flat is also the fast path.
     // See uParticleShiny in dissolve.js.
     //
     // The label names what the NEXT click will do, so it is the OPPOSITE of the
