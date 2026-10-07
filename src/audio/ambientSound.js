@@ -1,17 +1,11 @@
 // ─── Ambient sound ────────────────────────────────────────────────────────────
-// Two independent looping tracks sharing one Web Audio graph:
-//  - room track:  café ambience, gain = volume × (1 − p) — full in the room, fades out into space
-//  - space track: space ambience, gain = volume × p       — silent in the room, fades in as it dissolves
-// Each is a separate "track" (own gain node, own file, own volume) created
-// from one shared AudioContext/gesture-unlock system, so adding more layers
-// later doesn't mean spinning up a whole new audio graph per layer.
+// Two looping tracks and a one-shot, sharing one Web Audio graph:
+//  - room track:  café ambience, gain = volume × (1 − p), fading out toward space
+//  - space track: fades in over a few seconds once space is reached (volume 0 by default)
+//  - dissolve:    a one-shot played when the objects dissolve
 //
-// Browser constraint that shapes this whole module: autoplay policy. An
-// AudioContext refuses to produce sound until the page receives a user
-// gesture — and Chrome specifically does NOT count wheel/scroll as one, only
-// clicks/taps/keys. Since this app is scroll-driven, a naive "unlock on first
-// interaction" would permanently fail for scroll-only viewers, so onGesture
-// retries on every gesture until ctx.resume() actually reports 'running'.
+// Browsers play no sound until a click, tap or key press (Chrome ignores
+// scrolling), so the audio unlock retries on every gesture until it succeeds.
 
 export const SOUND_NONE         = 'None';
 export const SOUND_CUSTOM_LABEL = 'Custom audio…';
@@ -20,17 +14,11 @@ export const ROOM_SOUND_OPTIONS     = ['Café ambience', SOUND_NONE, SOUND_CUSTO
 export const SPACE_SOUND_OPTIONS    = ['Space ambience', SOUND_NONE, SOUND_CUSTOM_LABEL];
 export const DISSOLVE_SOUND_OPTIONS = ['Slowly Whoosh', 'Slowly Whoosh Short', 'Sparkle', 'Sparkle Slowed', 'Star Sparkle', SOUND_NONE, SOUND_CUSTOM_LABEL];
 
-// AAC (.m4a) rather than the original mp3/wav: the café loop was a 9.0 MB mp3
-// and the space bed a 5.5 MB wav, and the room ambience simply couldn't start
-// until enough of that had arrived. Re-encoded at 64 kbps they're 3.3 MB and
-// 169 KB — same audio, a fraction of the wait. The originals are still in
-// asset/sound/ if a higher-quality master is ever needed.
+// .m4a (AAC) for fast loading; the larger mp3/wav originals stay in asset/sound/.
 const ROOM_SOUND_URLS     = { 'Café ambience':  'asset/sound/cafe-music.m4a' };
 const SPACE_SOUND_URLS    = { 'Space ambience': 'asset/sound/space-ambient.m4a' };
-// Every one-shot here runs the full 5.2 s of the dissolve (dissolveDuration plus
-// its 0.2 s tail), so the sound lasts exactly as long as the particles do. The
-// 2.1 s original whoosh and 3.0 s sparkle were both time-stretched up to length;
-// the unstretched originals are still in asset/sound/.
+// Dissolve sounds. The sparkles were stretched to the dissolve's full 5.2 s;
+// the whoosh only 1.5x (3.13 s), since a longer stretch sounded artificial.
 const DISSOLVE_SOUND_URLS = {
     'Slowly Whoosh':       'asset/sound/whoosh-1_5x.m4a',     // 1.5x stretch: 3.13 s, covers ~60% of the dissolve
     'Slowly Whoosh Short': 'asset/sound/slowly-whoosh.mp3',   // the 2.1 s original, ends well before the particles do
@@ -74,34 +62,18 @@ function createSoundSystem() {
     window.addEventListener('keydown', onGesture);
     window.addEventListener('wheel', onGesture);
 
-    // urlMap: preset label -> asset URL. defaultLabel: which preset plays
-    // initially. gainOf(p): this track's own volume curve across scroll progress.
-    // Looping ambience STREAMS through an <audio> element rather than being
-    // fetched and decoded up front.
-    //
-    // The old path was fetch(whole file) → decodeAudioData(whole file) →
-    // start(), so nothing could be heard until every byte had arrived AND been
-    // decoded to PCM. For the 9 MB café loop that's a long wait twice over: the
-    // download, plus decoding ~9 minutes of audio into a few hundred MB of raw
-    // samples. That's why the room ambience came in seconds late.
-    //
-    // An <audio> element begins playing as soon as it has buffered enough to
-    // start, and keeps fetching in the background — so the room sound now starts
-    // essentially immediately. Routing it through createMediaElementSource keeps
-    // it inside the same gain graph, so the p-driven crossfade and the volume
-    // sliders behave exactly as before. Trade-off: element looping isn't
-    // sample-accurate like an AudioBufferSourceNode, but these tracks are minutes
-    // long and broadband, so a loop seam is a non-issue in practice.
+    // A looping track. urlMap: label → file; defaultLabel: what plays first;
+    // gainOf(p, t): its volume curve. It streams through an <audio> element, so it
+    // starts as soon as enough has buffered instead of after the whole file is
+    // downloaded and decoded. Routed into the Web Audio graph for the volume curve.
     function createTrack({ urlMap, defaultLabel, gainOf, defaultVolume = 0.5 }) {
         let gainNode = null;
         let el        = null; // current <audio> element
         let mediaNode = null; // its MediaElementAudioSourceNode
         let desiredUrl = urlMap[defaultLabel];
 
-        // Guards against async races: if the user switches sounds while an
-        // older fetch/decode is still in flight, the stale result must not
-        // start playing over the newer one. Each load bumps the generation;
-        // only the newest wins.
+        // Each load gets a number, so an older load finishing late can't start
+        // playing over a newer one.
         let loadGeneration = 0;
 
         const volume = { value: defaultVolume }; // object so lil-gui can bind a slider to .value directly
@@ -123,14 +95,8 @@ function createSoundSystem() {
             stopCurrent();
 
             const audio = new Audio();
-            // Order matters: preload must be set BEFORE src, because assigning
-            // src starts the browser's resource-selection algorithm and it reads
-            // preload at that moment. With src first, the tracks sat at
-            // readyState 0 (nothing buffered) until the first gesture, so the
-            // download only began when the viewer interacted — exactly the
-            // "sound starts late" symptom. load() then kicks fetching off
-            // immediately, so buffering happens while the loading screen is
-            // still on-screen and the track is ready the instant it's allowed.
+            // preload must be set BEFORE src, or buffering only starts at the first
+            // click and the sound comes in late.
             audio.preload = 'auto';
             audio.loop    = true;
             audio.src     = url;
@@ -146,10 +112,8 @@ function createSoundSystem() {
             mediaNode = ctx.createMediaElementSource(audio);
             mediaNode.connect(gainNode);
 
-            // play() is rejected until the page has an accepted user gesture, so
-            // defer it to whenStarted rather than letting it throw. Buffering
-            // still proceeds in the meantime (preload='auto'), so by the time the
-            // gesture lands the track is ready to sound instantly.
+            // play() fails before the first click, so it waits for whenStarted.
+            // Buffering continues meanwhile.
             whenStarted(() => {
                 if (generation !== loadGeneration) return; // superseded by a newer load
                 audio.play().catch(() => { /* still not permitted; next gesture retries */ });
@@ -172,24 +136,19 @@ function createSoundSystem() {
             load(desiredUrl); // safe pre-gesture: buffers now, plays via whenStarted
         }
 
-        // GUI "Custom audio…": play a user-picked local file (any format the
-        // browser can decode — mp3/wav/ogg/m4a). Object URL is revoked after
-        // decode; the decoded buffer lives in memory independently of it.
+        // GUI "Custom audio…": plays a user's file (mp3/wav/ogg/m4a). The URL is
+        // kept, not revoked: the <audio> element keeps reading from it.
         function setCustomFile(file) {
-            // The object URL is NOT revoked here: unlike a decoded buffer, the
-            // streaming element reads from it for as long as it plays.
             const url = URL.createObjectURL(file);
             desiredUrl = url;
             load(url);
-            // Picking a file involved clicks (a real activation), so resuming
-            // should succeed here even if the viewer never clicked the canvas.
+            // Picking a file was a click, so the audio can unlock now.
             onGesture();
         }
 
-        // Called once per frame with the smoothed scroll progress and the
-        // elapsed clock time (t) — t lets a track schedule time-based fades
-        // (e.g. the space track's delayed entry) instead of pure p curves.
-        // setTargetAtTime smooths steps so rapid scroll doesn't zipper.
+        // Every frame: sets the volume from the scroll progress (and time, for the
+        // space track's fade-in). setTargetAtTime smooths it, so fast scrolling
+        // doesn't crackle.
         function update(p, t) {
             if (!gainNode || !ctx) return;
             const target = volume.value * gainOf(p, t);
@@ -199,14 +158,9 @@ function createSoundSystem() {
         return { setSound, setCustomFile, update, volume };
     }
 
-    // A one-shot sound (e.g. the dissolve whoosh): decoded once and kept ready,
-    // then played from the start each time play() is called — no looping, no
-    // per-frame gain curve. The buffer is preloaded EAGERLY (not deferred to
-    // the first gesture like the looping tracks) because the dissolve happens
-    // exactly once per session: if the buffer weren't already decoded when the
-    // user clicks Dissolve, the sound would simply never be heard. decodeAudioData
-    // works on a suspended context, so eager decode is safe before any gesture;
-    // only playback needs the context running, which it is by dissolve time.
+    // A one-shot (the dissolve sound): decoded once, played from the start each
+    // time. Loaded right away, not after the first click, so it's ready when
+    // Dissolve is pressed; decoding works before the audio is unlocked.
     function createOneShot({ urlMap, defaultLabel }) {
         let buffer     = null;
         let desiredUrl = urlMap[defaultLabel];
@@ -241,9 +195,8 @@ function createSoundSystem() {
             desiredUrl = url;
             load(url).then(() => URL.revokeObjectURL(url));
         }
-        // Fires the sound from the beginning. Each call spins up a fresh
-        // BufferSource (sources are single-use in Web Audio) through its own
-        // gain node so the volume slider applies at trigger time.
+        // Plays from the start. Web Audio sources are single-use, so each play
+        // makes a new one, with its own gain for the current volume.
         function play() {
             if (!buffer || !ctx) return;
             const src = ctx.createBufferSource();
@@ -261,25 +214,16 @@ function createSoundSystem() {
     return { createTrack, createOneShot, whenStarted };
 }
 
-// Seconds to wait after fully entering space (p reaches ~1) before the space
-// music begins, then how long it takes to fade in.
-//
-// The delay is 0: the space track is NOT loading late — like the café track it
-// streams and is playing (silently, at gain 0) from the moment audio unlocks, so
-// there's nothing to wait for. The lateness was this timer, deliberately set to
-// 5 s so the café track had a beat of silence before space came in. Starting the
-// fade the instant p reaches 1 means the music arrives with the destination.
-// The café is already silent by then anyway — its gain is (1 − p).
+// Space track: delay after reaching space, then fade-in time, in seconds. The
+// café is already silent by then (its gain is 1 − p).
 const SPACE_START_DELAY = 0.0;
 const SPACE_FADE_IN     = 2.5;
 
 export function createAmbientSoundTracks() {
     const system = createSoundSystem();
 
-    // Space track gain is time-based, not a pure p curve: it stays silent
-    // until p is fully at 1, records the arrival time, waits SPACE_START_DELAY,
-    // then ramps in over SPACE_FADE_IN. Scrolling back out of space (p < ~1)
-    // resets the timer so it re-arms cleanly on the next entry.
+    // Space track gain is time-based: silent until p reaches 1, then fades in.
+    // Leaving space resets it for the next arrival.
     let spaceArrivalT = null;
     const spaceGainOf = (p, t) => {
         if (p < 0.999) { spaceArrivalT = null; return 0; }
@@ -289,15 +233,14 @@ export function createAmbientSoundTracks() {
     };
 
     const room     = system.createTrack({ urlMap: ROOM_SOUND_URLS,  defaultLabel: 'Café ambience',  gainOf: (p) => 1 - p });
-    // Space starts SILENT. The track still loads and crossfades on p exactly as
-    // before, so raising the slider mid-piece brings it in with no reload.
+    // Volume 0 by default (silence in space is deliberate). It still loads, so
+    // raising the slider brings it in without reloading.
     const space    = system.createTrack({ urlMap: SPACE_SOUND_URLS, defaultLabel: 'Space ambience', gainOf: spaceGainOf, defaultVolume: 0 });
     const dissolve = system.createOneShot({ urlMap: DISSOLVE_SOUND_URLS, defaultLabel: 'Slowly Whoosh' });
     return {
         room, space, dissolve,
-        // Fires once the AudioContext is actually running (i.e. the browser has
-        // accepted a user gesture and sound is now audible). The in-room "click
-        // to play sound" hint uses this to know when to take itself away.
+        // Runs once audio is actually playing; the "click to play sound" hint
+        // uses it to remove itself.
         onStarted: system.whenStarted,
         update(p, t) { room.update(p, t); space.update(p, t); },
     };

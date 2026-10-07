@@ -3,13 +3,15 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJECT_LIGHT_LAYER } from '../scene/lighting.js';
 import { injectDissolve, makeDissolveDepthMaterial, makeParticleMaterial, forgetDissolveMaterials, uProgress, uObjectDissolveEdge, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, PARTICLE_BLOOM_LAYER } from '../effects/dissolve.js';
 
+// Loads and manages the table and the still-life objects: placement on the table,
+// dissolve shaders, particles, table and stone swapping, and the objects that
+// change on each return from space.
+
 const TABLE_PARTICLE_COUNT  = 2000;
 
-// Dissolve pattern/particle tuning for stage objects.
-// - FREQ_SCALE 2.0 (was 4.0): larger dissolve blobs so small objects don't
-//   break up into tiny hard-to-read dots.
-// - particle count scales with each object's world-space size, so a small
-//   object emits fewer particles than a big one (instead of a flat 750 each).
+// Stage-object dissolve settings. A lower noise frequency gives bigger blobs, so
+// small objects don't break into unreadable dots. Particle count scales with each
+// object's size.
 const OBJECT_FREQ_SCALE        = 2.0;
 const OBJECT_PARTICLE_PER_UNIT = 550;   // particles per unit of world bounding-box diagonal
 const OBJECT_PARTICLE_MIN      = 200;
@@ -18,29 +20,22 @@ const OBJECT_PARTICLE_MAX      = 900;
 const uTableProgress = { value: 0.0 };
 const uTableTime     = { value: 0.0 };
 
-// One shared loader — GLTFLoader instances are stateless, so the initial
-// table/stage-object load and any later table swap (see setTable) all reuse
-// this instead of creating a new one each time.
+// One loader for every GLB (they're stateless).
 const gltfLoader = new GLTFLoader();
 
-// Mutated in place as the table loads (or is swapped); other modules
-// (simulation) read from this single shared reference rather than several
-// loose variables.
+// The current table, updated in place when it loads or is swapped.
 export const tableState = {
     object:     null, // set once the table loads
     kind:       'glb', // 'glb' | 'box' | 'cylinder' | 'custom' — tracks the current table
     floorY:     -3.5, // resting Y, updated after load
     floorZ:      0.0, // resting Z, updated after load
-    topOffset:   0.0, // table surface Y above pivot — used for sphere-plane collision
+    topOffset:   0.0, // table surface Y above its pivot (for the table collision)
     uProgress:  uTableProgress,
     uTime:      uTableTime,
 };
 
-// Optional user-uploaded textures for the primitive (Box/Cylinder) tables so
-// they carry real material character instead of a flat color. Several map slots
-// can be mixed — albedo + normal + roughness + bump. Stored here so they survive
-// Box↔Cylinder swaps (re-applied when those meshes are (re)built). The GLB/
-// custom tables keep their own textures and ignore these.
+// User-uploaded textures for the Box/Cylinder tables (any mix of map slots).
+// Kept here so they survive switching between the two. GLB tables ignore them.
 const textureLoader = new THREE.TextureLoader();
 const primitiveTableMaps = { map: null, normalMap: null, roughnessMap: null, bumpMap: null, metalnessMap: null };
 
@@ -97,30 +92,15 @@ export function setTableColor(hex) {
     }
 }
 
-// Filled as each stage-object GLB loads. Each entry: mesh, uProgress, uTime,
-// restY, restX, restZ, H, phaseOffset, dissolveStart, shadowsKilled, ...
+// One entry per loaded stage object (see the `entry` built in loadStageObject).
 export const stageObjects = [];
 
-// Each entry defines one still-life object: its file, visual scale, table position,
-// floating motion params, and when it starts dissolving after the button is clicked.
-// offsetX/Z are relative to the table centre (world 0,0).
-// offsetY (optional): extra height added on top of the surface-flush position.
-// dissolveStart: seconds after button click when this object begins dissolving.
-// phaseOffset: shifts the sin/cos waves so every object drifts independently in space.
-// Vase + tulip are separate meshes; tulip offsetY lifts it into the vase opening.
-// Both start floating at the exact same moment (floatP is shared, driven by
-// the same FLOAT_START), and tulip is given the SAME phaseOffset as the vase
-// (0.0). This is deliberate: the bob/sway terms scale with floatP but their
-// amplitude (~0.25) is larger than the tiny rise-rate gap early on, so ANY
-// phase difference let the tulip bob *downward* while the vase rose — which is
-// exactly the "tulip floats later" artifact. With identical phase the two
-// share one vertical rhythm and the tulip can never dip below the vase.
-// Separation instead comes purely from H: 2.5 vs 2.2 (~14% faster) means the
-// flowers steadily pull UP out of the vase (rise = floatP·H is linear, so the
-// H ratio IS the speed ratio) — a clean "lighter object rises a bit faster"
-// read with no false late start. dissolveStart is 0 for every object so they
-// all dissolve simultaneously the moment the Dissolve button is pressed (the
-// table follows just after — see phaseMachine).
+// The still-life objects: file, size, position on the table (offsetX/Z from its
+// centre; optional offsetY on top of the surface) and floating settings.
+// phaseOffset shifts each object's float waves. The tulip shares the vase's
+// phase on purpose, so it can never bob down into the vase while it rises; its
+// higher H (2.5 vs 2.2) makes it rise slightly ahead of the vase instead.
+// dissolveStart is stored but not used: all objects dissolve together.
 export const OBJECT_DEFS = [
     { file: 'asset/model/vase.glb',         label: 'vase',  targetHeight: 0.864, offsetX: -0.39, offsetZ: -1.55, rotYOffset: -0.9515, H: 2.2, phaseOffset: 0.0, dissolveStart: 0 },
     { file: 'asset/model/tulip.glb',        label: 'tulip', targetHeight: 1.109, offsetX: -0.39, offsetZ: -1.57, offsetY: 0.68, rotYOffset: 0, H: 2.5, phaseOffset: 0.0, dissolveStart: 0 },
@@ -130,9 +110,8 @@ export const OBJECT_DEFS = [
 ];
 
 // ─── Table geometry options ───────────────────────────────────────────────────
-// Selectable from the debug GUI's "Table" dropdown (mirrors the Skybox
-// dropdown). Add a new label here + a case in loadTableGeometry() to offer
-// another built-in shape.
+// The GUI "Table" dropdown. To add a shape: a label here and a case in
+// loadTableGeometry().
 const DEFAULT_TABLE_URL   = 'asset/model/table.glb';
 export const TABLE_CUSTOM_LABEL = 'Custom GLB…';
 export const TABLE_OPTIONS = ['Table (default)', 'Box', 'Cylinder', TABLE_CUSTOM_LABEL];
@@ -147,33 +126,16 @@ export function tableKindForLabel(label) {
     return TABLE_KIND_BY_LABEL[label] ?? 'glb';
 }
 
-// ─── Objects that come BACK from space ────────────────────────────────────────
-// The journey changes the still life: the objects that re-materialize on the way
-// home are not the ones that left. Each slot cycles through this list — index 0
-// is what OBJECT_DEFS starts with, and every return advances one step and wraps
-// round — so repeated trips keep changing the arrangement instead of settling on
-// one fixed "after" state.
-//
-// `offsetY` overrides that variant's vertical placement: a fixed value can't suit
-// two different shapes. The agate is rounded and wants sinking 0.15 into the
-// tabletop so it reads as settled, but the quartz biface is flat-bottomed and the
-// same offset drove it THROUGH the table — it sits at 0.
 // ─── Stone options ────────────────────────────────────────────────────────────
-// Everything the stone slot can hold. `name` is the dropdown label; everything
-// else overrides that variant's entry in OBJECT_DEFS (which carries the agate's
-// values, since that's what the room opens with).
-//
-// Order matters twice over: the first entry is what the GUI dropdown shows on
-// load, and the first two are the pair that cycles (see STONE_CYCLE).
+// Everything the stone slot can hold (the GUI "Stone" dropdown). `name` is the
+// label; the other fields override the stone's entry in OBJECT_DEFS. The first
+// entry is shown on load, and the first two alternate on each return.
 const STONE_VARIANTS = [
     { name: 'Agate',      file: 'asset/model/agate.glb',          targetHeight: 0.35, rotYOffset: 0,     offsetY: -0.02 },
     { name: 'Fluorite',   file: 'asset/model/fluorita_small.glb', targetHeight: 0.28, rotYOffset: -2.11, offsetY: -0.02 },
     { name: 'Aventurine', file: 'asset/model/aventurina.glb', targetHeight: 0.32, rotYOffset: 0, offsetY: -0.02, layFlat: true },
-    // The biface arrives balanced upright on a narrow point, which reads as
-    // perched rather than placed. layFlat measures it and rests it on its
-    // largest face. targetHeight is THICKNESS once it's lying down, not stature:
-    // that value normalises height, so a flat slab would otherwise be scaled up
-    // until it stood tall again. 0.22 gives a ~0.56 × 0.49 footprint.
+    // The biface stands upright on a point, so layFlat lays it on its largest
+    // face. targetHeight is then its thickness, not its standing height.
     { name: 'Quartz Biface', file: 'asset/model/quartz_biface.glb',
       layFlat: true, targetHeight: 0.22, rotYOffset: 0, offsetY: -0.02 },
 ];
@@ -181,18 +143,13 @@ const STONE_VARIANTS = [
 export const STONE_CUSTOM_LABEL = 'Custom GLB…';
 export const STONE_OPTIONS = [...STONE_VARIANTS.map((v) => v.name), STONE_CUSTOM_LABEL];
 
-// The stone slot's return cycle is deliberately NARROWER than the dropdown:
-// agate → fluorite → agate → … The piece is about the same still life recurring
-// slightly changed, and two alternating stones read as a change; four rotating
-// through read as a slideshow of rocks. The other variants stay available in the
-// GUI so a different stone can be auditioned in the scene — and, if one turns
-// out to work better, promoted into this pair by moving it up in STONE_VARIANTS.
+// Only two stones alternate on return (agate ↔ fluorite): the same still life
+// recurring slightly changed. More would feel like a slideshow. The others stay
+// selectable in the GUI.
 const STONE_CYCLE = STONE_VARIANTS.slice(0, 2);
 
-// Swaps the stone on demand from the GUI. A custom upload inherits the slot's
-// placement (position, float, dissolve timing) and gets recenterXZ + layFlat, so
-// an arbitrary model still lands on the table rather than wherever its pivot
-// happens to be — the same treatment the built-in scans need.
+// Swaps the stone from the GUI. A custom upload keeps the slot's position and
+// float, and is centred and laid flat so any model lands on the table.
 export function setStone(scene, label, { customUrl, onObjectReady } = {}) {
     const variant = label === STONE_CUSTOM_LABEL
         ? { file: customUrl, layFlat: true, targetHeight: 0.32, offsetY: -0.02, rotYOffset: 0 }
@@ -201,40 +158,29 @@ export function setStone(scene, label, { customUrl, onObjectReady } = {}) {
     replaceStageObject(scene, 'stone', variant, { onObjectReady });
 }
 
+// ─── Objects that come back from space ────────────────────────────────────────
+// Each return swaps these slots to their next variant, so the still life that
+// comes home isn't the one that left.
 const OBJECT_VARIANTS = {
     teddy: [{ file: 'asset/model/bear_ribbon.glb' },              { file: 'asset/model/bear_skeleton.glb' }],
     stone: STONE_CYCLE,
     tulip: [{ file: 'asset/model/tulip.glb' },                    { file: 'asset/model/daffodil.glb' }],
 };
 
-// The mannequin has no second model, so it changes finish instead of shape —
-// same silhouette, clearly not the same object. Cycles alongside the models:
-// original wood → dark walnut → original → walnut …
-// `null` means "put the original material back", which is why the recolour has
-// to be reversible (see applyDummyFinish).
+// The mannequin has no second model, so it alternates its finish instead:
+// original wood ↔ dark walnut. `null` = restore the original material.
 const DUMMY_FINISHES = [null, 0x7a5334];
 
-// Manual rotation trim for the stone, in degrees, applied ON TOP of layFlat's
-// automatic alignment. Exposed in the GUI ("Stone Orientation") because
-// bounding-box alignment can only guarantee the flattest BOX face points down —
-// a scanned rock's real resting face is often a few degrees off that, which
-// reads as the stone lying at a slight tilt. Dial it in on screen, then paste the
-// numbers here as the new default.
+// Extra rotation for the stone in degrees, on top of layFlat's automatic
+// alignment. All 0; set them here if a stone rests at a slight tilt.
 export const stoneOrientation = { xDeg: 0, yDeg: 0, zDeg: 0 };
 
-// Gallery-plinth white. The Box and Cylinder tables aren't meant to read as
-// furniture — they're the abstract pedestal a still life gets displayed ON, so
-// they take the off-white of a museum plinth rather than the room's wood tones.
-// Very slightly warm (not pure #fff) so it sits in the room's light instead of
-// glaring, and matte: a plinth is painted MDF, never glossy.
+// Gallery-plinth white for the Box/Cylinder tables: a matte, slightly warm
+// museum pedestal rather than furniture.
 const TABLE_MATERIAL_COLOR = 0xe8e4dc;
 const TABLE_MATERIAL_ROUGHNESS = 0.95;
 
-// Total height of the primitive tables. Sized to match the default table.glb's
-// surface height (its top sits ~1.88 above the floor): the primitives were only
-// 0.9 tall, so their surface landed ~1 unit lower and every object dropped below
-// the framed view the moment you switched to Box/Cylinder. Matching the height
-// keeps the surface — and thus the objects — at the same place across all tables.
+// Same surface height as table.glb, so objects stay in view when switching tables.
 const PRIMITIVE_TABLE_HEIGHT = 1.88;
 
 // Material for the primitive tables — carries the user-uploaded texture (if any)
@@ -245,10 +191,8 @@ function buildPrimitiveTableMaterial() {
     return mat;
 }
 
-// isPlinth marks a mesh as one of these two primitives, so setupTableObject
-// knows it can reason about the geometry's local Y (both are built centred on
-// the origin, so the base sits at exactly -height/2) and add the contact
-// shading below. A loaded GLB table has no such guarantee, and gets skipped.
+// isPlinth marks the Box/Cylinder (centred, so their base is at -height/2),
+// which get the contact shading below. GLB tables don't.
 function buildBoxTable() {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.6, PRIMITIVE_TABLE_HEIGHT, 1.6), buildPrimitiveTableMaterial());
     mesh.userData.isPlinth = true;
@@ -262,29 +206,14 @@ function buildCylinderTable() {
 }
 
 // ─── Contact shading where the plinth meets the floor ────────────────────────
-// Same idea as the room's edge shading: a plinth standing on a floor traps light
-// in the crease where the two meet, and without that the plinth reads as pasted
-// on top of the floor rather than resting on it.
-//
-// The difference is what it darkens TOWARD. The room walls just lose brightness,
-// but this plinth is nearly white — take brightness out of white and it turns
-// grey, which looks like dirt. Tinting toward the floor's own brown instead
-// reads as bounced light, which is what actually happens down there.
-//
-// The falloff is EXPONENTIAL, not a smoothstep. smoothstep reaches exactly zero
-// at its second edge, and the eye finds that terminating line easily — which is
-// the "sort of line" the first version showed: not a shading artefact, just the
-// place where the gradient stopped. Real occlusion has no such boundary; it
-// thins out with distance and is merely too faint to see long before it's
-// actually zero. exp(-3d) is 5% at the nominal reach, so there's nothing to
-// terminate. The reach is also much longer now (0.55 vs 0.20 units), which is
-// what makes it read as a gradient rather than as an edge treatment.
+// Like the room's edge shading, so the plinth rests on the floor instead of
+// looking pasted on. It tints toward the floor's brown (bounced light) rather
+// than darkening, which would turn the white plinth grey. Exponential falloff:
+// smoothstep ends at a visible line.
 const PLINTH_BASE_REACH  = 0.55; // world units; where the tint is ~5% of peak
 const PLINTH_BASE_AMOUNT = 0.24; // blend toward the floor colour at the contact line
 const PLINTH_BASE_TINT   = new THREE.Color(0x2e1c0e); // matches the floor plane's base colour
-// Above this p the effect is fully gone. It's a lie about a floor that no longer
-// exists once the table is on its way up, and a dark band at the base of an
-// object floating in space would read as a material flaw rather than as contact.
+// Gone by this p: there's no floor once the table floats.
 const PLINTH_BASE_FADE_END = 0.30;
 
 function injectPlinthBaseShading(mat, height) {
@@ -301,12 +230,10 @@ function injectPlinthBaseShading(mat, height) {
         shader.uniforms.uBaseReach  = uBaseReach;
         shader.uniforms.uBaseAmount = uBaseAmount;
         shader.uniforms.uBaseTint   = uBaseTint;
-        // Shared scroll progress — the same object the whole scene reads, so the
-        // fade tracks the transition with nothing to update per frame.
+        // The shared scroll progress, so the fade needs no per-frame update.
         shader.uniforms.uRoomP      = uProgress;
 
-        // Local Y, not world Y: the table is repositioned to stand on the floor,
-        // so its local base is a fixed constant while its world base is not.
+        // Local Y: the base is always at the same local height.
         shader.vertexShader = 'varying float vPlinthY;\n' + shader.vertexShader.replace(
             '#include <begin_vertex>',
             `#include <begin_vertex>
@@ -329,39 +256,15 @@ function injectPlinthBaseShading(mat, height) {
 }
 
 // ─── Normalising a user-supplied table ───────────────────────────────────────
-// Custom table GLBs were being used at their authored scale and pivot, and that
-// is what made everything vanish. A model exported from Blender in millimetres,
-// or with its origin left at the world centre rather than the object, arrives
-// hundreds of units tall or wildly off to one side. setupTableObject faithfully
-// stands whatever it's given on the floor and then reports the top of it as the
-// surface height — so a 300-unit-tall table puts the surface 300 units up, and
-// every stage object is dutifully placed there, far outside the camera's view.
-// Nothing errored; the scene was intact, just mostly in outer space.
+// Uploaded models can be any scale (e.g. exported in millimetres) or have their
+// pivot far away, which put the table surface, and every object on it, far off
+// screen. So custom tables are scaled to the plinths' height and centred.
 //
-// The built-in table.glb happens to be authored at the right size, so this never
-// came up. The fix is to stop relying on that: measure the model and scale it to
-// the same height the Box/Cylinder plinths use, and centre it in XZ so an
-// off-origin pivot doesn't slide it out of the light. This is the same treatment
-// custom STONE uploads already get, for the same reason.
-// ─── Backdrop / ground planes inside a downloaded model ──────────────────────
-// Most free table models are exported with the little display floor the artist
-// posed them on — a single enormous flat quad under the table. That's where the
-// "huge plane that dissolves too" comes from: it's a real mesh in the file, so
-// it gets the dissolve shader along with everything else. It went unnoticed
-// before only because the un-normalised model was so oversized that the plane
-// was off-screen entirely; scaling the model to fit brought it into frame.
-//
-// Two conditions have to hold together, and needing BOTH is what keeps a genuine
-// tabletop safe:
-//   • essentially two-dimensional — under 2% thickness relative to its own width
-//   • wider than the whole model is tall, by 2.5× or more
-// A tabletop passes the first test (they are thin) but fails the second: a 1.6-
-// wide top on a 1.9-tall table is nowhere near 4.75 wide. A display floor is
-// typically several times the table's height across, so it fails to hide.
-//
-// Bounds are measured in the model's own space before any normalising, and the
-// whole thing is skipped if it would empty the model — better to show a strange
-// table than no table.
+// Many free models also include a big ground plane the artist posed them on,
+// which would dissolve along with the table. A mesh is removed as a ground plane
+// only if it is BOTH almost flat (thickness < 2% of its width) AND much wider
+// than the model is tall (2.5x), so a real tabletop is never removed. Nothing is
+// removed if it would remove everything.
 const BACKDROP_FLATNESS = 0.02; // thickness as a fraction of own width
 const BACKDROP_SPREAD   = 2.5;  // width as a multiple of total model height
 
@@ -390,8 +293,7 @@ function stripBackdropPlanes(root) {
 }
 
 function normalizeCustomTable(root) {
-    // Before measuring: a leftover display floor would otherwise dominate the
-    // bounding box and skew the centring as well as being visible in the scene.
+    // Remove ground planes first, or they'd distort the measurements below.
     const stripped = stripBackdropPlanes(root);
     if (stripped.length) {
         console.info(`Custom table: removed ${stripped.length} backdrop/ground plane(s) — ${stripped.join(', ')}`);
@@ -399,8 +301,7 @@ function normalizeCustomTable(root) {
 
     root.updateWorldMatrix(true, true);
     const box = new THREE.Box3().setFromObject(root);
-    // No geometry at all (an empty or camera/light-only file) — nothing to
-    // measure. Reject rather than divide by zero; the caller keeps the old table.
+    // Nothing visible to measure: reject, and the caller keeps the old table.
     if (box.isEmpty()) throw new Error('the GLB contains no visible geometry');
     const size = box.getSize(new THREE.Vector3());
     if (size.y < 1e-6) throw new Error('the GLB has no measurable height');
@@ -408,26 +309,21 @@ function normalizeCustomTable(root) {
     const center = box.getCenter(new THREE.Vector3());
     const k = PRIMITIVE_TABLE_HEIGHT / size.y;
 
-    // Scale about the model's own origin, then translate so the box's bottom
-    // lands at y=0 and its centre at x=z=0. Both terms carry the k factor
-    // because the offsets are measured PRE-scale but applied POST-scale.
+    // Scale, then move so the bottom is at y=0 and the centre at x=z=0. The
+    // offsets were measured before scaling, so they're scaled by k too.
     root.scale.multiplyScalar(k);
     root.position.multiplyScalar(k)
         .sub(new THREE.Vector3(center.x, box.min.y, center.z).multiplyScalar(k));
 
-    // Returned inside a wrapper deliberately: setupTableObject calls
-    // scale.setScalar(1) on whatever it's handed, which would undo the work if
-    // the scale lived on the object it touches. On the wrapper's CHILD it's safe.
+    // Wrapped in a group, because setupTableObject resets the scale of what it's
+    // given, which would undo the scaling above.
     const wrapper = new THREE.Group();
     wrapper.add(root);
     return wrapper;
 }
 
-// Resolves a table "kind" into a loaded root Object3D. Box/Cylinder are
-// synchronous but wrapped in a Promise so callers don't need to branch on
-// sync-vs-async — 'glb' and 'custom' both go through GLTFLoader, just with
-// a different URL (the built-in table.glb, or a blob: URL from a
-// user-picked file).
+// Returns a Promise of the table for a kind. Box/Cylinder are built directly;
+// 'glb' and 'custom' load via GLTFLoader (built-in file or uploaded blob URL).
 function loadTableGeometry(kind, customUrl) {
     if (kind === 'box')      return Promise.resolve(buildBoxTable());
     if (kind === 'cylinder') return Promise.resolve(buildCylinderTable());
@@ -437,9 +333,7 @@ function loadTableGeometry(kind, customUrl) {
         gltfLoader.load(url, (gltf) => {
             if (kind === 'custom') URL.revokeObjectURL(url); // safe once onLoad fires — the .glb is fully parsed by then
             if (kind !== 'custom') { resolve(gltf.scene); return; }
-            // normalizeCustomTable throws on unusable files; route that to the
-            // promise's reject path so the existing error handling picks it up
-            // instead of it escaping as an unhandled exception inside onLoad.
+            // Turn a throw into a rejected promise, so the normal error handling sees it.
             try { resolve(normalizeCustomTable(gltf.scene)); }
             catch (err) { reject(err); }
         }, undefined, (err) => {
@@ -472,14 +366,9 @@ function buildParticlesFromGeometry(root, count, { radial = false, velocityCompe
     root.updateWorldMatrix(true, true);
     const worldInverse = new THREE.Matrix4().copy(root.matrixWorld).invert();
 
-    // Collect every triangle (in root-local space) with a running cumulative
-    // area, so particles can be sampled UNIFORMLY across the surface rather
-    // than AT the vertices. Vertex sampling clusters wherever a mesh is sparsely
-    // tessellated — a CylinderGeometry's side has vertices only on its top and
-    // bottom rings, and its caps only at centre + rim, so vertex-sampled
-    // particles bunched into rings (the cylinder's "grouped" particles). Picking
-    // a random triangle weighted by area, then a uniform point inside it, spreads
-    // the particles evenly no matter how the shape happens to be tessellated.
+    // Collect every triangle with a running total of area, so particles can be
+    // spread evenly over the surface. Sampling the vertices instead clustered
+    // them wherever the mesh has few triangles (e.g. rings on a cylinder).
     const tris  = [];   // flat [ax,ay,az, bx,by,bz, cx,cy,cz] per triangle
     const cumul = [];   // cumulative area up to and including each triangle
     let totalArea = 0;
@@ -528,10 +417,8 @@ function buildParticlesFromGeometry(root, count, { radial = false, velocityCompe
         positions[i * 3] = px; positions[i * 3 + 1] = py; positions[i * 3 + 2] = pz;
 
         if (radial) {
-            // Radial length prevents division by zero at the exact center.
-            // Large radial magnitudes so the table's particles burst OUTWARD and
-            // disperse (paired with the table's low streamStrength) instead of
-            // drifting off together as one clump.
+            // Table: particles burst outward from the centre and scatter.
+            // (`|| 1` avoids dividing by zero at the exact centre.)
             const r = Math.sqrt(px * px + pz * pz) || 1;
             const spread = Math.random() * 4.0 + 2.5; // 2.5–6.5
             velocities[i * 3]     = (px / r) * spread;
@@ -553,10 +440,8 @@ function buildParticlesFromGeometry(root, count, { radial = false, velocityCompe
     return geom;
 }
 
-// Wraps geometry + material into the Points object, and puts it on the camera
-// layer the selective-bloom pass renders in isolation (see particleBloom.js).
-// Every dissolve particle system goes through here so that no call site can
-// create one that the bloom pass then silently fails to pick up.
+// Creates a particle Points object on the bloom layer. Always use this, or the
+// glow pass won't see the particles.
 function makeParticlePoints(geometry, material) {
     const points = new THREE.Points(geometry, material);
     points.layers.set(PARTICLE_BLOOM_LAYER);
@@ -567,19 +452,14 @@ function makeParticlePoints(geometry, material) {
 // root (whether a GLB scene or a bare primitive Mesh), positions it with its
 // bottom on the floor, and updates tableState. Returns the new surface Y.
 function setupTableObject(tableObject, scene) {
-    // GLB files contain a tree of Mesh children; a primitive table is just
-    // one Mesh. traverse() visits both cases uniformly (Object3D.traverse
-    // calls the callback on the node itself before any children).
+    // traverse() covers both a GLB (many meshes) and a primitive (one mesh).
     tableObject.traverse((child) => {
         if (!child.isMesh) return;
         child.castShadow = child.receiveShadow = true;
-        // Also lit by the objects-only key, so the table keeps its brightness
-        // when the room's key is turned down. See OBJECT_LIGHT_LAYER.
+        // Also lit by the objects-only light, so it stays bright in the dark room.
         child.layers.enable(OBJECT_LIGHT_LAYER);
 
-        // Clone the material so each submesh owns its shader independently.
-        // Without cloning, all meshes would share one compiled program and
-        // the first mesh to compile would overwrite the others.
+        // Clone the material so each mesh gets its own dissolve shader.
         const mat = child.material.clone();
         mat.userData.ownsAlpha = mat.transparent === true || mat.alphaTest > 0
             || (mat.opacity ?? 1) < 1 || !!mat.alphaMap;
@@ -589,19 +469,10 @@ function setupTableObject(tableObject, scene) {
         injectDissolve(mat, uTableProgress, { space: 'local', freqScale: 4.0, edgeUniform: uObjectDissolveEdge, edgeColorUniform: uObjectDissolveEdgeColor, edgeFollowUniform: uObjectEdgeFollow, edgeGainUniform: uObjectEdgeGain, localMatrixUniform: { value: tableChildToRoot } });
         // After the dissolve, so it wraps that hook instead of clobbering it.
         if (child.userData.isPlinth) injectPlinthBaseShading(mat, PRIMITIVE_TABLE_HEIGHT);
-        // Unique key per submesh prevents Three.js from reusing another mesh's
-        // compiled shader program (which would skip our onBeforeCompile injection).
-        // STABLE key, deliberately not the mesh uuid. The uuid is new on every
-        // load, so keying on it guaranteed a cache MISS every time the table was
-        // swapped and forced a fresh shader compile per submesh — which is most
-        // of the stall before objects come back. The injected source varies only
-        // by `space` and `freqScale` (both fixed here) plus the plinth wrap, so
-        // that is all the key has to separate; three's own key already covers
-        // material parameters like which maps are present.
+        // Stable cache key (not the uuid), so a table swap reuses compiled shaders
+        // instead of recompiling, which caused a stall.
         mat.customProgramCacheKey = () => 'table_dissolve' + (child.userData.isPlinth ? '_plinth' : '');
-        // Same dissolve for the shadow pass, so the table's shadow erodes with it
-        // instead of staying solid until it vanishes. Options must mirror the
-        // injectDissolve call above exactly.
+        // The shadow dissolves with the table. Options must match injectDissolve above.
         child.customDepthMaterial = makeDissolveDepthMaterial(uTableProgress, {
             space: 'local', freqScale: 4.0,
             localMatrixUniform: { value: tableChildToRoot },
@@ -631,9 +502,8 @@ function setupTableObject(tableObject, scene) {
     // ── Build particle positions from the table's own geometry ───────────
     const particleGeom = buildParticlesFromGeometry(tableObject, TABLE_PARTICLE_COUNT, { radial: true });
     if (particleGeom) {
-        // streamStrength 0.4: the table disperses its particles outward instead
-        // of drifting them off together as a clump (unlike the objects, which
-        // keep the full directional "flow into the background").
+        // Low stream strength, so the table's particles scatter instead of
+        // flowing off as one clump like the objects'.
         const particleMat = makeParticleMaterial(uTableProgress, uTableTime, { streamStrength: 0.4 });
         // Attach as child so particles inherit the table's position/rotation automatically.
         tableObject.add(makeParticlePoints(particleGeom, particleMat));
@@ -642,12 +512,9 @@ function setupTableObject(tableObject, scene) {
     return tableSurfaceY;
 }
 
-// Loads/builds a table of the given kind and swaps it in.
-// - First call ever (tableState.object is null): places every stage object
-//   on top of it for the first time (used by loadScene at startup).
-// - Later calls (GUI "Table" dropdown): keeps the existing stage objects and
-//   just shifts them by the surface-height delta, so switching tables live
-//   doesn't require reloading vase/tulip/cup/dummy/teddy from scratch.
+// Loads a table of the given kind and swaps it in. The first time, it also loads
+// every stage object on top; later (GUI "Table" dropdown) it just moves the
+// existing objects by the change in surface height.
 export function setTable(scene, kind, opts = {}) {
     const { customUrl, onAssetLoaded, onAssetFailed, onObjectReady } = opts;
     const oldSurfaceY = tableState.object ? tableState.floorY + tableState.topOffset : null;
@@ -675,16 +542,9 @@ export function setTable(scene, kind, opts = {}) {
     });
 }
 
-// Replaces ONE stage object's model in place: unloads whichever GLB currently
-// fills that slot and loads the given one instead, keeping the slot's table
-// position, height, float and dissolve timing (its OBJECT_DEFS entry) — only the
-// file differs. Unlike setTable this touches a single object, since swapping one
-// model has no effect on where the others sit.
-//
-// initialProgress seeds the new object's dissolve amount. That matters when
-// swapping while everything is dissolved away: a fresh object defaults to 0
-// (fully solid), so without this it would pop into view for a frame before the
-// reverse-dissolve took over.
+// Replaces one stage object's model, keeping its slot's position and float
+// settings (OBJECT_DEFS). initialProgress = 1 keeps it invisible when swapped in
+// while everything is dissolved, instead of flashing solid for a frame.
 function replaceStageObject(scene, label, variant, { onObjectReady, initialProgress = 0 } = {}) {
     const def = OBJECT_DEFS.find((d) => d.label === label);
     if (!def || !variant?.file) return;
@@ -714,14 +574,9 @@ function replaceStageObject(scene, label, variant, { onObjectReady, initialProgr
     });
 }
 
-// Advances every cycling slot to its NEXT variant. Called at the moment
-// everything has finished dissolving in space — while the objects are invisible —
-// so the replacements are what reverse-dissolve back into the room and the change
-// is never seen happening. initialProgress: 1 keeps them fully dissolved until the
-// reverse-dissolve drives them back in step with everything else.
-//
-// The counter persists, so each trip out and back shows a different arrangement
-// rather than one permanent "after" state.
+// Moves each changing slot to its next variant. Called when everything has fully
+// dissolved in space, so the swap is never seen. The counter keeps going, so each
+// trip shows a different arrangement.
 let returnCycle = 0;
 export function applyReturnObjects(scene, { onObjectReady } = {}) {
     returnCycle++;
@@ -733,16 +588,8 @@ export function applyReturnObjects(scene, { onObjectReady } = {}) {
     applyDummyFinish(DUMMY_FINISHES[returnCycle % DUMMY_FINISHES.length]);
 }
 
-// Recolour-in-place, no reload. The materials were already cloned per submesh in
-// loadStageObject, so tinting here can't leak into any other object.
-//
-// The recolour must be REVERSIBLE, and originally it wasn't: it overwrote
-// material.color and set map = null outright, which threw the original look away.
-// So when the cycle came back round to "original" there was nothing to restore —
-// the mannequin just kept whatever finish it was last given (and with a 3-entry
-// list it landed on the darker grey, which is why the third trip looked darker
-// still instead of returning to bare wood). Stashing the original colour and map
-// the first time makes `null` genuinely mean "undo".
+// Recolours the mannequin in place. The original colour and texture are saved
+// the first time, so `null` can restore them.
 function applyDummyFinish(finish) {
     const dummy = stageObjects.find((e) => e.label === 'dummy');
     if (!dummy) return;
@@ -761,8 +608,7 @@ function applyDummyFinish(finish) {
                 if (m.userData.origColor) m.color.copy(m.userData.origColor);
                 m.map = m.userData.origMap;
             } else {
-                // A colour is multiplied OVER a texture, so the grain has to go —
-                // otherwise this only darkens the wood instead of restaining it.
+                // Remove the wood texture, or the colour would only darken it.
                 m.map = null;
                 m.color?.set(finish);
             }
@@ -771,13 +617,10 @@ function applyDummyFinish(finish) {
     });
 }
 
-// Called once per entry in OBJECT_DEFS, after the table surface Y is known.
-// Loads the GLB, applies dissolve shader + particle system, and registers the
-// object in stageObjects so the simulation loop can drive its floating + dissolve.
+// Loads one stage object: applies the dissolve shader and particles, places it
+// on the table, and adds it to stageObjects so it floats and dissolves.
 function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, onObjectReady }) {
-    // Normally 0 (solid). Set to 1 when an object is swapped in while the scene
-    // is dissolved away, so it starts invisible instead of flashing solid — see
-    // replaceStageObject().
+    // 0 = solid. 1 when swapped in while dissolved (see replaceStageObject).
     const uObjProgress = { value: def.initialProgress ?? 0.0 };
     const uObjTime     = { value: 0.0 };
 
@@ -786,35 +629,14 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
 
         scene.add(mesh);
 
-        // Lay the model down before anything is measured.
-        //
-        // `layFlat` MEASURES the model and tips it so its thinnest dimension
-        // becomes the vertical one — i.e. it always comes to rest on its largest
-        // face, like a stone set down on a table. That's more reliable than a
-        // hardcoded angle: which way a scanned model happens to face is arbitrary
-        // (its node transforms can already rotate it), so guessing "90° about X"
-        // is right for one file and wrong for the next. Measuring can't guess
-        // wrong. `rotXDeg`/`rotZDeg` remain for tipping a model deliberately.
-        //
-        // This has to happen BEFORE box0, because rotating changes which
-        // dimension is "height" and therefore the scaleFactor. It's also applied
-        // to the INNER mesh, which only works for recenterXZ objects: those get
-        // wrapped in a group that carries the floating, so the mesh's own
-        // rotation survives. On any other object floating.js overwrites
-        // rotation.x/z every frame with the drift wobble.
+        // Lay the model down before measuring it (rotation changes its height).
+        // Only for recenterXZ objects: they're wrapped in a group that floats, so
+        // the mesh's own rotation isn't overwritten by floating.js.
         if (def.recenterXZ) {
             if (def.layFlat) {
-                // SEARCH for the orientation that genuinely lies flattest, rather
-                // than assuming the model's bounding box is aligned with its flat
-                // face. Snapping the thinnest BOX axis to vertical only works if
-                // the box happens to line up with the geometry — for a scanned
-                // rock it usually doesn't, which left the biface tipped up on an
-                // edge no matter which 90° turn was applied.
-                //
-                // Minimising the object's HEIGHT over candidate rotations is the
-                // same thing as resting it on its broadest face, and it needs no
-                // assumptions about the model at all. ~400 candidates over a few
-                // hundred sampled vertices is a few milliseconds, once, at load.
+                // Try ~400 rotations and keep the one with the lowest height: that's
+                // the model resting on its broadest face. Works for any scanned
+                // shape, unlike assuming its bounding box lines up with a flat face.
                 mesh.updateWorldMatrix(true, true);
                 const pts = [];
                 mesh.traverse((c) => {
@@ -845,13 +667,9 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
                     }
                     mesh.rotation.set(best.rx, 0, best.rz);
                 }
-                // Remember the auto-aligned pose so the GUI trim below is always
-                // applied relative to it, not accumulated on each adjustment.
+                // The automatic pose (stored, not currently read anywhere).
                 mesh.userData.baseRot = mesh.rotation.clone();
-                // Bounding-box alignment only guarantees the flattest BOX side is
-                // down; a scanned rock's actual resting face can still sit at an
-                // angle to its box. stoneOrientation is the manual trim on top,
-                // exposed in the GUI so the final pose can be eyeballed.
+                // Manual extra rotation on top, see stoneOrientation.
                 mesh.rotation.x += THREE.MathUtils.degToRad(stoneOrientation.xDeg);
                 mesh.rotation.y += THREE.MathUtils.degToRad(stoneOrientation.yDeg);
                 mesh.rotation.z += THREE.MathUtils.degToRad(stoneOrientation.zDeg);
@@ -877,13 +695,9 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             child.castShadow = child.receiveShadow = true;
             child.layers.enable(OBJECT_LIGHT_LAYER); // see the table's traverse
 
-            // The dissolve/rim-tint shader injected below reads vNormal and
-            // vViewPosition, varyings that only lit (Standard/Physical)
-            // material shaders declare. An unlit MeshBasicMaterial GLB (some
-            // stone scans export this way) would fail to compile with them
-            // injected and render invisible, so upgrade it to Standard first
-            // — this also makes it actually respond to scene lighting like
-            // every other stage object, instead of looking flat/shadeless.
+            // Unlit (MeshBasic) materials lack what the dissolve shader needs and
+            // would render invisible, so they're upgraded to MeshStandard (which
+            // also lets them respond to light).
             let mat = child.material.clone();
             if (mat.isMeshBasicMaterial) {
                 mat = new THREE.MeshStandardMaterial({
@@ -891,28 +705,21 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
                 });
             }
 
-            // Record whether this material was ALREADY transparent for its own
-            // reasons (glTF alphaMode BLEND/MASK — cut-out leaves, etc.) before we
-            // force transparency on for the dissolve. updateDissolveTransparency
-            // must never take alpha away from those.
+            // Remember if the material needs transparency anyway (e.g. cut-out
+            // leaves), so it's never made opaque between dissolves.
             mat.userData.ownsAlpha = mat.transparent === true || mat.alphaTest > 0
                 || (mat.opacity ?? 1) < 1 || !!mat.alphaMap;
             mat.transparent = true;
 
-            // The child's transform relative to the GLB root, so the surface
-            // samples the noise where its particles do — see posExpr in
-            // injectDissolve. Captured now, while the hierarchy is final.
+            // Child-to-root transform, so the surface and its particles read the
+            // same noise (see posExpr in injectDissolve).
             const childToRoot = new THREE.Matrix4()
                 .multiplyMatrices(new THREE.Matrix4().copy(mesh.matrixWorld).invert(), child.matrixWorld);
             injectDissolve(mat, uObjProgress, { space: 'local', freqScale: OBJECT_FREQ_SCALE, scaleUniform: uScale, edgeUniform: uObjectDissolveEdge, edgeColorUniform: uObjectDissolveEdgeColor, edgeFollowUniform: uObjectEdgeFollow, edgeGainUniform: uObjectEdgeGain, localMatrixUniform: { value: childToRoot } });
-            // One key for every stage object: they all inject the same source
-            // (space 'local', freqScale OBJECT_FREQ_SCALE), and everything that
-            // differs between them — scale, progress, edge colour — is a uniform,
-            // which does not affect the compiled program. Keying per label per
-            // uuid recompiled ~15 shaders on every return for no benefit.
+            // One key for all objects: what differs between them is uniforms, which
+            // don't change the compiled shader.
             mat.customProgramCacheKey = () => 'stage_dissolve';
-            // See the table's equivalent: the shadow has to read the same noise
-            // field as the surface, or it erodes out of step with it.
+            // The shadow dissolves with the object. Options must match injectDissolve above.
             child.customDepthMaterial = makeDissolveDepthMaterial(uObjProgress, {
                 space: 'local', freqScale: OBJECT_FREQ_SCALE, scaleUniform: uScale,
                 localMatrixUniform: { value: childToRoot },
@@ -922,15 +729,9 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
         });
 
         // ── Scale + place on the table ──────────────────────────────────────
-        // obj3d is the node that floats/rotates (and becomes entry.mesh). For
-        // most objects that's the mesh itself. For recenterXZ objects — the
-        // swappable stone, whose scan geometry can sit FAR from its own pivot —
-        // we wrap the mesh in a group and shift the mesh so its geometry is
-        // centered on the group's origin. The group then carries the scale and
-        // placement, so rotation during float spins the stone IN PLACE instead
-        // of orbiting a distant pivot and flinging it off the table (the quartz
-        // fly-away). The old fix moved the pivot to offsetX/Z, which fixed the
-        // resting position but left that orbiting-on-spin behaviour.
+        // obj3d is what floats. Usually the mesh itself; for recenterXZ (the
+        // stone, whose geometry can sit far from its pivot) a group with the mesh
+        // centred inside, so it rotates in place instead of swinging off the table.
         let obj3d;
         if (def.recenterXZ) {
             const c = box0.getCenter(new THREE.Vector3()); // unscaled geometry center (mesh at origin)
@@ -968,37 +769,21 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             mesh.add(makeParticlePoints(particleGeom, particleMat));
         }
 
-        // ── Contact height, and why it is NOT the bounding sphere ───────────
-        // The table collision used to work from a bounding sphere, and that is
-        // the shadow gap under the stones. A sphere's radius is set by an
-        // object's WIDEST axis, so for anything flat and broad — which is every
-        // one of the rocks — the sphere reaches far below the object's actual
-        // underside. Resting that sphere on the tabletop therefore parks the rock
-        // in mid-air: for the quartz biface (≈0.56 × 0.49 footprint, 0.22 thick)
-        // the sphere bottom sits ~0.2 units below the stone itself, so the stone
-        // hovered that far up. With the key light at 55° elevation, a 0.2 hover
-        // throws its shadow 0.2/tan55° ≈ 0.14 to the side — the gap, appearing
-        // and disappearing with the collision strength as you scrolled.
-        //
-        // bottomLocalY is the lowest actual vertex instead (box1 was measured
-        // with the mesh at y = 0, so it's a constant offset from the pivot).
-        // Contact is a question about the underside, and this answers exactly
-        // that, for a flat slab and a round vase alike.
+        // The object's lowest point, used for the table collision. Not a bounding
+        // sphere: for flat stones the sphere reaches well below them, so they
+        // hovered with a visible shadow gap.
         const bottomLocalY = box1.min.y;
 
-        // The sphere is still worth having, but only as a SIZE: the bear's leg
-        // unfold scales its thresholds by it, where "roughly how big is this
-        // object" is all that's wanted and the widest-axis bias is harmless.
+        // The sphere is only used as a rough size, for the bear's leg thresholds.
         const sphere = new THREE.Sphere();
         box1.getBoundingSphere(sphere);
         const radius = sphere.radius * 0.85;
 
         const entry = {
             mesh:         obj3d, // the node that floats/rotates (group for recenterXZ, else the mesh)
-            // The model inside that group. Rotating THIS is safe — floating.js
-            // drives the group, so an orientation tweak here isn't overwritten.
+            // The model inside the group (not currently read anywhere).
             innerMesh:    def.recenterXZ ? mesh : null,
-            offsetY:      def.offsetY ?? 0, // needed to re-seat it after a rotation change
+            offsetY:      def.offsetY ?? 0, // placement offset, also used by the table collision
             label:        def.label,
             uProgress:    uObjProgress,
             uTime:        uObjTime,
@@ -1019,10 +804,9 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
         stageObjects.push(entry);
 
         // ── Skeleton bone animation (bear_skeleton.glb) ─────────────────────
-        // Leg bones are named exactly 'legR' / 'legL'. The GLB rest pose is
-        // standing. We premultiply a 90° forward fold (X axis, parent space) to
-        // create the sitting quaternion, apply it immediately, then slerp back
-        // to the rest (standing) quaternion as uObjProgress rises 0 → 0.4.
+        // Leg bones 'legR' / 'legL'. Builds a sitting pose (folded forward) and a
+        // straight hanging pose; floating.js blends between them by the bear's
+        // height above the table.
         let legBones = null;
         mesh.traverse((child) => {
             if (!child.isSkinnedMesh || legBones) return;
@@ -1036,10 +820,8 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             const standR = bR.quaternion.clone();
             const standL = bL.quaternion.clone();
 
-            // Sitting = rest pose folded forward in the bone's parent space.
-            // 85° (was 100°): past 90° tucked the feet under and read as
-            // over-folded/unnatural; 85° keeps the thighs roughly horizontal
-            // like a normal seated pose.
+            // Sitting = rest pose folded forward 85°, thighs roughly horizontal
+            // (past 90° looked over-folded).
             const SIT_FOLD_DEG = 85;
             const fold = new THREE.Quaternion().setFromAxisAngle(
                 new THREE.Vector3(1, 0, 0), (-SIT_FOLD_DEG * Math.PI) / 180
@@ -1047,16 +829,8 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             const sitR = fold.clone().multiply(standR);
             const sitL = fold.clone().multiply(standL);
 
-            // "Straight" airborne pose. The GLB's rest (standing) pose still has
-            // the legs slightly bent, so simply returning to rest leaves the bear
-            // looking half-folded in mid-air (nothing to sit on up there). We
-            // continue the unfold a bit PAST rest — the opposite sign of the fold
-            // above, about the same X axis — so the legs hang straight when
-            // floating. LEG_STRAIGHTEN_DEG is the only knob; raise it if they
-            // should extend more, lower it (0 = back to rest pose) if too much.
-            // 5° (was 25°): at 25 the legs read as ~20° OVER-extended — hyper-
-            // straightened past a natural hang. 5 keeps just a hint of unfold
-            // past the GLB's rest pose so they don't look half-folded in mid-air.
+            // Hanging pose: a little past the rest pose, whose legs are still
+            // slightly bent. Higher values over-extend them.
             const LEG_STRAIGHTEN_DEG = 5;
             const straighten = new THREE.Quaternion().setFromAxisAngle(
                 new THREE.Vector3(1, 0, 0), (LEG_STRAIGHTEN_DEG * Math.PI) / 180
@@ -1068,17 +842,9 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
             bR.quaternion.copy(sitR);
             bL.quaternion.copy(sitL);
 
-            // Ground the bear on the table RIGHT NOW, in the sitting pose it was
-            // just put into. This used to be deferred to floating.js, which had to
-            // wait ~45 frames at p < 0.1 for the pose to settle — so the bear
-            // visibly hung above the tabletop and dropped into place a moment
-            // after every other object had already settled. Worse, a bear swapped
-            // in on the way home started that wait all over again.
-            //
-            // Forcing the matrices and skeleton up to date makes the measurement
-            // valid immediately: walk the skinned vertices through the CURRENT
-            // pose (applyBoneTransform is the same maths raycasting uses), find
-            // the true low point, and shift the mesh so it lands on the surface.
+            // Seat the bear on the table now, in the sitting pose: find the lowest
+            // vertex in the posed skeleton and move the mesh onto the surface.
+            // Otherwise it would hang above the table and drop into place late.
             mesh.position.y = surfaceY + Math.abs(box1.min.y) * 0.55; // rough start
             mesh.updateMatrixWorld(true);
             child.skeleton.update();
@@ -1102,17 +868,13 @@ function loadStageObject(def, surfaceY, scene, { onAssetLoaded, onAssetFailed, o
         });
         entry.legBones = legBones; // null for non-skeleton objects
 
-        // The mannequin's finish is part of the return cycle, but index 0 is its
-        // OPENING look — apply it here so the room starts dark-brown rather than
-        // waiting for the first trip back.
+        // Apply the mannequin's finish for the current cycle (the original wood at start).
         if (def.label === 'dummy') {
             applyDummyFinish(DUMMY_FINISHES[returnCycle % DUMMY_FINISHES.length]);
         }
 
-        // Optional: these run at the very END of a successful load, so a missing
-        // (or throwing) callback used to look exactly like a failed GLB — the
-        // error surfaced through GLTFLoader's onError and the object was quietly
-        // lost even though it had loaded fine.
+        // Optional callbacks; `?.` so a missing one can't make a loaded object
+        // look like a failed load.
         onAssetLoaded?.(); // this object is ready
         onObjectReady?.(def.label, entry, scaleFactor);
     }, undefined, (err) => {

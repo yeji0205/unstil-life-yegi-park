@@ -1,12 +1,8 @@
 // ─── Performance HUD (diagnostic) ─────────────────────────────────────────────
-// A small always-on readout in the corner. Its job is to turn "it feels slow"
-// into numbers we can act on, and to answer the single most important question
-// about a slow WebGL page: is the browser actually using the GPU?
-//
-// If UNMASKED_RENDERER reads something like "SwiftShader" or "Software", Chrome
-// has fallen back to CPU rasterisation and NOTHING in the scene will run well no
-// matter how it's optimised — that's a browser/driver problem, not a scene one.
-// A real answer looks like "Apple M-series" or "AMD/Intel …".
+// A small readout in the corner, toggled with "t": fps, frame time, resolution,
+// draw calls and which GPU is used. If the GPU reads "SwiftShader" or "Software",
+// the browser is rendering on the CPU and nothing will run well; that's a
+// browser/driver problem, not the scene.
 //
 // Delete this file and its two lines in main.js to remove it.
 
@@ -18,11 +14,8 @@ export function createPerfHud(renderer) {
         color: '#cfe8ff', background: 'rgba(0,0,0,0.62)',
         padding: '7px 10px', borderRadius: '5px', whiteSpace: 'pre',
         pointerEvents: 'none', userSelect: 'none',
-        // Hidden until "t" is pressed. This is a diagnostic, and the piece is
-        // looked at far more often than it is measured, so off is the right
-        // resting state; update() keeps running either way, so the numbers are
-        // already correct the moment it appears rather than needing half a
-        // second to fill in.
+        // Hidden until "t" is pressed. It keeps updating while hidden, so the
+        // numbers are ready when it appears.
         display: 'none',
     });
     document.body.appendChild(el);
@@ -30,8 +23,7 @@ export function createPerfHud(renderer) {
     // "t" shows/hides the readout.
     window.addEventListener('keydown', (e) => {
         if (e.key !== 't' && e.key !== 'T') return;
-        // Not while a GUI field has focus, or typing "t" into one of lil-gui's
-        // value boxes would toggle the HUD instead of entering a character.
+        // Ignored while typing in a GUI field.
         const target = e.target;
         if (target instanceof HTMLElement
             && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;

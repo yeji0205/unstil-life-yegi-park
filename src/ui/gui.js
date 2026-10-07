@@ -5,11 +5,9 @@ import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../scene/room.js';
 import { primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../objects/glbLoader.js';
 import { roomLighting } from '../scene/lighting.js';
 
-// A small centered modal — readable padding/typography, a dimmed backdrop, and
-// up to two buttons. Used instead of the browser's cramped alert() for the
-// custom-background instructions (which need real structure: what's needed,
-// how to name the files, and what size/order). Returns nothing; buttons close
-// it and fire their callback.
+// A centred dialog with a dimmed backdrop and up to two buttons, used instead
+// of alert() for the custom-skybox instructions. Buttons close it and run their
+// callback.
 function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Cancel' }) {
     const backdrop = document.createElement('div');
     Object.assign(backdrop.style, {
@@ -55,11 +53,9 @@ function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Ca
     document.body.appendChild(backdrop);
 }
 
-// Builds the lil-gui debug panel. Hidden during the loading screen; call
-// `show()` once it's gone. `onDissolveClick` is invoked when the user presses
-// the dissolve button — the simulation phase machine owns the actual gating
-// logic (only fires once in the 'space' phase) and enables/disables the
-// button returned here as `dissolveController`.
+// Builds the lil-gui panel (hidden until the loading screen is gone; call
+// show()). The phase machine decides when Dissolve works and enables/disables
+// the button returned as `dissolveController`.
 export function createDebugGUI({
     uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink,
     uParticleShiny, bloomSettings,
@@ -83,11 +79,8 @@ export function createDebugGUI({
     const dissolveController = gui.add(dissolveActions, 'dissolve').name('▶ Dissolve Objects');
     dissolveController.disable(); // enabled by the phase machine when room is fully gone
 
-    // Freezes the dissolve where it is. The whole effect is over in three
-    // seconds, which is too quick to study the noise pattern it's built on, so
-    // this is the control for looking at a single moment of it. Armable before
-    // the dissolve starts as well as during it — pause first, then press
-    // Dissolve, and it holds at the very beginning.
+    // Freezes the dissolve, to look at one moment of it. Can be pressed before
+    // Dissolve too, which then holds at the very start.
     let dissolvePaused = false;
     const dissolvePauseAction = {
         toggle: () => {
@@ -98,17 +91,10 @@ export function createDebugGUI({
     };
     const dissolvePauseController = gui.add(dissolvePauseAction, 'toggle').name('⏸ Pause Dissolve');
 
-    // Scrub bar for the dissolve: drag back to rewind, forward to advance.
-    //
-    // The value is a getter/setter onto the phase machine rather than a stored
-    // number, and .listen() re-reads it every frame, so the bar tracks playback
-    // and the scroll-driven return without anything having to push updates to it.
-    //
-    // Dragging pauses. Without that a seek lands and playback carries straight
-    // on from there, so the bar can't hold a moment — which is the point of it.
-    // The pause only happens if the seek actually applied (i.e. mid-dissolve):
-    // pausing is armable in advance, so arming it from a drag that did nothing
-    // would make the next Dissolve press silently hold at the very start.
+    // Scrub bar: drag back to rewind, forward to advance. It reads the phase
+    // machine every frame (.listen()), so it also follows playback and the return.
+    // Dragging pauses, so the bar holds the moment, but only if the seek applied
+    // (mid-dissolve); otherwise the next Dissolve would start paused.
     const dissolveScrub = {
         get position() { return getDissolveFraction(); },
         set position(v) {
@@ -128,18 +114,10 @@ export function createDebugGUI({
     };
     const bgMotionController = gui.add(bgMotionAction, 'toggle').name('🌀 Animate Background');
 
-    // Particle appearance A/B. Top level rather than inside "Dissolve Look"
-    // because the only moment it can be judged is the few seconds a dissolve is
-    // actually running — it has to be one click away, not behind a folder.
-    // Flipping it writes one uniform and swaps the render path in main.js, so it
-    // takes effect on the very next frame and can be switched mid-stream. Shiny
-    // mode adds a particles-only render pass plus the bloom mip chain (see
-    // effects/particleBloom.js), so switching to flat is also the fast path.
-    // See uParticleShiny in dissolve.js.
-    //
-    // The label names what the NEXT click will do, so it is the OPPOSITE of the
-    // current mode. Derived from the uniform rather than hard-coded, so it stays
-    // correct whatever uParticleShiny defaults to.
+    // Flat/shiny particle switch, at the top level so it can be flipped during a
+    // dissolve; it takes effect on the next frame. Flat mode skips the glow pass,
+    // so it's also faster. The label names what the NEXT click does (the opposite
+    // of the current mode), and is read from the uniform so it always matches.
     const shinyLabel = () => (uParticleShiny.value > 0.5
         ? '⚪ Flat White Particles'
         : '✨ Shiny Particles');
@@ -152,18 +130,10 @@ export function createDebugGUI({
     const particleShinyController = gui.add(particleShinyAction, 'toggle').name(shinyLabel());
 
     // ─── Panel layout ────────────────────────────────────────────────────────
-    // The four buttons above are the only things left loose at the top level:
-    // they're the controls you press rather than adjust, so they're grouped
-    // together and reachable without opening anything. Everything else lives in
-    // a folder — previously some settings sat loose and some were in folders,
-    // which made the panel read as a list with arbitrary dividers in it.
-    //
-    // lil-gui renders in creation order, so these three are declared here to fix
-    // the sequence; their contents are attached further down, next to the code
-    // that owns them. The remaining folders (Room Textures, Sound, Objects,
-    // Camera position) are created later in the file and follow in that order,
-    // ending with the read-only camera readout — nothing to change there, so it
-    // belongs at the bottom.
+    // Only the controls you press (buttons and the scrub bar) sit at the top
+    // level; everything else is in folders. lil-gui shows things in creation
+    // order, so these three folders are created here to fix the order and filled
+    // in further down.
     const sceneFolder    = gui.addFolder('Scene');
     const dissolveFolder = gui.addFolder('Dissolve Look');
     const contentFolder  = gui.addFolder('Scene Contents');
@@ -263,12 +233,8 @@ export function createDebugGUI({
 
 
     // ─── Particle bloom ──────────────────────────────────────────────────────
-    // Only has any effect while shiny mode is on — flat mode never runs the
-    // post-process at all. Worth having on sliders rather than hardcoded because
-    // the right values depend on what's behind the particles: the glow needs
-    // more composite strength to read against a bright nebula than against the
-    // flat black void. Defaults are retuned from the Codrops demo's numbers —
-    // see bloomSettings for why its values are too hot at this particle count.
+    // Only affects shiny mode. Sliders, because the right glow depends on the
+    // background (a bright nebula needs more than a black void).
     const bloomFolder = dissolveFolder.addFolder('Particle Bloom (shiny only)');
     // Composite strength is the dial to reach for first — it scales the whole
     // glow after the fact, without touching what qualifies as bloom.
@@ -281,14 +247,9 @@ export function createDebugGUI({
     bloomFolder.add(bloomSettings, 'threshold', 0, 1, 0.01).name('Glow Threshold');
     bloomFolder.add(bloomSettings, 'strength', 0, 3, 0.01).name('Bloom Pass Strength');
 
-    // Skybox picker — swaps the cubemap live. Add new folder names to
-    // skyboxOptions (scene/environment.js) to list them here.
-    // "Add custom skybox…" is different from every other preset: a single flat
-    // image can't be a skybox (the background is a box with 6 separately
-    // textured faces). Rather than make the user pick 6 files by hand, this is
-    // a FOLDER picker (webkitdirectory): they choose the folder that holds the
-    // 6 face images and every file inside is read automatically, then matched
-    // to the faces by filename (see environment.js matchFaceFiles).
+    // Skybox picker (options from SKYBOX_OPTIONS in scene/environment.js).
+    // "Add custom skybox…" opens a FOLDER picker: a skybox needs 6 face images,
+    // which are matched to the faces by filename (see matchFaceFiles).
     const skyboxFileInput = document.createElement('input');
     skyboxFileInput.type = 'file';
     skyboxFileInput.webkitdirectory = true; // pick a folder, get all files inside
@@ -301,12 +262,8 @@ export function createDebugGUI({
         .name('Skybox')
         .onChange((folderName) => {
             if (folderName === skyboxCustomLabel) {
-                // Snap the dropdown back to the last real preset immediately.
-                // lil-gui only fires onChange when the value CHANGES, so if the
-                // control stayed stuck on "Add custom skybox…" (after a pick, or a
-                // cancelled dialog) selecting it again would do nothing — the
-                // "can't add a custom skybox a second time" trap. Resetting the
-                // display means picking it always re-fires and re-opens the picker.
+                // Reset the dropdown, or choosing "Add custom skybox…" a second
+                // time wouldn't fire onChange (the value wouldn't change).
                 skyboxSettings.cubemap = lastSkybox;
                 skyboxCtrl.updateDisplay();
                 showModal({
@@ -342,11 +299,8 @@ export function createDebugGUI({
             syncVoidColorVisibility(folderName);
         });
 
-    // Background colour, for the solid-colour option only. Shown and hidden with
-    // the dropdown rather than always present: with a cube map selected there's
-    // nothing for it to affect — the skybox mesh covers the background entirely —
-    // and a control that visibly does nothing is worse than an absent one. Same
-    // pattern as Table Material below, which appears only for Box/Cylinder.
+    // Background colour: only shown for the solid-colour option, since it does
+    // nothing while a skybox is showing. (Table Material below works the same way.)
     const voidColorCtrl = contentFolder.addColor(voidColor, 'hex').name('Background Color')
         .onChange(onVoidColorChange);
     const voidResetCtrl = contentFolder.add({ reset: () => {
@@ -485,11 +439,8 @@ export function createDebugGUI({
     addTexturePicker('Metalness…',      'metalnessMap');
     addTexturePicker('Bump / Height…',  'bumpMap');
 
-    // Shown AND expanded the moment Box/Cylinder is picked, directly beneath the
-    // Table dropdown it belongs to. Left collapsed, the colour and texture
-    // controls were behind a disclosure arrow that nobody would think to click —
-    // the options may as well not have existed. Hidden entirely for the GLB
-    // tables, which carry their own materials and would ignore these.
+    // Shown, and opened, only for Box/Cylinder (collapsed, nobody found it). GLB
+    // tables have their own materials and ignore these.
     const syncTableMatVisibility = (label) => {
         if (label === 'Box' || label === 'Cylinder') {
             tableMatFolder.show();
@@ -533,12 +484,9 @@ export function createDebugGUI({
         stoneFileInput.value = '';
     });
 
-    // Room surfaces — one folder per surface, one picker per PBR map type, so a
-    // full texture set can be swapped in from disk without touching the code.
-    // Uploads tile at the same world scale as the built-in sets (see
-    // setRoomTexture), so they don't need to match any particular resolution.
-    // Closed by default: five map slots × two surfaces is a very tall list, and
-    // it's a set-up control rather than one you reach for while looking at the scene.
+    // Room textures: one folder per surface, one file picker per map type.
+    // Uploads tile at the same world scale as the built-in textures, whatever
+    // their resolution.
     const roomTexFolder = gui.addFolder('Room Textures');
     roomTexFolder.close();
     ROOM_SURFACES.forEach((surface) => {
@@ -564,11 +512,8 @@ export function createDebugGUI({
             .name('↺ Reset to original');
     });
 
-    // Sound picker + volume — same pattern as the Table picker: preset
-    // options switch immediately, "Custom audio…" opens a hidden file input
-    // and only takes effect once a file is actually chosen. Any format the
-    // browser can decode works (mp3/wav/ogg/m4a). Used for both the room
-    // track (café, fades out into space) and the space track (fades in).
+    // Sound pickers and volumes for the room, space and dissolve sounds. Presets
+    // switch immediately; "Custom audio…" opens a file picker (mp3/wav/ogg/m4a).
     const soundFolder = gui.addFolder('Sound');
     function addSoundPicker(name, options, defaultLabel, onChange, onCustomFile, volume) {
         const fileInput = document.createElement('input');
@@ -643,18 +588,12 @@ export function createDebugGUI({
         entry.guiFolder = folder; // saved so we can hide it after permanent dissolve
     }
 
-    // Every folder starts closed, nested ones included. The four buttons above
-    // are what you press while the piece is running; the folders are for tuning,
-    // so the panel opens as a short list of headings rather than a wall of
-    // sliders you have to scroll past. Done here, after everything is built,
-    // rather than as a .close() on each addFolder call — one rule that a new
-    // folder cannot forget to follow.
+    // Close every folder (nested ones too), so the panel opens as a short list.
+    // Done once here, so a new folder can't forget it.
     (function closeAll(g) {
         for (const folder of g.folders) { folder.close(); closeAll(folder); }
     })(gui);
-    // ...except Scene Contents, which holds the skybox / table / stone pickers —
-    // the things swapped most often while working, so it is the one folder worth
-    // having in view.
+    // ...except Scene Contents (skybox, table, stone), used most often.
     contentFolder.open();
 
     return { gui, dissolveController, updateCameraDebug, addObjectFolder, reportSkyboxImages };
