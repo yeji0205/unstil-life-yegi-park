@@ -228,10 +228,18 @@ function animate() {
     perfHud.update();
     cameraControls.controls.update();
     // Two render paths:
-    //  - shiny particles on: the same straight render, plus a particles-only
-    //    pass for the glow map and an additive overlay of it.
+    //  - shiny particles on AND particles on screen: the straight render, plus
+    //    a particles-only pass for the glow map and an additive overlay of it.
     //  - otherwise: one straight render.
-    if (uParticleShiny.value > 0.5) particleBloom.render();
+    // Particles only exist while the table and objects are part-way through
+    // dissolving (progress between 0 and 1). At 0 (intact) or 1 (gone) there is
+    // nothing to glow, so the glow passes are skipped; the image is identical.
+    if (uParticleShiny.value > 0.5 && particlesOnScreen()) particleBloom.render();
     else renderer.render(scene, camera);
+}
+
+function particlesOnScreen() {
+    const midDissolve = (u) => u.value > 0.001 && u.value < 0.999;
+    return midDissolve(tableState.uProgress) || stageObjects.some((o) => midDissolve(o.uProgress));
 }
 animate();
