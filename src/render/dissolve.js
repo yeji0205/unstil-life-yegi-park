@@ -280,7 +280,6 @@ export const objectParticleVertexShader = /* glsl */`
     uniform float   uTime;
     varying float   vAlpha;
     varying float   vSparkle;    // twinkle factor for the rays/brightness
-    varying float   vStreakAngle; // unused by the current fragment shader
     varying float   vRandom;     // stable per-particle 0..1
     ${NOISE_GLSL}
 
@@ -335,8 +334,6 @@ export const objectParticleVertexShader = /* glsl */`
         float random = fract(sin(dot(position, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
         vRandom      = random;
 
-        vStreakAngle = random * 6.2831853 + uTime * (0.45 + random * 0.5);
-
         // ─── Twinkle (shiny only) ────────────────────────────────────────────
         // Own speed and start per particle, so they never flash in sync.
         float flare = 0.5 + 0.5 * sin(uTime * (1.6 + random * 2.4) + random * 31.4);
@@ -376,7 +373,6 @@ export const objectParticleFragmentShader = /* glsl */`
     uniform float     uSpikeLength;
     varying float vAlpha;
     varying float vSparkle;
-    varying float vStreakAngle;
     varying float vRandom;
 
     void main(){

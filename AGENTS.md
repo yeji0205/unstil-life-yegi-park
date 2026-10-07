@@ -282,8 +282,7 @@ background motion, and the flat/shiny particle A/B toggle.
   whole frame washed out by R +7 / G +14 / B +17 of 255 with no particles even
   on screen. It also silently discards the canvas MSAA. `particleBloom.js`
   therefore renders the base frame with a plain `renderer.render()` and adds
-  only the glow, as an additive full-screen quad. The painting-intro note in
-  main.js is the same trap ("made the volumetric lighting look off").
+  only the glow, as an additive full-screen quad.
 - Known cosmetic limitation: the perf HUD's `calls`/`tris` readout is wrong while
   shiny mode is on, because `renderer.info` resets per `render()` call and the
   composer makes several. The fps/ms figures are still correct (they're timed

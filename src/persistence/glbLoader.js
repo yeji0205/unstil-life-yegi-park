@@ -733,29 +733,6 @@ export function applyReturnObjects(scene, { onObjectReady } = {}) {
     applyDummyFinish(DUMMY_FINISHES[returnCycle % DUMMY_FINISHES.length]);
 }
 
-// Re-applies stoneOrientation to the stone that's currently on the table, and
-// re-seats it afterwards. Rotating changes which part of the model is lowest, so
-// without the re-seat a tilt leaves the stone hovering or buried.
-export function applyStoneOrientation() {
-    const entry = stageObjects.find((e) => e.label === 'stone');
-    const inner = entry?.innerMesh;
-    const base  = inner?.userData.baseRot;
-    if (!inner || !base) return;
-
-    inner.rotation.set(
-        base.x + THREE.MathUtils.degToRad(stoneOrientation.xDeg),
-        base.y + THREE.MathUtils.degToRad(stoneOrientation.yDeg),
-        base.z + THREE.MathUtils.degToRad(stoneOrientation.zDeg)
-    );
-
-    const group = entry.mesh;
-    group.updateWorldMatrix(true, true);
-    const box = new THREE.Box3().setFromObject(group, true);
-    const surfaceY = tableState.floorY + tableState.topOffset;
-    group.position.y += (surfaceY + entry.offsetY) - box.min.y;
-    entry.restY = group.position.y;
-}
-
 // Recolour-in-place, no reload. The materials were already cloned per submesh in
 // loadStageObject, so tinting here can't leak into any other object.
 //

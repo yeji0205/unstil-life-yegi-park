@@ -4,7 +4,6 @@ import { createRenderer, createCamera, setupResize, createAdaptiveQuality } from
 import { setupLighting } from './src/render/lighting.js';
 import { uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink, uParticleShiny, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, updateDissolveTransparency } from './src/render/dissolve.js';
 import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
-import { createPaintingIntro } from './src/render/paintingIntro.js';
 import { createParticleBloom, bloomSettings } from './src/render/particleBloom.js';
 import { PARTICLE_BLOOM_LAYER } from './src/render/dissolve.js';
 
@@ -127,22 +126,6 @@ function selectCustomSkybox(files) {
 // ─── Camera controls ─────────────────────────────────────────────────────────
 const cameraControls = createCameraControls(camera, renderer.domElement);
 
-// ─── Painting intro ──────────────────────────────────────────────────────────
-// A stylized (Caravaggio) painting of the starting room, shown first and
-// cross-dissolved into the live scene once the viewer clicks "Reveal".
-//
-// PERFORMANCE NOTE: while the painting is on screen, paintingIntro.render()
-// draws the WHOLE scene twice per frame — an offscreen pass (so the painting
-// can blend into the real render) plus the on-screen pass — which roughly
-// halves the framerate for the entire time it's shown, and also routes the
-// additive light cone through an offscreen buffer (that's what made the
-// volumetric lighting look off). Set this to false to skip the intro entirely
-// and start straight in the interactive 3D scene at full performance.
-const SHOW_INTRO_PAINTING = false;
-const paintingIntro = SHOW_INTRO_PAINTING
-    ? createPaintingIntro(renderer, scene, camera, 'asset/image/intro_painting.png')
-    : null;
-
 // Swaps the table geometry live. Called both from the GUI's preset options
 // (Box/Cylinder/Table (default)) and after a custom .glb file is picked —
 // setTable() itself handles keeping the existing stage objects and just
@@ -232,27 +215,15 @@ const phaseMachine = createPhaseMachine({
 });
 
 // ─── Loading screen + asset loading ──────────────────────────────────────────
-// Once the "Unstil Life" text-dissolve loading screen is gone, start
-// dissolving the painting intro; only once THAT finishes (or immediately, if
-// there's no intro image) does scroll/orbit interaction unlock.
+// Once the "Unstil Life" text-dissolve loading screen is gone, scroll/orbit
+// interaction unlocks.
 const loadingScreen = createLoadingScreen(LOADING_TOTAL, () => {
     gui.gui.show();
     // Now that the room is visible, invite the click that unlocks audio. It
     // removes itself as soon as sound is actually playing.
     createSoundHint(ambientSound.onStarted);
-    const startInteraction = () => {
-        cameraControls.controls.enabled = true;
-        phaseMachine.enableInteraction();
-    };
-    if (paintingIntro) {
-        // Show the painting and wait. Note the GUI no longer carries a reveal
-        // button (SHOW_INTRO_PAINTING is off, so there's nothing to reveal) —
-        // re-enabling the intro means restoring one, or arming it on a click.
-        paintingIntro.arm(startInteraction);
-    } else {
-        // Intro disabled — go straight into the interactive 3D scene.
-        startInteraction();
-    }
+    cameraControls.controls.enabled = true;
+    phaseMachine.enableInteraction();
 });
 // Frame-time / GPU readout, bottom-left. Delete this line and the .update()
 // call in the loop to remove it.
@@ -279,7 +250,6 @@ function animate() {
     updateSkyboxFlow(t);
     updateStars(dt);
     ambientSound.update(p, t);
-    paintingIntro?.update(dt);
     updateFloating({ t, p, stageObjects, tableState });
     updateDissolveTransparency(); // keep materials opaque unless mid-dissolve
     cameraControls.updateAutoZoomOut(p);
@@ -289,14 +259,11 @@ function animate() {
     adaptiveQuality.update(dt);
     perfHud.update();
     cameraControls.controls.update();
-    // Three render paths:
-    //  - painting intro active: its own two-pass cross-dissolve (and it owns
-    //    the frame, so bloom sits out — the intro is a still image anyway).
+    // Two render paths:
     //  - shiny particles on: the same straight render, plus a particles-only
     //    pass for the glow map and an additive overlay of it.
-    //  - otherwise: one straight render, exactly as before.
-    if (paintingIntro) paintingIntro.render(scene, camera);
-    else if (uParticleShiny.value > 0.5) particleBloom.render();
+    //  - otherwise: one straight render.
+    if (uParticleShiny.value > 0.5) particleBloom.render();
     else renderer.render(scene, camera);
 }
 animate();

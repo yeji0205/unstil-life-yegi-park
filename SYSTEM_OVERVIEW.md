@@ -47,9 +47,6 @@ Point-by-point comparison against the submitted technical proposal
 
 Not in the proposal at all — added during development:
 
-- **Painting intro** (§5): AI-generated Van-Gogh-style painting of the opening
-  scene that merges into the live 3D render via a two-pass per-pixel color
-  blend with a halftone dot-soak mask, before interaction unlocks.
 - **Background motion** (§7): GUI-toggleable curl-noise swirl on the skybox
   texture + synced star-field rotation (Vrellis *Starry Night* reference).
 - **Table system** (§8): live-swappable table geometry (default GLB / Box /
@@ -66,7 +63,6 @@ Not in the proposal at all — added during development:
 ```
 page load
   → loading screen (particle-dissolve "Unstil Life" text, while GLBs load)
-  → painting intro (halftone dot-soak from a stylized painting into the live 3D scene)
   → interactive scene unlocks (scroll + orbit)
       'room'       — scroll dissolves the room, revealing space
       'space'      — orbit/zoom freely; "Dissolve Objects" button arms
@@ -106,7 +102,6 @@ src/render/
                                 lerp, per-background lighting presets, the
                                 volumetric light beam
   skyboxFlow.js                curl-noise "Starry Night" swirl on the skybox
-  paintingIntro.js             the painting→scene intro transition (see §5)
 
 src/geometry/
   room.js                      6-plane room (floor/ceiling/4 walls)
@@ -148,30 +143,11 @@ Every dissolving surface also gets a particle burst (`objectParticleVertexShader
 in `dissolve.js`) sampled from its own geometry, visible only in a narrow band
 around the current dissolve edge.
 
-## 5. Painting intro (not in the original plan)
+## 5. Painting intro (removed)
 
-Before the viewer can interact, a stylized painting (currently a
-Van-Gogh-style AI-generated image at `asset/image/intro_painting.png`) is shown,
-then transitions into the live 3D scene:
-
-- A screen-aligned quad, parented to the camera, sized to exactly fill its
-  view frustum — always covers the screen regardless of camera position.
-- **Two-pass render** (`paintingIntro.render()`): the real scene is rendered
-  once into an offscreen `WebGLRenderTarget` (quad hidden), then rendered
-  again on-screen (quad visible) — the quad's own shader samples *both* that
-  captured "real" color and the painting texture at the same screen position
-  and explicitly mixes them. This is a genuine per-pixel color merge, not an
-  alpha-blend trick.
-- **Halftone dot-soak mask**: the merge ratio is masked by a grid of round
-  dots (46 across the shorter axis) that shrink away over ~5 seconds,
-  staggered per-cell via noise so they don't all disappear in lockstep — an
-  organic "ink soaking into canvas" look rather than a uniform wipe or the
-  swirl/spiral look that was tried and rejected earlier.
-- If the image file fails to load, the intro is skipped silently (console
-  warning only) and the scene is immediately interactive — this path is
-  exercised whenever `asset/image/intro_painting.png` is missing.
-- Scroll (`phaseMachine.enableInteraction()`) and orbit (`controls.enabled`)
-  stay locked out until the merge completes.
+A painting-to-scene intro used to play before interaction unlocked. It had been
+switched off for some time and was removed in October 2026; it remains in the
+git history (`src/render/paintingIntro.js`).
 
 ## 6. Lighting model
 

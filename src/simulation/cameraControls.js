@@ -63,9 +63,7 @@ export function createCameraControls(camera, domElement) {
     // middle-drag are reversed too.
     controls.zoomSpeed     = -1.0;
     controls.target.set(0, -0.69, -0.5); // aimed at scene center, shifted up with camera
-    // Disabled until the painting intro (if any) finishes dissolving — see
-    // main.js, which flips this to true once createPaintingIntro's reveal
-    // completes (or immediately, if there's no intro image to show).
+    // Disabled until the loading screen is gone; main.js enables it then.
     controls.enabled = false;
 
     // Captured once at startup — the baseline camera↔target offset that
