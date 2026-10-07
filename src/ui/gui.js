@@ -2,8 +2,22 @@ import GUI from 'lil-gui';
 import { flowState } from '../effects/skyboxFlow.js';
 import { scrollSmoothing, dissolveDuration } from '../scene/phaseMachine.js';
 import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../scene/room.js';
-import { primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../objects/glbLoader.js';
+import { primitiveTableColor } from '../objects/plinth.js';
+import { STONE_NAMES } from '../objects/objectVariants.js';
 import { roomLighting, environmentMap } from '../scene/lighting.js';
+
+// The Table and Stone dropdown labels live here because they're only GUI text:
+// the scene is told a table kind ('glb' | 'box' | 'cylinder') or a stone name.
+// "Custom GLB…" in either dropdown opens a file picker.
+const CUSTOM_GLB_LABEL = 'Custom GLB…';
+// The Table dropdown: label → the table kind the scene builds. To add a shape:
+// a label here and a case in loadTableGeometry() (objects/table.js).
+const TABLE_KIND_BY_LABEL = {
+    'Table (default)': 'glb',
+    'Box':             'box',
+    'Cylinder':        'cylinder',
+};
+const TABLE_OPTIONS = [...Object.keys(TABLE_KIND_BY_LABEL), CUSTOM_GLB_LABEL];
 
 // A centred dialog with a dimmed backdrop and up to two buttons, used instead
 // of alert() for the custom-skybox instructions. Buttons close it and run their
@@ -54,14 +68,14 @@ function showModal({ title, bodyHTML, confirmLabel, onConfirm, cancelLabel = 'Ca
 }
 
 // Builds the lil-gui panel (hidden until the loading screen is gone; call
-// show()). The phase machine decides when Dissolve works and enables/disables
-// the button returned as `dissolveController`.
+// show()). The phase machine decides when Dissolve works; main.js passes that
+// on through the returned setDissolveAvailable().
 export function createDebugGUI({
     uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink,
     uParticleShiny, bloomSettings,
     skyboxOptions, defaultSkybox, skyboxCustomLabel, onSkyboxChange, onCustomSkyboxFiles,
     skyboxNoneLabel, voidColor, onVoidColorChange,
-    tableOptions, defaultTable, tableCustomLabel, onTableChange, onCustomTableFile, onTableTextureFile,
+    onTableChange, onCustomTableFile, onTableTextureFile,
     onRoomTextureFile, onRoomTextureReset, onTableColorChange,
     onStoneChange, onCustomStoneFile,
     roomSoundOptions, defaultRoomSound, spaceSoundOptions, defaultSpaceSound,
@@ -77,7 +91,8 @@ export function createDebugGUI({
     // Button lives in the GUI panel. Disabled until phase === 'space'.
     const dissolveActions = { dissolve: () => onDissolveClick() };
     const dissolveController = gui.add(dissolveActions, 'dissolve').name('▶ Dissolve Objects');
-    dissolveController.disable(); // enabled by the phase machine when room is fully gone
+    dissolveController.disable(); // enabled once the room is fully gone (setDissolveAvailable)
+    function setDissolveAvailable(available) { dissolveController.enable(available); }
 
     // Freezes the dissolve, to look at one moment of it. Can be pressed before
     // Dissolve too, which then holds at the very start.
@@ -377,16 +392,16 @@ export function createDebugGUI({
     fileInput.style.display = 'none';
     document.body.appendChild(fileInput);
 
-    const tableSettings = { table: defaultTable };
-    contentFolder.add(tableSettings, 'table', tableOptions)
+    const tableSettings = { table: TABLE_OPTIONS[0] };
+    contentFolder.add(tableSettings, 'table', TABLE_OPTIONS)
         .name('Table')
         .onChange((label) => {
-            if (label === tableCustomLabel) {
+            if (label === CUSTOM_GLB_LABEL) {
                 fileInput.click();
                 syncTableMatVisibility(label);
                 return;
             }
-            onTableChange(label);
+            onTableChange(TABLE_KIND_BY_LABEL[label]);
             syncTableMatVisibility(label);
         });
 
@@ -400,11 +415,11 @@ export function createDebugGUI({
     // Table material — only meaningful for the Box/Cylinder plinths, since the
     // GLB tables carry their own materials. A colour swatch for a plain painted
     // plinth, plus the full set of PBR map slots for anything richer. Maps mix
-    // freely and persist across Box↔Cylinder swaps (glbLoader keeps them).
+    // freely and persist across Box↔Cylinder swaps (objects/plinth.js keeps them).
     const tableMatFolder = contentFolder.addFolder('Table Material (Box/Cyl)');
 
     // Colour applies only when no albedo map is loaded — a map is TINTED by
-    // colour, so the two would fight. glbLoader whitens the tint in that case.
+    // colour, so the two would fight. plinth.js whitens the tint in that case.
     tableMatFolder.addColor(primitiveTableColor, 'hex').name('Plinth Color')
         .onChange(onTableColorChange);
     tableMatFolder.add({ reset: () => {
@@ -444,7 +459,7 @@ export function createDebugGUI({
             tableMatFolder.hide();
         }
     };
-    syncTableMatVisibility(defaultTable);
+    syncTableMatVisibility(TABLE_OPTIONS[0]);
 
     // Stone picker — swap the gem on the table to see how each one sits with the
     // rest of the still life. The same list drives the return-from-space cycle,
@@ -455,12 +470,13 @@ export function createDebugGUI({
     stoneFileInput.style.display = 'none';
     document.body.appendChild(stoneFileInput);
 
-    const stoneSettings = { stone: STONE_OPTIONS[0] };
-    let lastStone = STONE_OPTIONS[0];
-    const stoneCtrl = contentFolder.add(stoneSettings, 'stone', STONE_OPTIONS)
+    const stoneOptions = [...STONE_NAMES, CUSTOM_GLB_LABEL];
+    const stoneSettings = { stone: stoneOptions[0] };
+    let lastStone = stoneOptions[0];
+    const stoneCtrl = contentFolder.add(stoneSettings, 'stone', stoneOptions)
         .name('Stone')
         .onChange((label) => {
-            if (label === STONE_CUSTOM_LABEL) {
+            if (label === CUSTOM_GLB_LABEL) {
                 // Snap back to the last real choice so picking "Custom" twice in
                 // a row still re-opens the dialog — lil-gui only fires onChange
                 // when the value actually changes.
@@ -566,7 +582,9 @@ export function createDebugGUI({
         cameraDebug.z = +position.z.toFixed(2);
     }
 
-    // Per-object debug folder, added once a stage object's GLB finishes loading.
+    // Per-object debug folders: one is added when an object finishes loading,
+    // and removed when the object is swapped for another model.
+    const objectFolders = new Map(); // object entry → its folder
     function addObjectFolder(label, entry, scaleFactor) {
         // Closed like the rest. These are created as each GLB finishes loading,
         // which is after the closeAll pass at the end of this function has
@@ -580,7 +598,11 @@ export function createDebugGUI({
         folder.add(entry, 'restY', -5, 8, 0.01).name('Pos Y').listen().onChange(resetRepel);
         folder.add(entry, 'restZ', -3, 3, 0.01).name('Pos Z').listen().onChange(resetRepel);
         folder.add(entry, 'rotYOffset', -Math.PI, Math.PI, 0.01).name('Rot Y offset');
-        entry.guiFolder = folder; // saved so we can hide it after permanent dissolve
+        objectFolders.set(entry, folder);
+    }
+    function removeObjectFolder(entry) {
+        objectFolders.get(entry)?.destroy();
+        objectFolders.delete(entry);
     }
 
     // Close every folder (nested ones too), so the panel opens as a short list.
@@ -591,5 +613,5 @@ export function createDebugGUI({
     // ...except Scene Contents (skybox, table, stone), used most often.
     contentFolder.open();
 
-    return { gui, dissolveController, updateCameraDebug, addObjectFolder, reportSkyboxImages };
+    return { gui, setDissolveAvailable, updateCameraDebug, addObjectFolder, removeObjectFolder, reportSkyboxImages };
 }

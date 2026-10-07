@@ -10,11 +10,9 @@ import { PARTICLE_BLOOM_LAYER } from './src/effects/dissolve.js';
 import { buildRoom, setRoomTexture, resetRoomTextures } from './src/scene/room.js';
 import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, SKYBOX_NONE, LIGHTING_PRESETS, voidColor } from './src/scene/environment.js';
 
-import {
-    loadScene, setTable, setTableTexture, applyReturnObjects,
-    tableState, stageObjects, LOADING_TOTAL, setTableColor, setStone,
-    TABLE_OPTIONS, TABLE_CUSTOM_LABEL, tableKindForLabel,
-} from './src/objects/glbLoader.js';
+import { loadScene, setTable, setTableTexture, setTableColor, tableState, LOADING_TOTAL } from './src/objects/table.js';
+import { stageObjects } from './src/objects/stageObjects.js';
+import { setStone, setCustomStone, applyReturnObjects } from './src/objects/objectVariants.js';
 
 import { createLoadingScreen } from './src/ui/loadingScreen.js';
 import { createPerfHud } from './src/ui/perfHud.js';
@@ -120,14 +118,12 @@ function selectCustomSkybox(files) {
 // ─── Camera controls ─────────────────────────────────────────────────────────
 const cameraControls = createCameraControls(camera, renderer.domElement);
 
-// Swaps the table (GUI "Table" dropdown, or a custom .glb). The objects stay
-// and are just moved to the new surface height.
-function selectTable(label) {
-    setTable(scene, tableKindForLabel(label));
-}
-function selectCustomTable(file) {
-    setTable(scene, 'custom', { customUrl: URL.createObjectURL(file) });
-}
+// The GUI keeps one debug folder per stage object: added when an object loads,
+// removed when it's swapped for another model (stone choice, return from space).
+const objectFolderEvents = {
+    onObjectReady:   (label, entry, scaleFactor) => gui.addObjectFolder(label, entry, scaleFactor),
+    onObjectRemoved: (entry) => gui.removeObjectFolder(entry),
+};
 
 // ─── Ambient sound ───────────────────────────────────────────────────────────
 // Café ambience in the room, fading out toward space; a space track (volume 0
@@ -142,21 +138,15 @@ const gui = createDebugGUI({
     onSkyboxChange: selectBackground,
     onCustomSkyboxFiles: selectCustomSkybox,
     skyboxNoneLabel: SKYBOX_NONE, voidColor, onVoidColorChange: selectVoidColor,
-    tableOptions: TABLE_OPTIONS, defaultTable: TABLE_OPTIONS[0], tableCustomLabel: TABLE_CUSTOM_LABEL,
-    onTableChange: selectTable,
-    onCustomTableFile: selectCustomTable,
-    onTableTextureFile: (file, type) => setTableTexture(scene, file, type),
+    // Swaps the table. The objects stay and are just moved to the new surface height.
+    onTableChange: (kind) => setTable(scene, kind),
+    onCustomTableFile: (file) => setTable(scene, 'custom', { customUrl: URL.createObjectURL(file) }),
+    onTableTextureFile: (file, type) => setTableTexture(file, type),
     onRoomTextureFile: (surface, slotLabel, file) => setRoomTexture(surface, slotLabel, file),
     onRoomTextureReset: (surface) => resetRoomTextures(surface),
     onTableColorChange: (hex) => setTableColor(hex),
-    // A swapped stone is a new object, so it gets a new GUI folder.
-    onStoneChange: (label) => setStone(scene, label, {
-        onObjectReady: (l, entry, scaleFactor) => gui.addObjectFolder(l, entry, scaleFactor),
-    }),
-    onCustomStoneFile: (file) => setStone(scene, 'Custom GLB…', {
-        customUrl: URL.createObjectURL(file),
-        onObjectReady: (l, entry, scaleFactor) => gui.addObjectFolder(l, entry, scaleFactor),
-    }),
+    onStoneChange: (name) => setStone(scene, name, objectFolderEvents),
+    onCustomStoneFile: (file) => setCustomStone(scene, URL.createObjectURL(file), objectFolderEvents),
      roomSoundOptions: ROOM_SOUND_OPTIONS, defaultRoomSound: ROOM_SOUND_OPTIONS[0],
     spaceSoundOptions: SPACE_SOUND_OPTIONS, defaultSpaceSound: SPACE_SOUND_OPTIONS[0],
     soundCustomLabel: SOUND_CUSTOM_LABEL,
@@ -191,12 +181,11 @@ const clock = new THREE.Clock();
 const phaseMachine = createPhaseMachine({
     scene, camera, cameraControls,
     tableState, stageObjects,
-    dissolveController: gui.dissolveController,
+    // The Dissolve button only works in space.
+    onPhaseChange: (phase) => gui.setDissolveAvailable(phase === 'space'),
     // When everything has dissolved, swap in the objects that come back, so the
     // still life that returns isn't the one that left.
-    onObjectsDissolved: () => applyReturnObjects(scene, {
-        onObjectReady: (label, entry, scaleFactor) => gui.addObjectFolder(label, entry, scaleFactor),
-    }),
+    onObjectsDissolved: () => applyReturnObjects(scene, objectFolderEvents),
 });
 
 // ─── Loading screen + asset loading ──────────────────────────────────────────
@@ -216,7 +205,7 @@ const perfHud = createPerfHud(renderer);
 loadScene(scene, {
     onAssetLoaded: () => loadingScreen.markAssetLoaded(),
     onAssetFailed: () => loadingScreen.markAssetLoaded(), // still advance so the loading screen doesn't hang
-    onObjectReady: (label, entry, scaleFactor) => gui.addObjectFolder(label, entry, scaleFactor),
+    onObjectReady: objectFolderEvents.onObjectReady,
 });
 
 // ─── Animate ─────────────────────────────────────────────────────────────────

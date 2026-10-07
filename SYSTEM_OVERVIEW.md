@@ -20,7 +20,7 @@ Point-by-point comparison against the submitted technical proposal
 | Room: six `PlaneGeometry` meshes, inward normals, ambient + directional light, `PCFSoftShadowMap` | Exactly as proposed (`src/scene/room.js`, `src/scene/lighting.js`, `src/setup/renderer.js`) |
 | Space: `BoxGeometry` skybox, back-side rendering, cube map textures | Exactly as proposed (`src/scene/environment.js`) |
 | Stars: `BufferGeometry` particles, randomized positions, procedural texture | Exactly as proposed |
-| Objects imported as GLB via `GLTFLoader` | Exactly as proposed (`src/objects/glbLoader.js`) |
+| Objects imported as GLB via `GLTFLoader` | Exactly as proposed (`src/objects/table.js`, `src/objects/stageObjects.js`) |
 | Dissolve effect: 3D Simplex noise injected via `onBeforeCompile`, world-space noise for room walls / local-space for objects, threshold comparison → fragment discard | Exactly as proposed, line-for-line the Codrops technique cited in the proposal (`src/effects/dissolve.js`) |
 | Object particle effect: `Points` geometry, same Simplex noise, visible only near the dissolve boundary, scattered outward by a velocity attribute | Exactly as proposed |
 | Floating formula `P = P_initial + p·(H + A⊙sin(ω·t))`, per-object variation in `H`, `A`, `ω` | Exactly as proposed (`src/effects/floating.js`) |
@@ -101,12 +101,14 @@ src/setup/                     the machinery for viewing the scene
 
 src/effects/                   visual effects (GPU shaders, post-process, floating)
   dissolve.js                  dissolve shader injection (see §4), shadow-pass
-                                dissolve, fresnel rim tint (see §6), particle shaders
+                                dissolve, particle shaders
+  dissolveParticles.js         where the dissolve particles start (sampled over
+                                a model's surface) and fly; makeParticlePoints
   noise.js                     shared 3D Simplex noise GLSL (Ashima Arts)
   skyboxFlow.js                curl-noise "Starry Night" swirl on the skybox
   particleBloom.js             selective glow on the particles (the one post-process)
   floating.js                  per-frame float/bob/sway of the objects, table
-                                collision, bear's legs
+                                collision (the bear's legs: objects/teddyLegs.js)
 
 src/scene/                     the scenes: what is in them and how they change
   room.js                      6-plane room (floor/ceiling/4 walls)
@@ -118,8 +120,18 @@ src/scene/                     the scenes: what is in them and how they change
                                 dissolve timeline (pause/scrub), object swap
 
 src/objects/                   the table and the still life
-  glbLoader.js                 GLB loading for table + 5 stage objects,
-                                live table/stone swapping, particle generation
+  table.js                     the table: loading, swapping, dissolve, particles;
+                                loadScene (table first, then the objects on it)
+  plinth.js                    the Box/Cylinder tables: colour, textures, floor
+                                contact shading
+  customTable.js               normalising an uploaded table (scale, centre,
+                                strip ground planes)
+  stageObjects.js              the 5 still-life objects: loading, placement on
+                                the table, dissolve, particles
+  teddyLegs.js                 the skeleton bear's legs: sitting on the table,
+                                hanging once it floats
+  objectVariants.js            swapping models: stone choice, the objects that
+                                change on each return, the mannequin's finish
 
 src/audio/
   ambientSound.js              room/space beds, dissolve one-shot
@@ -196,7 +208,7 @@ A second GUI dropdown ("Table") lets the table be swapped live between the
 default GLB, a plain Box, a Cylinder, or a **user-uploaded custom `.glb`**
 file (via a hidden file input + `URL.createObjectURL`). Swapping keeps the
 existing stage objects in place and just shifts them by the surface-height
-delta, rather than reloading everything (`setTable()` in `glbLoader.js`).
+delta, rather than reloading everything (`setTable()` in `objects/table.js`).
 
 ## 9. Camera behavior
 

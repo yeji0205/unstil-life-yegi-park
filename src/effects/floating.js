@@ -4,7 +4,10 @@
 //
 // t = elapsed time, floatP = eased scroll progress. Each object has its own rise
 // height H and phase, so they drift independently; A and ω are shared.
-// Also: table collision, the tulip lifting with the vase, and the bear's legs.
+// Also: table collision, the tulip lifting with the vase, and the bear's legs
+// (objects/teddyLegs.js).
+
+import { poseTeddyLegs } from '../objects/teddyLegs.js';
 
 // Objects start rising at this p. Also where the camera starts pulling back
 // (setup/cameraControls.js), so the two stay in sync.
@@ -53,7 +56,7 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
         const tableTopY = tableState.object.position.y + tableState.topOffset;
         for (const obj of stageObjects) {
             // The object's real underside (lowest vertex), not a bounding sphere,
-            // which made flat stones hover. See bottomLocalY in glbLoader.
+            // which made flat stones hover. See bottomLocalY in objects/stageObjects.js.
             const objBottomY = (obj._baseY + obj.repelY) + obj.bottomLocalY;
             // Includes the object's offsetY: the stones sit slightly into the table
             // on purpose, and the collision must not lift them back out.
@@ -89,28 +92,9 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
         obj.mesh.rotation.z = Math.sin(t * 0.42 + obj.phaseOffset) * 0.06 * floatP;
         obj.mesh.rotation.x = Math.sin(t * 0.31 + obj.phaseOffset * 1.3) * 0.04 * floatP;
 
-        // Skeleton leg animation: the bear sits while it's on the table and lets
-        // its legs hang once it's airborne.
-        if (obj.legBones) {
-            // Based on the bear's actual height above the table, not on scroll
-            // progress: the table rises too, so progress can't tell whether the
-            // bear is still sitting on it. Thresholds are in units of the bear's
-            // size, so they survive rescaling.
-            const { bR, bL, sitR, sitL, straightR, straightL } = obj.legBones;
-            let boneT = 1; // no table underneath → nothing to overlap, hang free
-            if (tableTopY !== null) {
-                const bottomY   = obj.mesh.position.y + obj.bottomLocalY;
-                // Same contact height as the collision, so resting = zero clearance.
-                const contactY  = tableTopY + (obj.offsetY ?? 0);
-                const clearance = (bottomY - contactY) / Math.max(obj.radius, 1e-4);
-                const LEG_CLEAR_START = 0.15, LEG_CLEAR_END = 1.20; // in radii
-                const raw = (clearance - LEG_CLEAR_START) / (LEG_CLEAR_END - LEG_CLEAR_START);
-                const bt  = Math.min(1, Math.max(0, raw));
-                boneT = bt * bt * (3 - 2 * bt); // smoothstep
-            }
-            bR.quaternion.slerpQuaternions(sitR, straightR, boneT);
-            bL.quaternion.slerpQuaternions(sitL, straightL, boneT);
-        }
+        // The skeleton bear sits while it's on the table and lets its legs hang
+        // once it's airborne.
+        if (obj.legBones) poseTeddyLegs(obj, tableTopY);
 
     }
 

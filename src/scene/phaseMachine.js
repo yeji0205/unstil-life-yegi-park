@@ -22,7 +22,10 @@ export const dissolveDuration = { value: 5.0 };
 //
 // Dissolved objects are kept, not deleted. Scrolling home drives their dissolve
 // from 1 back to 0, so they re-form by playing the dissolve backwards.
-export function createPhaseMachine({ scene, camera, cameraControls, tableState, stageObjects, dissolveController, onObjectsDissolved }) {
+//
+// onPhaseChange(phase) reports every phase change (main.js uses it to enable the
+// GUI's Dissolve button only in 'space').
+export function createPhaseMachine({ scene, camera, cameraControls, tableState, stageObjects, onPhaseChange, onObjectsDissolved }) {
     const { controls, zoomState, applyControlMode } = cameraControls;
     const ROOM_RETURN_DIST = 5.5; // kept in sync with setup/cameraControls.js
 
@@ -46,10 +49,15 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     // False until the loading screen is gone; main.js calls enableInteraction().
     let interactionEnabled = false;
 
+    function setPhase(next) {
+        if (next === phase) return;
+        phase = next;
+        onPhaseChange?.(phase);
+    }
+
     function resetToRoom() {
         zoomState.hasZoomedOut = false;
-        phase = 'room';
-        dissolveController.disable();
+        setPhase('room');
         // Mid reverse-dissolve, leave the objects alone; update() re-forms them.
         if (objectsDissolved) return;
         tableState.uProgress.value = 0;
@@ -87,10 +95,9 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
     // otherwise, but a stray click mid-transition is ignored here too.
     function triggerDissolve() {
         if (phase !== 'space') return false;
-        phase           = 'dissolving';
         dissolveElapsed = 0;
         scrollBlocked   = true;
-        dissolveController.disable();
+        setPhase('dissolving');
         return true;
     }
 
@@ -140,9 +147,8 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
         applyControlMode(p);
 
         if (phase === 'room' && rawP >= 1.0) {
-            phase         = 'space';
             scrollBlocked = false;
-            dissolveController.enable(); // button becomes clickable when fully in space
+            setPhase('space'); // the Dissolve button becomes clickable
         }
 
         if (phase === 'dissolving') {
@@ -167,7 +173,7 @@ export function createPhaseMachine({ scene, camera, cameraControls, tableState, 
                 tableState.object.userData.shadowsKilled = gone;
             }
             if (elapsed >= dissolveDuration.value + 0.2) {
-                phase         = 'done';
+                setPhase('done');
                 scrollBlocked = false;
                 // Keep the invisible objects for the reverse dissolve on the way home.
                 objectsDissolved = true;

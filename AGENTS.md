@@ -60,10 +60,13 @@ Everything is in `main.js`. Sections in order:
 main.js          — scene assembly + animation loop; picks the render path
 src/             — grouped by what each part is in the artwork:
   setup/           renderer, camera, camera controls
-  effects/         visual effects (dissolve, noise, skyboxFlow, floating, particleBloom — the only post-process)
+  effects/         visual effects (dissolve, dissolveParticles, noise, skyboxFlow, floating,
+                   particleBloom — the only post-process)
   scene/           the scenes and how they change (room, environment = skybox + stars,
                    lighting, phaseMachine)
-  objects/         table + still-life objects (glbLoader)
+  objects/         table (table, plinth = Box/Cylinder, customTable = uploads), the
+                   still-life objects (stageObjects), the teddy's skeleton legs
+                   (teddyLegs), swapping models (objectVariants: stones, return cycle)
   ui/, audio/
 index.html       — minimal shell, loads main.js
 vite.config.js   — sets base: '/unstil-life-yegi-park/' for GitHub Pages
@@ -151,7 +154,7 @@ For each object:
 5. Use `AdditiveBlending`, `depthWrite: false`
 6. Particle color: **white** `0xffffff` (separate from room edge color)
 7. **Every particle `Points` object must be created via `makeParticlePoints()`**
-   (glbLoader), which puts it on `PARTICLE_BLOOM_LAYER`. A `new THREE.Points`
+   (`src/effects/dissolveParticles.js`), which puts it on `PARTICLE_BLOOM_LAYER`. A `new THREE.Points`
    built by hand is invisible to the bloom pass and will silently never glow.
 8. Two selectable appearances, switched live by the `uParticleShiny` uniform
    (`✨ Shiny Particles` button in the GUI): `0` = flat evenly-lit white dots

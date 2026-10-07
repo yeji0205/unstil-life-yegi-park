@@ -57,7 +57,7 @@ export function forgetDissolveMaterials(root) {
 export function updateDissolveTransparency() {
     for (const { material, progress } of dissolveMaterials) {
         // ownsAlpha: needs transparency anyway (e.g. cut-out leaf textures).
-        // Set in glbLoader before the dissolve forces transparency on.
+        // Set in objects/table.js and stageObjects.js before the dissolve forces transparency on.
         const needsAlpha = material.userData.ownsAlpha || progress.value > 0.001;
         if (material.transparent !== needsAlpha) material.transparent = needsAlpha;
     }
@@ -144,7 +144,7 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
 // invisible one) still cast its complete shadow, and when the objects came back
 // to the room all their shadows appeared at once. This material cuts out the
 // same holes as the surface, so the shadow gets holes at the same moment.
-// Set as the mesh's customDepthMaterial (see glbLoader.js).
+// Set as the mesh's customDepthMaterial (see objects/table.js and stageObjects.js).
 //
 // Options MUST match the injectDissolve() call for the same mesh.
 export function makeDissolveDepthMaterial(progressUniform, {
