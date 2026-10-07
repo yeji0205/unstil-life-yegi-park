@@ -17,16 +17,16 @@ Point-by-point comparison against the submitted technical proposal
 
 | Proposal item | Status in code |
 |---|---|
-| Room: six `PlaneGeometry` meshes, inward normals, ambient + directional light, `PCFSoftShadowMap` | Exactly as proposed (`src/geometry/room.js`, `src/render/lighting.js`, `src/render/renderer.js`) |
-| Space: `BoxGeometry` skybox, back-side rendering, cube map textures | Exactly as proposed (`src/geometry/environment.js`) |
+| Room: six `PlaneGeometry` meshes, inward normals, ambient + directional light, `PCFSoftShadowMap` | Exactly as proposed (`src/scene/room.js`, `src/scene/lighting.js`, `src/render/renderer.js`) |
+| Space: `BoxGeometry` skybox, back-side rendering, cube map textures | Exactly as proposed (`src/scene/environment.js`) |
 | Stars: `BufferGeometry` particles, randomized positions, procedural texture | Exactly as proposed |
-| Objects imported as GLB via `GLTFLoader` | Exactly as proposed (`src/persistence/glbLoader.js`) |
-| Dissolve effect: 3D Simplex noise injected via `onBeforeCompile`, world-space noise for room walls / local-space for objects, threshold comparison → fragment discard | Exactly as proposed, line-for-line the Codrops technique cited in the proposal (`src/render/dissolve.js`) |
+| Objects imported as GLB via `GLTFLoader` | Exactly as proposed (`src/objects/glbLoader.js`) |
+| Dissolve effect: 3D Simplex noise injected via `onBeforeCompile`, world-space noise for room walls / local-space for objects, threshold comparison → fragment discard | Exactly as proposed, line-for-line the Codrops technique cited in the proposal (`src/effects/dissolve.js`) |
 | Object particle effect: `Points` geometry, same Simplex noise, visible only near the dissolve boundary, scattered outward by a velocity attribute | Exactly as proposed |
-| Floating formula `P = P_initial + p·(H + A⊙sin(ω·t))`, per-object variation in `H`, `A`, `ω` | Exactly as proposed (`src/simulation/floating.js`) |
-| Scroll → shared progress parameter `p` (0–1) as master state driving dissolve, lighting, floating | Exactly as proposed (`src/simulation/phaseMachine.js`) |
+| Floating formula `P = P_initial + p·(H + A⊙sin(ω·t))`, per-object variation in `H`, `A`, `ω` | Exactly as proposed (`src/objects/floating.js`) |
+| Scroll → shared progress parameter `p` (0–1) as master state driving dissolve, lighting, floating | Exactly as proposed (`src/story/phaseMachine.js`) |
 | At `p = 1`: scroll disabled, object dissolution proceeds via elapsed time | As proposed (triggered by a GUI button rather than automatically — minor difference) |
-| `OrbitControls`, bounded rotation while `p < 1`, bounds removed + zoom at `p = 1` | Exactly as proposed (`src/simulation/cameraControls.js`) |
+| `OrbitControls`, bounded rotation while `p < 1`, bounds removed + zoom at `p = 1` | Exactly as proposed (`src/controls/cameraControls.js`) |
 | Lighting transition: warm interior fades, cold space light strengthens, driven by `p` | As proposed, extended with per-background presets (see §6) |
 | Sound: ambient café atmosphere, gain interpolated by `p` via the Web Audio API | As proposed (`src/audio/ambientSound.js`, `asset/sound/cafe.m4a` from Freesound) — full volume in the room, fading to silence in space. Extended with a GUI sound picker (Café / None / user-uploaded custom audio) and volume slider. Starts on the first click/key gesture (browser autoplay policy — wheel doesn't count as an activation, so scroll alone can't unlock audio). |
 
@@ -53,8 +53,9 @@ Not in the proposal at all — added during development:
   Cylinder / user-uploaded custom GLB) from a GUI dropdown.
 - **Per-background lighting presets + fresnel rim tint** (§6): lighting adapts
   to the selected background; object edges pick up the surrounding color.
-- **Module refactor** (§3): the single-file app was split into
-  render/geometry/persistence/simulation/ui modules.
+- **Module refactor** (§3): the single-file app was split into modules, since
+  regrouped (Oct 2026) by what each part is in the artwork: render, effects,
+  scene, objects, story, controls, ui, audio.
 
 ---
 
@@ -93,36 +94,43 @@ runs the animation loop.
 main.js                        orchestrator: creates renderer/scene/camera,
                                 wires every module below, runs animate()
 
-src/render/
-  renderer.js                  WebGLRenderer + camera + resize handling
+src/render/                    how the frame is drawn
+  renderer.js                  WebGLRenderer + camera + resize + adaptive quality
+  particleBloom.js             selective glow on the particles (the one post-process)
+
+src/effects/                   visual effects (GPU shaders)
+  dissolve.js                  dissolve shader injection (see §4), shadow-pass
+                                dissolve, fresnel rim tint (see §6), particle shaders
   noise.js                     shared 3D Simplex noise GLSL (Ashima Arts)
-  dissolve.js                  shared dissolve shader injection (see §4) +
-                                fresnel rim-tint (see §6) + particle shaders
-  lighting.js                  ambient/directional lights, room↔space color
-                                lerp, per-background lighting presets, the
-                                volumetric light beam
   skyboxFlow.js                curl-noise "Starry Night" swirl on the skybox
 
-src/geometry/
+src/scene/                     what is in the world
   room.js                      6-plane room (floor/ceiling/4 walls)
-  environment.js                skybox (3 packs + solid colour + upload), stars,
+  environment.js               skybox (3 packs + solid colour + upload), stars,
                                 LIGHTING_PRESETS keyed by skybox name
+  lighting.js                  ambient/directional lights, room↔space colour
+                                lerp, objects-only key light, volumetric beam
 
-src/persistence/
-  glbLoader.js                  GLB loading for table + 5 stage objects,
-                                live table-swapping (GLB/Box/Cylinder/custom
-                                upload), particle system generation
+src/objects/                   the table and the still life
+  glbLoader.js                 GLB loading for table + 5 stage objects,
+                                live table/stone swapping, particle generation
+  floating.js                  per-frame float/bob/sway, table collision
 
-src/simulation/
-  phaseMachine.js               room/space/dissolving/done state machine,
-                                scroll handling, object dissolve timeline
-  cameraControls.js             OrbitControls setup + auto zoom-out/tilt
-                                during the room→space scroll
-  floating.js                   per-frame object float/bob/sway/collision
+src/story/                     what happens, in which order
+  phaseMachine.js              room/space/dissolving/done, scroll handling,
+                                dissolve timeline (pause/scrub), object swap
+
+src/controls/                  how the viewer interacts
+  cameraControls.js            OrbitControls setup, zoom hand-off,
+                                auto zoom-out/tilt during the room→space scroll
+
+src/audio/
+  ambientSound.js              room/space beds, dissolve one-shot
 
 src/ui/
-  loadingScreen.js               "Unstil Life" text, particle-dissolve intro
-  gui.js                        lil-gui debug panel (all dropdowns/buttons)
+  loadingScreen.js             "Unstil Life" text, particle-dissolve intro
+  gui.js                       lil-gui debug panel (all dropdowns/buttons)
+  perfHud.js, soundHint.js     fps readout, "click for sound" hint
 ```
 
 ## 4. Dissolve shader (room, table, stage objects)

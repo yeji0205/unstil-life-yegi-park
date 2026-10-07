@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { injectSkyboxFlow, uFlowStrength } from '../render/skyboxFlow.js';
+import { injectSkyboxFlow, uFlowStrength } from '../effects/skyboxFlow.js';
 
 // ─── Skybox ──────────────────────────────────────────────────────────────────
 // Each entry is a folder under asset/skybox/ holding exactly six files:
@@ -32,7 +32,7 @@ export const SKYBOX_CUSTOM_LABEL = 'Add custom skybox…';
 export const SKYBOX_OPTIONS      = ['space_blue', 'space_red', 'sky', SKYBOX_NONE, SKYBOX_CUSTOM_LABEL];
 
 // Ambient/directional tint the room lighting eases toward as it enters
-// 'space' (see render/lighting.js updateLighting) — keyed by the same names
+// 'space' (see scene/lighting.js updateLighting) — keyed by the same names
 // as SKYBOX_OPTIONS. Lighting should match whatever the viewer can actually
 // see behind the objects: the blue nebula implies a cool blue tint, while a
 // flat void is lit by whatever colour it's set to (white by default). Add an
@@ -45,7 +45,7 @@ export const LIGHTING_PRESETS = {
         // scatter, tint or soften sunlight, so it arrives at full energy and
         // uncoloured. Its DIRECTION is matched to the skybox texture — sampling
         // the six faces puts the nebula's brightest region at azimuth ≈ −50°,
-        // elevation ≈ 55°, which is where render/lighting.js aims it and where
+        // elevation ≈ 55°, which is where scene/lighting.js aims it and where
         // the visible sun sits.
         //
         // FILL: ambient used to be 0.0 here, which is why every surface facing

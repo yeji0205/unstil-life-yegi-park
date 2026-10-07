@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { uRimColor, uRimStrength } from './dissolve.js';
+import { uRimColor, uRimStrength } from '../effects/dissolve.js';
 
 // ─── Fake volumetric light beam ──────────────────────────────────────────────
 // Single cone with a custom gradient shader: full brightness at the tip (light
@@ -441,7 +441,7 @@ export function setupLighting(scene) {
 
     // The color AND intensity the lights ease toward at p=1 — swapped by
     // setSpacePreset() whenever the background changes (see
-    // geometry/environment.js LIGHTING_PRESETS). Intensity matters as much
+    // scene/environment.js LIGHTING_PRESETS). Intensity matters as much
     // as color here: against deep space, ambient fades to ~0 and the
     // directional key light does the work; against a plain white void
     // there's no light source to justify that, so ambient instead stays

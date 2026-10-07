@@ -58,7 +58,14 @@ Everything is in `main.js`. Sections in order:
 ### Key files
 ```
 main.js          — scene assembly + animation loop; picks the render path
-src/render/particleBloom.js — the scene's only post-process (see below)
+src/             — grouped by what each part is in the artwork:
+  render/          how the frame is drawn (renderer, particleBloom — the only post-process)
+  effects/         visual effects / shaders (dissolve, noise, skyboxFlow)
+  scene/           what is in the world (room, environment = skybox + stars, lighting)
+  objects/         table + still-life objects (glbLoader, floating)
+  story/           the sequence of the piece (phaseMachine)
+  controls/        viewer input (cameraControls)
+  ui/, audio/
 index.html       — minimal shell, loads main.js
 vite.config.js   — sets base: '/unstil-life-yegi-park/' for GitHub Pages
 public/asset/    — the ONLY asset tree. Vite serves public/ at the site root in
@@ -78,7 +85,7 @@ source/blend/    — Blender authoring files. Deliberately outside public/ so th
 
 To add a skybox: drop the folder in `public/asset/skybox/`, rename its faces to
 the six words above, then add the folder name to `SKYBOX_OPTIONS` and a matching
-entry to `LIGHTING_PRESETS` (both in `src/geometry/environment.js`).
+entry to `LIGHTING_PRESETS` (both in `src/scene/environment.js`).
 
 ---
 
@@ -103,8 +110,9 @@ uProgress = 1.0  → room fully dissolved, space visible
 
 ```
 'room'       → scroll changes uProgress 0→1
-'space'      → uProgress=1, zoom enabled, 5s timer
-'dissolving' → scroll BLOCKED, objects dissolve over 3s (timer)
+'space'      → uProgress=1, zoom enabled; the Dissolve button becomes clickable
+'dissolving' → scroll BLOCKED, objects dissolve over dissolveDuration (5 s);
+               can be paused and scrubbed from the GUI
 'done'       → scroll re-enabled, user can restore room
 ```
 

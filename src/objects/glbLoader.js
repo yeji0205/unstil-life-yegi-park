@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { OBJECT_LIGHT_LAYER } from '../render/lighting.js';
-import { injectDissolve, makeDissolveDepthMaterial, makeParticleMaterial, forgetDissolveMaterials, uProgress, uObjectDissolveEdge, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, PARTICLE_BLOOM_LAYER } from '../render/dissolve.js';
+import { OBJECT_LIGHT_LAYER } from '../scene/lighting.js';
+import { injectDissolve, makeDissolveDepthMaterial, makeParticleMaterial, forgetDissolveMaterials, uProgress, uObjectDissolveEdge, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, PARTICLE_BLOOM_LAYER } from '../effects/dissolve.js';
 
 const TABLE_PARTICLE_COUNT  = 2000;
 

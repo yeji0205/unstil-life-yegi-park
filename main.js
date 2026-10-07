@@ -1,20 +1,20 @@
 import * as THREE from 'three';
 
 import { createRenderer, createCamera, setupResize, createAdaptiveQuality } from './src/render/renderer.js';
-import { setupLighting } from './src/render/lighting.js';
-import { uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink, uParticleShiny, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, updateDissolveTransparency } from './src/render/dissolve.js';
-import { updateSkyboxFlow } from './src/render/skyboxFlow.js';
+import { setupLighting } from './src/scene/lighting.js';
+import { uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink, uParticleShiny, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, updateDissolveTransparency } from './src/effects/dissolve.js';
+import { updateSkyboxFlow } from './src/effects/skyboxFlow.js';
 import { createParticleBloom, bloomSettings } from './src/render/particleBloom.js';
-import { PARTICLE_BLOOM_LAYER } from './src/render/dissolve.js';
+import { PARTICLE_BLOOM_LAYER } from './src/effects/dissolve.js';
 
-import { buildRoom, setRoomTexture, resetRoomTextures } from './src/geometry/room.js';
-import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, SKYBOX_NONE, LIGHTING_PRESETS, voidColor } from './src/geometry/environment.js';
+import { buildRoom, setRoomTexture, resetRoomTextures } from './src/scene/room.js';
+import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, SKYBOX_NONE, LIGHTING_PRESETS, voidColor } from './src/scene/environment.js';
 
 import {
     loadScene, setTable, setTableTexture, applyReturnObjects,
     tableState, stageObjects, LOADING_TOTAL, setTableColor, setStone,
     TABLE_OPTIONS, TABLE_CUSTOM_LABEL, tableKindForLabel,
-} from './src/persistence/glbLoader.js';
+} from './src/objects/glbLoader.js';
 
 import { createLoadingScreen } from './src/ui/loadingScreen.js';
 import { createPerfHud } from './src/ui/perfHud.js';
@@ -23,9 +23,9 @@ import { createDebugGUI } from './src/ui/gui.js';
 
 import { createAmbientSoundTracks, ROOM_SOUND_OPTIONS, SPACE_SOUND_OPTIONS, DISSOLVE_SOUND_OPTIONS, SOUND_CUSTOM_LABEL } from './src/audio/ambientSound.js';
 
-import { createCameraControls } from './src/simulation/cameraControls.js';
-import { createPhaseMachine } from './src/simulation/phaseMachine.js';
-import { updateFloating } from './src/simulation/floating.js';
+import { createCameraControls } from './src/controls/cameraControls.js';
+import { createPhaseMachine } from './src/story/phaseMachine.js';
+import { updateFloating } from './src/objects/floating.js';
 
 // ─── Renderer, scene, camera ─────────────────────────────────────────────────
 const renderer = createRenderer();

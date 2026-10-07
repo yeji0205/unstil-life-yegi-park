@@ -4,7 +4,7 @@
 //
 // where t = elapsed time, p = scroll progress, and H, A, ω vary per object so
 // each one rises to a different height and drifts independently.
-// Exported so simulation/cameraControls.js can start pulling the camera back
+// Exported so controls/cameraControls.js can start pulling the camera back
 // at the exact same point objects start rising, instead of drifting out of
 // sync with a second hardcoded threshold.
 export const FLOAT_START = 0.2;

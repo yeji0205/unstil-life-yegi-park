@@ -1,9 +1,9 @@
 import GUI from 'lil-gui';
-import { flowState } from '../render/skyboxFlow.js';
-import { scrollSmoothing, dissolveDuration } from '../simulation/phaseMachine.js';
-import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../geometry/room.js';
-import { primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../persistence/glbLoader.js';
-import { roomLighting } from '../render/lighting.js';
+import { flowState } from '../effects/skyboxFlow.js';
+import { scrollSmoothing, dissolveDuration } from '../story/phaseMachine.js';
+import { ROOM_SURFACES, ROOM_TEXTURE_SLOTS } from '../scene/room.js';
+import { primitiveTableColor, STONE_OPTIONS, STONE_CUSTOM_LABEL } from '../objects/glbLoader.js';
+import { roomLighting } from '../scene/lighting.js';
 
 // A small centered modal — readable padding/typography, a dimmed backdrop, and
 // up to two buttons. Used instead of the browser's cramped alert() for the
@@ -118,7 +118,7 @@ export function createDebugGUI({
     gui.add(dissolveScrub, 'position', 0, 1, 0.001).name('⏯ Dissolve Position').listen();
 
     // Toggles the swirling curl-noise UV warp on the skybox texture (see
-    // render/skyboxFlow.js). Label flips to reflect state, same pattern as
+    // effects/skyboxFlow.js). Label flips to reflect state, same pattern as
     // the dissolve button above.
     const bgMotionAction = {
         toggle: () => {
@@ -282,7 +282,7 @@ export function createDebugGUI({
     bloomFolder.add(bloomSettings, 'strength', 0, 3, 0.01).name('Bloom Pass Strength');
 
     // Skybox picker — swaps the cubemap live. Add new folder names to
-    // skyboxOptions (geometry/environment.js) to list them here.
+    // skyboxOptions (scene/environment.js) to list them here.
     // "Add custom skybox…" is different from every other preset: a single flat
     // image can't be a skybox (the background is a box with 6 separately
     // textured faces). Rather than make the user pick 6 files by hand, this is

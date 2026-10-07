@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
-import { uProgress, injectDissolve } from '../render/dissolve.js';
+import { uProgress, injectDissolve } from '../effects/dissolve.js';
 
 // ─── Wall texture (PBR set) ───────────────────────────────────────────────────
 // A physically-based material is several greyscale/colour images that each
