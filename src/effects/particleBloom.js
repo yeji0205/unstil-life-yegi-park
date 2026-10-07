@@ -2,117 +2,50 @@ import * as THREE from 'three';
 import { PARTICLE_BLOOM_LAYER } from './dissolve.js';
 
 // ─── Selective bloom on the dissolve particles ───────────────────────────────
-// This is the mechanism the Codrops dissolve demo uses for its shiny particles,
-// and it is the only way to get that look: the glow has to spread across
-// NEIGHBOURING pixels, which nothing done inside a point sprite can do. An
-// earlier attempt drew a core + halo + glint cross into the sprite itself and
-// the honest result was just fatter dots — a bigger sprite is a bigger dot, not
-// a brighter one.
-//
-// Three steps per frame, all of them here:
+// The glow has to spread onto neighbouring pixels, which a point sprite can't do
+// (drawing a glow inside the sprite only makes fatter dots). Each frame:
 //   1. render ONLY the particles, on black, into a half-resolution target;
 //   2. threshold that and blur it with a separable gaussian → the glow map;
 //   3. draw the real frame, then add the glow map over it as a full-screen quad.
 //
-// ─── Why a plain gaussian and not UnrealBloomPass ────────────────────────────
-// This used to be an EffectComposer running UnrealBloomPass, which is the
-// obvious choice and the one the demo makes. It put a visible SQUARE box around
-// every speck.
+// Why not UnrealBloomPass: it blurs a mip pyramid, and a few-pixel speck lands
+// in one texel of the coarse levels, which upsamples into a faint SQUARE around
+// every particle. One gaussian at a single resolution blurs a dot into a round
+// dot, and is cheaper.
 //
-// UnrealBloom blurs a five-level MIP PYRAMID and adds the levels together. The
-// coarsest levels are 1/16 and 1/32 of the frame, so a particle — a few pixels
-// across at most — lands inside a single texel there. Upsampling one isolated
-// texel by bilinear filtering gives a pyramid whose SUPPORT IS A SQUARE: it
-// falls to zero along texel-grid lines, not along a circle. That square is
-// larger and softer than the speck that cast it, so every particle ended up
-// sitting in a faint box.
+// Why the frame isn't rendered through an EffectComposer: it blends the scene's
+// additive layers (light cone, stars, particles) in linear space, then encodes to
+// sRGB, which washed out the whole scene. So the frame is a plain
+// renderer.render() and only the glow is added on top. This also keeps the
+// canvas's own anti-aliasing.
 //
-// That is a property of the pyramid, not of a setting, which is why tuning it
-// never worked — lowering strength/radius only made the boxes fainter. The fix
-// is to stop building a pyramid: one gaussian at a single resolution has no
-// texel grid to leave behind, so a dot blurs to a round dot. It is also cheaper
-// than the pass it replaces (two blur passes instead of ten plus a composite).
-//
-// The trade is reach: a pyramid can spread light across a quarter of the screen
-// for almost nothing, while a single-resolution gaussian is limited by its tap
-// count (BLUR_TAPS below). That ceiling is far wider than this scene wants —
-// these are fine specks meant to have a tight, clean halo, not a cinematic haze.
-//
-// ─── Why the base scene does NOT go through a composer ───────────────────────
-// Following the demo exactly meant routing the on-screen render through an
-// EffectComposer too, and that visibly WASHED OUT the whole scene — measured at
-// p=0 with no particles on screen at all: R +7, G +14, B +17 out of 255, the
-// darkest channel lifted most.
-//
-// The cause is blending space. Rendering straight to the canvas with
-// `outputColorSpace = SRGBColorSpace`, each material sRGB-encodes in its own
-// shader, so this scene's several ADDITIVE effects — the volumetric light cone,
-// the star field, the particles — blend on top of sRGB-encoded values. An
-// EffectComposer renders into a linear half-float target instead, so those same
-// additive effects blend in linear space and then get encoded once at the end.
-// Linear addition followed by an sRGB encode lifts dark pixels far more, because
-// the sRGB curve is steep near black. Hence a washed-out, slightly blue-grey
-// image. main.js already records the same trap for the painting intro: routing
-// the additive light cone through an offscreen buffer "made the volumetric
-// lighting look off".
-//
-// So the base frame is rendered by plain renderer.render(), byte for byte as in
-// flat mode, and only the GLOW is added over it. That is strictly better here:
-//   - flat vs. shiny now differ ONLY where there is glow, which is what an A/B
-//     toggle is for;
-//   - the canvas keeps its own MSAA (a composer would have discarded it, since
-//     `antialias: true` does nothing once the scene renders into a texture).
-//
-// ─── How the particles are isolated ──────────────────────────────────────────
-// The demo swaps `scene.background` between a black Color and its cube texture.
-// Our sky is a 1000-unit BoxGeometry MESH (see environment.js), not
-// scene.background, so swapping the background alone would leave the nebula in
-// the glow pass. The glow pass isolates the particles by LAYER instead: the
-// Points objects live on PARTICLE_BLOOM_LAYER and the camera is restricted to
-// it, so the room, table, objects, skybox mesh and star field are all absent.
-// The background is still forced black on top of that, because `scene.background`
-// is not layer-filtered.
-// Layer isolation is also safer than the demo's approach for us: its mesh is
-// dark grey (0x636363) specifically so it stays under the bloom threshold,
-// whereas our room walls are warm and brightly lit and WOULD bloom — the whole
-// room would glow the moment shiny mode was switched on.
-// The trade: glow is not occluded, so a particle behind a solid object still
-// adds a soft haze over it. Barely visible in practice — by the time particles
-// exist, the object emitting them is half gone.
+// The particles are isolated by camera LAYER, not by swapping the background:
+// the skybox is a mesh, and the lit room walls would bloom too. Downside: the
+// glow isn't hidden behind objects, which is barely visible in practice.
 
-// All four are live in the GUI ("Particle Bloom") because the right values also
-// depend on what is behind the particles — the glow needs more composite
-// strength to read against a bright nebula than against the flat black void.
+// GUI-tunable ("Particle Bloom"): the right values depend on the background.
 export const bloomSettings = {
     strength:  0.6,   // multiplier on the blurred glow
     radius:    0.14,  // how far the glow bleeds outward (drives the blur width)
     threshold: 0.15,  // luminance below which nothing blooms
-    // Higher than it looks, because the overlay adds the glow linearly rather
-    // than sRGB-encoding it first (see the overlay shader). The encode used to
-    // inflate this number's apparent effect by lifting every dim value; without
-    // it the core needs the multiplier the core actually wants.
+    // Glow is added linearly (see the overlay shader), so this has to be higher
+    // than it would with an sRGB encode.
     composite: 1.8,   // multiplier on the glow when it is added over the scene
 };
 
 const BLACK = new THREE.Color(0x000000);
 
-// The glow map is rendered at half the drawing buffer's size. A glow is
-// low-frequency by definition, so half resolution is indistinguishable and
-// quarters the cost of both blur passes.
+// Glow map at half resolution: a glow is soft anyway, and it quarters the cost.
 const RESOLUTION_SCALE = 0.5;
 
-// Taps per direction, so the kernel is 2*BLUR_TAPS+1 wide. Samples sit one
-// source texel apart: spacing them further to reach a wider blur with the same
-// tap count is what turns an isolated bright speck into a row of ghost copies,
-// since each tap would land on its own patch of an otherwise empty buffer.
-// The width is set by SIGMA_MAX instead, kept under BLUR_TAPS/2 so the kernel
-// never truncates somewhere the gaussian is still carrying real weight.
+// Taps per side (kernel = 2*BLUR_TAPS+1), one texel apart; spacing them wider
+// turns a speck into a row of ghost copies. SIGMA_MAX stays under BLUR_TAPS/2
+// so the kernel never cuts off real weight.
 const BLUR_TAPS = 8;
 const SIGMA_MIN = 0.6;
 const SIGMA_MAX = 3.0;
 
-// Rec.709 luma, matching what UnrealBloomPass used, so the threshold slider
-// still means the same thing it did.
+// Rec.709 luma for the threshold.
 const BLUR_SHADER = /* glsl */`
     uniform sampler2D tSrc;
     uniform vec2      uTexel;     // 1 / source size, in texels
@@ -130,9 +63,7 @@ const BLUR_SHADER = /* glsl */`
             float w = exp(-0.5 * x * x / (uSigma * uSigma));
             vec3  c = texture2D(tSrc, vUv + uDirection * uTexel * x).rgb;
             if (uThreshold >= 0.0) {
-                // Same soft high-pass UnrealBloomPass applied: everything under
-                // the threshold is dropped, with a narrow ramp so a particle
-                // fading past the cutoff doesn't pop.
+                // Soft high-pass: a narrow ramp, so a fading particle doesn't pop.
                 float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
                 c *= smoothstep(uThreshold, uThreshold + 0.01, luma);
             }
@@ -144,17 +75,14 @@ const BLUR_SHADER = /* glsl */`
 `;
 
 export function createParticleBloom(renderer, scene, camera) {
-    // Half float so the hot particle cores can stay above 1.0 through both blur
-    // passes instead of clipping before the glow is even built. No depth buffer:
-    // the only thing drawn into it is the particle layer, which doesn't depth
-    // write anyway.
+    // Half float, so bright particle cores stay above 1.0 through the blur.
+    // No depth buffer: particles don't write depth.
     const targetOptions = { type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false };
     const rtParticles = new THREE.WebGLRenderTarget(1, 1, targetOptions);
     const rtBlur      = new THREE.WebGLRenderTarget(1, 1, targetOptions);
 
-    // One full-screen quad, reused for both blur passes and the final overlay by
-    // swapping its material. The vertex shader writes clip space directly, so
-    // the camera it is rendered with is irrelevant.
+    // One full-screen quad, reused for both blur passes and the overlay. Its
+    // vertex shader writes clip space directly, so the camera doesn't matter.
     const quadScene  = new THREE.Scene();
     const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const quad       = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null);
@@ -197,23 +125,8 @@ export function createParticleBloom(renderer, scene, camera) {
             uniform float     uStrength;
             varying vec2      vUv;
             void main(){
-                // Added straight, with NO sRGB encode on the way in.
-                //
-                // Encoding first (pow(glow, 1/2.2)) is the tempting move, since
-                // the canvas holds sRGB-encoded pixels and the glow map is
-                // linear. It is also what made every speck look fluffy rather
-                // than sharp: that curve is steepest near black, so it lifted the
-                // faint OUTER tail of each halo about tenfold (0.0175 -> 0.156)
-                // while barely touching the core, and a gaussian raised to the
-                // 1/2.2 power is ~1.5x wider besides. Each particle ended up
-                // wearing a broad dim skirt, and overlapping skirts read as haze.
-                //
-                // Adding linearly keeps the falloff the gaussian actually has:
-                // a hot core that stays hot, and a tail that stays invisible.
-                // Correcting this properly would mean decoding the framebuffer,
-                // adding, and re-encoding — which additive blending cannot do —
-                // and the error only ever brightens, so the honest fix is to
-                // carry it in the composite multiplier instead.
+                // Added linearly, with no sRGB encode: the encode brightened each
+                // halo's faint outer edge ~10x, which made the particles look fluffy.
                 gl_FragColor = vec4(texture2D(uGlow, vUv).rgb * uStrength, 1.0);
             }
         `,
@@ -223,9 +136,8 @@ export function createParticleBloom(renderer, scene, camera) {
         transparent: true,
     });
 
-    // The adaptive-quality controller in renderer.js changes the renderer's
-    // pixel ratio at runtime, so the glow map is sized from the DRAWING BUFFER
-    // (which already includes that ratio) rather than from CSS pixels.
+    // Sized from the drawing buffer, which includes the pixel ratio the adaptive
+    // quality (setup/renderer.js) changes at runtime.
     let sizeX = 0, sizeY = 0;
 
     function syncSize() {
@@ -258,9 +170,7 @@ export function createParticleBloom(renderer, scene, camera) {
             renderer.setRenderTarget(rtParticles);
             renderer.render(scene, camera);
             scene.background = previousBackground;
-            // Restore exactly what the camera had, rather than enableAll(): that
-            // turned on every layer as a side effect and masked the fact that
-            // main.js was never enabling the particle layer itself.
+            // Restore the camera's exact layers (not enableAll(), which turns on every layer).
             camera.layers.mask = previousLayers;
 
             const sigma = THREE.MathUtils.lerp(SIGMA_MIN, SIGMA_MAX, bloomSettings.radius);

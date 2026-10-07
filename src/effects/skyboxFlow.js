@@ -6,9 +6,8 @@ import { NOISE_GLSL } from './noise.js';
 // any geometry, each pixel samples the *same* texture at a slightly displaced
 // UV, and that displacement is a swirling vector field that evolves over time.
 //
-// The field comes from the curl of a scalar noise potential — curl is
-// automatically divergence-free, which is exactly what makes it look like
-// swirling paint instead of the image just sliding around or tearing apart.
+// The field is the curl of a noise function: curl never converges or spreads,
+// so it swirls like paint instead of sliding or tearing the image.
 
 export const uFlowStrength = { value: 0.0 }; // eased 0→1 by updateSkyboxFlow()
 export const uFlowTime     = { value: 0.0 };
@@ -35,11 +34,8 @@ const FLOW_GLSL = /* glsl */`
         return vec2(n1 - n2, -(n3 - n4)) / (2.0 * e);
     }
 
-    // Each cube face is an independent flat texture, so a swirl direction on
-    // one face has no matching direction on its neighbour across a 90° edge
-    // — any nonzero warp right at the border reads as a seam. Fading the
-    // warp to exactly 0 at the UV border means both faces agree there
-    // (nothing moved), so the seam disappears.
+    // The swirl fades to 0 at each face's border; otherwise neighbouring faces
+    // would warp differently at the shared edge and show a seam.
     float flowEdgeFade(vec2 uv) {
         float margin = 0.14;
         vec2 d = smoothstep(0.0, margin, uv) * smoothstep(0.0, margin, 1.0 - uv);
@@ -47,10 +43,8 @@ const FLOW_GLSL = /* glsl */`
     }
 `;
 
-// Injects the flow-warped texture sample in place of Three.js's default
-// map_fragment chunk. vMapUv already exists on any MeshBasicMaterial with a
-// map assigned (declared by map_pars_fragment) — reused rather than adding
-// a second varying for the same UV.
+// Replaces three's texture read (map_fragment) with the swirled one, reusing
+// its existing vMapUv.
 export function injectSkyboxFlow(material, cacheKey) {
     material.onBeforeCompile = (shader) => {
         shader.uniforms.uFlowStrength = uFlowStrength;
@@ -61,11 +55,8 @@ export function injectSkyboxFlow(material, cacheKey) {
         shader.fragmentShader = shader.fragmentShader.replace(
             '#include <map_fragment>',
             `#ifdef USE_MAP
-                // Only pay for the curl-noise warp (4 expensive snoise3 calls per
-                // pixel) when the flow is actually on. When it's off — the default
-                // — uFlowStrength eases to ~0 and we skip straight to a plain
-                // texture read, which is a big fill-rate saving over the whole
-                // background every frame.
+                // The swirl costs 4 noise calls per pixel, so skip it when off
+                // (the default) and do a plain texture read.
                 vec2 flowUv = vMapUv;
                 float flowAmount = uFlowStrength * flowEdgeFade(vMapUv);
                 if (flowAmount > 0.001) {

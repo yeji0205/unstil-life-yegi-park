@@ -1,14 +1,12 @@
 import * as THREE from 'three';
 
-// Ceiling on the device-pixel-ratio the scene renders at. This scene is
-// fill-bound (full-screen background, six textured room planes, an additive
-// light cone), so cost scales with the NUMBER of pixels: dpr 1.5 shades 2.25×
-// as many as 1.0. 1.25 is a reasonable ceiling even on fast hardware; the
-// adaptive controller below scales DOWN from here when a machine can't keep up.
+// Renderer, camera and window resizing, plus adaptive quality.
+
+// Maximum pixel ratio. The cost grows with the number of pixels (1.5 shades 2.25x
+// as many as 1.0), so this is capped; adaptive quality lowers it further on slow machines.
 const PIXEL_RATIO_CAP = 1.25;
 
-// Live multiplier on that ceiling. The GUI slider sets the ceiling the viewer
-// would LIKE; adaptive quality lowers the actual value when frames are slow.
+// Current multiplier on that maximum, lowered by adaptive quality when frames are slow.
 export const renderScale = { value: 1.0 };
 
 export function setRenderScale(renderer, value) {
@@ -17,18 +15,10 @@ export function setRenderScale(renderer, value) {
 }
 
 // ─── Adaptive quality ─────────────────────────────────────────────────────────
-// The piece has to run on hardware we'll never see — a professor's laptop, a
-// classmate's phone-tethered browser — where any fixed quality setting is wrong
-// for someone. So instead of choosing one, it measures its own frame time and
-// scales the render resolution to fit, the same trick console games use.
-//
-// Resolution is the right dial for this because it's the one with a smooth,
-// continuous cost curve: everything else (shadows, lights, textures) is a step
-// change that would be visible as a jolt.
-//
-// Deliberately sluggish: it samples over a whole second and moves in small
-// steps, because a controller that reacted quickly would visibly pump the
-// sharpness up and down while the scene animates. Better to settle slowly.
+// Measures the frame time and adjusts the render resolution to fit, so the piece
+// runs on unknown hardware. Resolution changes smoothly; shadows or textures
+// would jump. It averages over a second and moves in small steps, so the
+// sharpness doesn't visibly pump.
 const ADAPT = {
     sampleMs:  1000,  // averaging window
     slowMs:    30,    // above this (≈33 fps) → give up resolution
@@ -39,7 +29,7 @@ const ADAPT = {
 
 export function createAdaptiveQuality(renderer) {
     let elapsed = 0, frames = 0, enabled = true;
-    let ceiling = 1.0; // what the GUI slider asks for
+    let ceiling = 1.0; // highest scale allowed (setCeiling; currently never changed)
 
     return {
         // Called from the render loop with the frame's delta in seconds.
@@ -59,8 +49,7 @@ export function createAdaptiveQuality(renderer) {
 
             if (Math.abs(next - renderScale.value) > 0.001) setRenderScale(renderer, next);
         },
-        // The GUI slider raises/lowers the ceiling rather than fighting the
-        // controller: ask for more and it may be granted if the frame rate allows.
+        // Sets the highest scale the controller may reach. (Not called at the moment.)
         setCeiling(v) {
             ceiling = v;
             if (renderScale.value > v) setRenderScale(renderer, v);
@@ -70,33 +59,15 @@ export function createAdaptiveQuality(renderer) {
 }
 
 export function createRenderer() {
-    // Anti-aliasing back ON. It targets exactly one thing — the stair-stepping
-    // along object outlines — and for that it is much better value than raising
-    // the resolution: MSAA takes extra samples only at edge pixels, whereas a
-    // higher pixel ratio pays for every pixel on screen. Cost here is mostly
-    // memory bandwidth, which is the scarce resource on integrated graphics, so
-    // it isn't free, but it should be well under what dpr 1.5 was costing.
-    //
-    // `antialias` can only be chosen when the WebGL context is created, so it
-    // can't be a live GUI toggle. Add ?aa=0 to the URL to compare with it off.
+    // Anti-aliasing smooths object outlines, much more cheaply than a higher pixel
+    // ratio. It can only be set when the WebGL context is created, so it isn't a
+    // GUI toggle: add ?aa=0 to the URL to turn it off.
     const antialias = new URLSearchParams(location.search).get('aa') !== '0';
 
-    // powerPreference: ask for the DISCRETE GPU on machines that have two.
-    // A 15" MacBook Pro of this era carries both an integrated Intel chip and a
-    // discrete Radeon; both drive the same display, so macOS switches the whole
-    // system between them rather than splitting work. It defaults to the Intel
-    // for battery life, and Chrome deliberately requests the low-power GPU for
-    // the same reason — which is why this scene was running on the weaker chip
-    // with the Radeon idle. This hint asks for the other one.
-    //
-    // It IS only a hint: the browser may ignore it on battery, and macOS's
-    // "Automatic graphics switching" setting can override it. Check which one
-    // actually got used on the last line of the perf HUD.
-    //
-    // Escape hatch: ?gpu=low asks for the integrated chip instead. The discrete
-    // GPU runs hotter and draws considerably more power, which on an older
-    // machine with a tired battery is a real cost — use this when working
-    // unplugged and let the adaptive quality above absorb the difference.
+    // Ask for the faster (discrete) GPU on laptops that have two; browsers pick
+    // the low-power one by default. Only a hint: the browser or OS may ignore it.
+    // The perf HUD shows which GPU was used. Add ?gpu=low to use the low-power
+    // GPU instead, e.g. on battery.
     const lowPower = new URLSearchParams(location.search).get('gpu') === 'low';
     const renderer = new THREE.WebGLRenderer({
         antialias,
@@ -106,12 +77,7 @@ export function createRenderer() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
-    // PCFSoft, not plain PCF. This was the other way round while the scene was
-    // stuck on integrated graphics, where the extra texture samples per shaded
-    // pixel weren't affordable. With the discrete GPU in play they are, and the
-    // wider filter is what takes the remaining hard stair-steps off a shadow
-    // edge once the map resolution has done the heavy lifting (see
-    // setShadowQuality in lighting.js). Add ?shadows=hard to compare.
+    // Soft shadow edges (PCFSoft). Add ?shadows=hard to compare with plain PCF.
     renderer.shadowMap.type = new URLSearchParams(location.search).get('shadows') === 'hard'
         ? THREE.PCFShadowMap
         : THREE.PCFSoftShadowMap;

@@ -1,104 +1,57 @@
 import * as THREE from 'three';
 import { injectSkyboxFlow, uFlowStrength } from '../effects/skyboxFlow.js';
 
+// The space background: skybox (built-in, custom upload or flat colour), the fill
+// light colour sampled from it, and the star field.
+
 // ─── Skybox ──────────────────────────────────────────────────────────────────
-// Each entry is a folder under asset/skybox/ holding exactly six files:
-// right / left / top / bottom / front / back .png — the same six words
-// SKYBOX_FACES lists, and the same ones the custom-upload matcher accepts.
-//
-// Adding a background is therefore: drop the folder in, rename its faces to
-// those words, add the folder name here and a LIGHTING_PRESETS entry below.
-// Nothing else in the code needs to know about it.
-//
-// Packs in the wild use every naming scheme going (bkg1_*, xpos/xneg, rt/lf/up),
-// so the renaming step is unavoidable somewhere. It used to live in code as a
-// per-folder prefix table, which meant a pack whose names differed in any way
-// OTHER than a prefix — like the axis-named interstellar set — simply could not
-// be added without new code. Normalising on disk instead costs one rename per
-// file, once, and removes the table entirely.
-//
-// SKYBOX_NONE is a special case handled directly below — no folder or textures
-// involved, just a flat colour.
+// Each option is a folder under asset/skybox/ with six files named as in
+// SKYBOX_FACES. To add one: drop the folder in, rename its faces, add the folder
+// name to SKYBOX_OPTIONS and an entry to LIGHTING_PRESETS.
+// SKYBOX_NONE is a flat colour, with no folder.
 export const SKYBOX_NONE         = 'None (solid color)';
 
-// The flat background colour used when SKYBOX_NONE is selected. White to begin
-// with — that's the plain gallery void the piece was designed against — but it's
-// live, so the GUI can offer a swatch beside the dropdown. Kept out here rather
-// than inside buildSkybox so the GUI can read the current value when it builds
-// its colour picker, without needing the skybox to hand it over.
+// The flat background colour for SKYBOX_NONE (GUI colour picker).
 export const voidColor = { hex: '#ffffff' };
 
 export const SKYBOX_CUSTOM_LABEL = 'Add custom skybox…';
 export const SKYBOX_OPTIONS      = ['space_blue', 'space_red', 'sky', SKYBOX_NONE, SKYBOX_CUSTOM_LABEL];
 
-// Ambient/directional tint the room lighting eases toward as it enters
-// 'space' (see scene/lighting.js updateLighting) — keyed by the same names
-// as SKYBOX_OPTIONS. Lighting should match whatever the viewer can actually
-// see behind the objects: the blue nebula implies a cool blue tint, while a
-// flat void is lit by whatever colour it's set to (white by default). Add an
-// entry here whenever a new skybox option is added above.
+// Light colours and intensities the scene eases to in space, per skybox (keys
+// match SKYBOX_OPTIONS; see scene/lighting.js). Add one for every new skybox.
 export const LIGHTING_PRESETS = {
     space_blue: {
-        // Deep space, lit BY the nebula.
+        // Deep space: a hard, pure white key light (no atmosphere to tint it),
+        // pointed out of the nebula's brightest patch, plus a dim fill so the
+        // shadow sides keep their shape.
         //
-        // KEY: hard, pure white and strong. In vacuum there's no atmosphere to
-        // scatter, tint or soften sunlight, so it arrives at full energy and
-        // uncoloured. Its DIRECTION is matched to the skybox texture — sampling
-        // the six faces puts the nebula's brightest region at azimuth ≈ −50°,
-        // elevation ≈ 55°, which is where scene/lighting.js aims it and where
-        // the visible sun sits.
-        //
-        // FILL: ambient used to be 0.0 here, which is why every surface facing
-        // away from the key light went pure black — there was no fill in space at
-        // all. At 0.7 against the 5.4 key the contrast is ~7.7:1: lit sides read
-        // as sunstruck while shadowed sides keep their shape.
-        //
-        // ambientColor is only a FALLBACK. buildSkybox() measures the average
-        // colour of the loaded cube map and overrides it (see selectBackground in
-        // main.js), so the fill always matches the background actually on screen
-        // — including user-supplied custom ones.
+        // ambientColor is only a fallback: buildSkybox() measures the skybox's
+        // average colour and uses that instead (see selectBackground in main.js).
         ambientColor:         [0.34, 0.45, 0.72],
         ambientIntensity:     0.7,
         directionalColor:     [1.00, 1.00, 1.00],
         directionalIntensity: 5.4,
     },
     space_red: {
-        // Same deep-space treatment as space_blue — hard white key light, dim
-        // fill. The fill COLOUR isn't specified by hand: buildSkybox() samples
-        // the red nebula's own average and overrides ambientColor, so shadowed
-        // sides pick up that warm red rather than this fallback blue.
+        // Same as space_blue; the fill colour is measured from the red nebula.
         ambientColor:         [0.34, 0.45, 0.72],
         ambientIntensity:     0.7,
         directionalColor:     [1.00, 1.00, 1.00],
         directionalIntensity: 5.4,
     },
     sky: {
-        // Hipshot's "Interstellar" starfield (asset/skybox/sky/README.TXT
-        // carries the author's attribution — keep it with the images). Same
-        // deep-space treatment as the two nebulae: a hard white key with a low
-        // fill, and the fill's COLOUR measured from the images themselves rather
-        // than guessed here, so it tracks whatever that sky actually looks like.
+        // Hipshot's "Interstellar" starfield (keep asset/skybox/sky/README.TXT,
+        // the author's attribution, with the images). Same as the nebulae.
         ambientColor:         [0.34, 0.45, 0.72],
         ambientIntensity:     0.7,
         directionalColor:     [1.00, 1.00, 1.00],
         directionalIntensity: 5.4,
     },
     [SKYBOX_NONE]: {
-        // Plain coloured void: ambient light has no direction, so pushing it well
-        // above the directional light (instead of just "bright-ish") is what
-        // actually removes dark/shadowed sides from objects — a directional
-        // light alone always leaves its non-facing side dim regardless of
-        // ambient's absolute brightness, since only ambient reaches every
-        // surface orientation equally.
-        //
-        // These are the values for a WHITE void. Pick another background colour
-        // and setVoidColor overrides both: ambientColor takes that colour's hue,
-        // on the same principle as the cube-map presets (whatever surrounds the
-        // objects is what should be lighting them — a blue void that lit
-        // everything white would read as a flat cut-out), and ambientIntensity is
-        // scaled by how bright the colour is, so black genuinely goes dark instead
-        // of falling back to a bright neutral fill. 3.2 is therefore the CEILING
-        // reached at pure white, not a constant.
+        // Flat void: strong ambient (it reaches every side equally), weak key, so
+        // objects have no dark sides. These are the values for WHITE; for other
+        // colours setVoidColor sets the ambient's hue to the colour and scales its
+        // intensity by the colour's brightness, so 3.2 is the maximum.
         ambientColor:         [1.00, 1.00, 1.00],
         ambientIntensity:     3.2,
         directionalColor:     [1.00, 1.00, 1.00],
@@ -108,30 +61,17 @@ export const LIGHTING_PRESETS = {
 
 export const SKYBOX_FACES = ['right', 'left', 'top', 'bottom', 'front', 'back'];
 
-// How bright the background renders, as a multiplier on its own texture.
-// 1.0 = the raw image. Lower it to push the sky behind the still life.
+// Background brightness multiplier. 1.0 = the raw image. Lower it to push the
+// sky behind the still life.
 const SKYBOX_BRIGHTNESS = 0.45;
 
 export function buildSkybox(scene) {
     const textureLoader = new THREE.TextureLoader();
 
-    // Loads one cube face. ClampToEdge + no mipmaps keeps the sampler from
-    // reaching past a face's own border, which is what produced bright or
-    // wrong-coloured seam lines under RepeatWrapping. Square, equal-size faces
-    // still look best — see inspectFaces for what happens when they aren't.
+    // Loads one face. ClampToEdge and no mipmaps prevent seam lines at the edges.
+    // Non-square images are stretched, not cropped: cropping cuts off the borders
+    // that adjacent faces need to line up.
     function loadFaceTexture(url, revokeAfter = false, onReady = null) {
-        // Non-square images are STRETCHED to fill the face, not centre-cropped.
-        //
-        // Cropping was the wrong call for a cube map and is the main reason some
-        // folders showed visible edges while others were fine. A cube's faces only
-        // join invisibly if each one carries the sky right up to its own border —
-        // the right face's left border has to continue exactly where the front
-        // face's right border stops. Cropping to a square throws away precisely
-        // those borders, so every seam becomes a jump-cut. Stretching keeps the
-        // full image, so the edges still line up; the picture is squashed a little
-        // instead, which is far less noticeable than six hard lines.
-        //
-        // (Square images, which is what most packs ship, are unaffected either way.)
         const tex = textureLoader.load(url, (t) => {
             t.needsUpdate = true;
             if (revokeAfter) URL.revokeObjectURL(url);
@@ -142,24 +82,12 @@ export function buildSkybox(scene) {
         tex.minFilter = THREE.LinearFilter;
         return tex;
     }
-    // ── Ambient colour sampled FROM the background ──────────────────────────
-    // Averages the whole cube map into one colour: the mean light arriving from
-    // the environment. This is a cheap stand-in for image-based lighting — for a
-    // matte surface the correct ambient term really is the average of the
-    // surrounding radiance, so this is principled rather than a trick, and it
-    // means ANY background (including a user's custom cube map) automatically
-    // gets a matching fill light instead of needing a hand-written preset.
-    //
-    // Every pixel is averaged, not a random subset: drawing each face into a
-    // 32×32 canvas makes the GPU box-filter it, so those 6×1024 pixels already
-    // ARE the average of the full 2048² images. It costs a few ms once per
-    // skybox change, so there's no reason to sample randomly.
-    //
-    // IMPORTANT: only the HUE is taken, not the brightness. A starfield averages
-    // to nearly black (measured mean luminance ≈ 9/255), so feeding the raw mean
-    // in as a colour would light nothing at all. Scaling the brightest channel to
-    // 1 keeps the colour cast and leaves overall strength to ambientIntensity —
-    // which is what the GUI's "Ambient ×" slider then scales.
+    // ── Ambient colour sampled from the background ──────────────────────────
+    // The average colour of the whole cube map, a cheap stand-in for image-based
+    // lighting, so any background (including uploads) gets a matching fill.
+    // Drawing each face into a 32×32 canvas makes the GPU average it.
+    // Only the hue is used: a starfield averages to nearly black and would light
+    // nothing. The strength comes from the preset's ambientIntensity.
     function averageFaceColor(images) {
         const S = 32;
         const c = document.createElement('canvas');
@@ -174,17 +102,12 @@ export function buildSkybox(scene) {
             for (let i = 0; i < d.length; i += 4) { R += d[i]; G += d[i + 1]; B += d[i + 2]; n++; }
         }
         if (!n) return null;
-        // Canvas pixels are 0–255; normalizeHue works in 0–1 like THREE.Color, so
-        // the two callers hand it the same units.
+        // Canvas values are 0–255; normalizeHue works in 0–1.
         return normalizeHue(R / (255 * n), G / (255 * n), B / (255 * n));
     }
 
-    // Takes the HUE of a colour and throws away its brightness, so a dim
-    // background still produces a usable fill (see the note above
-    // averageFaceColor — a starfield averages to almost black, and feeding that
-    // in raw would light nothing at all). Intensity stays the preset's job.
-    // Shared by the cube-map average and the flat void colour so both answer
-    // "what colour is the light around the objects" the same way.
+    // Keeps a colour's hue and drops its brightness (brightest channel → 1).
+    // Used for both the cube-map average and the flat void colour.
     function normalizeHue(r, g, b) {
         const max = Math.max(r, g, b);
         if (max < 1 / 255) return [1, 1, 1]; // essentially black → neutral fill
@@ -205,21 +128,9 @@ export function buildSkybox(scene) {
         };
     }
 
-    // Why a given folder shows seams, answered from the images themselves rather
-    // than left to guesswork. Only two properties of the FILES can cause it:
-    //
-    //  • non-square faces — a cube face is square by definition, so anything else
-    //    has to be distorted to fit, and it usually means the images aren't a cube
-    //    map at all (a single panorama sliced up, or six unrelated photos)
-    //  • mismatched sizes — adjacent faces at different resolutions meet at
-    //    slightly different levels of detail, which shows as a visible change in
-    //    sharpness along the join even when the content is correct
-    //
-    // What this CANNOT detect is the third cause, and in practice the commonest:
-    // face orientation. Cube-map conventions disagree about handedness and about
-    // how the top and bottom faces are rotated, so a pack can be named perfectly
-    // and still meet at right angles. That one has to be seen to be diagnosed,
-    // which is why the report says so instead of pretending everything is fine.
+    // Explains seams in an uploaded skybox: non-square faces get stretched, and
+    // faces of different sizes meet at different sharpness. It can't detect the
+    // most common cause, faces rotated the wrong way, which has to be seen.
     function inspectFaces(images) {
         const notes = [];
         const dims = images.map((img, i) => img
@@ -245,13 +156,8 @@ export function buildSkybox(scene) {
     const skybox = new THREE.Mesh(
         new THREE.BoxGeometry(1000, 1000, 1000),
         SKYBOX_FACES.map((face) => {
-            // color acts as a multiplier over the cube-map texture, so a value
-            // below white dims the whole background. The raw nebula images read
-            // far too bright behind a dim, candle-lit still life and flattened
-            // the contrast between the scene and its backdrop; SKYBOX_BRIGHTNESS
-            // pushes the sky back so the objects stay the brightest thing on
-            // screen. (The ambient light sampled from the sky is unaffected —
-            // that normalises hue separately, see averageFaceColor.)
+            // The colour dims the texture (SKYBOX_BRIGHTNESS), so the objects stay
+            // the brightest thing on screen.
             const mat = new THREE.MeshBasicMaterial({
                 side: THREE.BackSide,                      // maps set by loadSkybox()
                 color: new THREE.Color().setScalar(SKYBOX_BRIGHTNESS),
@@ -285,18 +191,10 @@ export function buildSkybox(scene) {
         });
     }
 
-    // Accepted filename tokens per cube face. There is no standard here — every
-    // skybox pack invents its own — so the list covers the conventions actually
-    // in circulation rather than insisting on one:
-    //   • words:        right / left / top / bottom / front / back
-    //   • abbreviations: rt / lf / up / dn / ft / bk  (the Quake-era set, very
-    //                    common in game-asset packs and free skybox downloads)
-    //   • axis names:   posx / negx, xpos / xneg, px / nx, xp / xn
-    //   • compass:      east / west / north / south
-    // Deliberately NOT included: bare numbers (0–5, 1–6). They appear in plenty
-    // of packs, but there's no way to tell a face index from an image size or a
-    // version suffix, and guessing wrong would silently build a scrambled sky —
-    // worse than saying the files couldn't be read.
+    // Filename words accepted for each face of an uploaded skybox, since every
+    // pack names them differently: words, rt/lf/up/dn/ft/bk, posx/negx-style axis
+    // names, compass directions. Bare numbers are left out on purpose: they can't
+    // be told apart from sizes or versions, and a wrong guess scrambles the sky.
     const FACE_ALIASES = {
         right:  ['right',  'rt', 'east',  'posx', 'xpos', 'px', 'xp'],
         left:   ['left',   'lf', 'west',  'negx', 'xneg', 'nx', 'xn'],
@@ -306,9 +204,8 @@ export function buildSkybox(scene) {
         back:   ['back',   'bk', 'south', 'negz', 'zneg', 'nz', 'zn'],
     };
 
-    // Whole-token match: the filename is split on non-alphanumeric characters, so
-    // "cube_bot" offers ['cube','bot'] and can't accidentally match 'back' through
-    // a stray letter. This is the strict pass and runs first for every file.
+    // Strict match: whole words of the filename, split on non-alphanumerics, so
+    // "cube_bot" can't match 'back' by accident.
     function faceByToken(name) {
         const tokens = name.toLowerCase().replace(/\.[^.]+$/, '').split(/[^a-z0-9]+/);
         for (const face of SKYBOX_FACES) {
@@ -317,35 +214,22 @@ export function buildSkybox(scene) {
         return null;
     }
 
-    // Fallback for names with no separator at all — "skyboxRT.png", "BKsunset.jpg"
-    // — where tokenising yields one unsplittable blob. The face word can sit at
-    // either end, since packs use both: some append it, some lead with it.
-    //
-    // Looser by nature — "group.png" ends in "up", "background.png" starts with
-    // "back" — so it only ever fills faces the strict pass left empty, and suffix
-    // is tried before prefix because trailing face names are the commoner style.
+    // Loose match for names without separators ("skyboxRT.png"): the face word at
+    // the end or the start. Can misfire ("group" ends in "up"), so it only fills
+    // faces the strict match left empty.
     function faceByEdge(name, mode) {
         const base = name.toLowerCase().replace(/\.[^.]+$/, '').replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
         for (const face of SKYBOX_FACES) {
-            // Longest alias first: for "xneg…" this tries 'xneg' before 'xn', so a
-            // more specific spelling can't be pre-empted by a shorter one.
+            // Longest alias first, so 'xneg' wins over 'xn'.
             const aliases = [...FACE_ALIASES[face]].sort((a, b) => b.length - a.length);
             if (aliases.some(a => (mode === 'suffix' ? base.endsWith(a) : base.startsWith(a)))) return face;
         }
         return null;
     }
 
-    // Matches a set of user-picked files to the 6 cube faces by filename
-    // (e.g. "myscene_right.png" -> right, "posx.png" -> right, "skyBK.png" -> back).
-    //
-    // Three passes, strictest first, and that ordering is the point: a folder
-    // picker hands over EVERY file inside, including stray readme or preview
-    // images. Each looser pass only fills faces still unclaimed and only
-    // considers files not already spoken for, so a properly named file always
-    // wins its slot over an accidental prefix/suffix collision.
-    //
-    // Returns { matched, missing }. `missing` lets the caller name the faces it
-    // couldn't find instead of just refusing the whole folder.
+    // Matches uploaded files to the 6 faces in three passes, strictest first, so a
+    // properly named file always wins over a stray file in the folder.
+    // Returns { matched, missing }, so the caller can name the missing faces.
     function matchFaceFiles(files) {
         const list = Array.from(files);
         const matched = {};
@@ -384,13 +268,8 @@ export function buildSkybox(scene) {
         return true;
     }
 
-    // Repaints the flat background live. Only touches scene.background when the
-    // solid-colour option is actually showing — the skybox mesh covers it
-    // otherwise, so writing there would silently change what you'd see the next
-    // time None was picked, with no visible feedback now.
-    //
-    // Reports the new hue back the same way a cube map does, so the fill light
-    // follows the background without a second control to keep in sync.
+    // Changes the flat background colour live (only shown when the skybox is
+    // hidden), and reports the new hue so the fill light follows it.
     function setVoidColor(hex, onAmbientColor) {
         voidColor.hex = hex;
         const c = new THREE.Color(hex);
@@ -398,30 +277,10 @@ export function buildSkybox(scene) {
         onAmbientColor?.(normalizeHue(c.r, c.g, c.b), voidBrightness(c));
     }
 
-    // How much fill a flat background is worth, 0–1, scaling the preset's ambient
-    // intensity. This is the piece that makes a black void actually dark.
-    //
-    // It exists ONLY for the flat colour, not for cube maps, and the distinction
-    // is intent. A starfield is mostly black by accident — it's empty space with
-    // a few bright points — and dimming the scene to match would leave nothing
-    // visible, so there the darkness is discarded and only hue is taken. But a
-    // flat colour is chosen: picking #000 is a decision that the objects sit in
-    // darkness, and answering it with a bright neutral fill (which is what
-    // normalizeHue alone does, since black has no channel ratio to preserve)
-    // contradicts the choice. That was the surprising part.
-    //
-    // The measure is the BRIGHTEST CHANNEL, not perceptual luminance. Rec.709
-    // weights would call pure red 0.21 and pure green 0.72, so a vivid red
-    // background would come out three times dimmer than a vivid green one —
-    // technically true of emitted light, but not what someone means when they
-    // pick a saturated swatch. Max-channel is HSV's "value": fully saturated
-    // hues all read as fully bright, and only genuinely dark colours dim. It's
-    // also exactly the divisor normalizeHue already uses, so hue and brightness
-    // are two halves of the same decomposition.
-    //
-    // The key light is deliberately left alone. At ambient 0 the objects are
-    // still lit from one side, so a black void reads as dramatic and directional
-    // rather than as a blank screen.
+    // How much fill a flat colour gives, 0–1, so a black void is actually dark.
+    // Only for flat colours: a starfield is dark by accident, a chosen black is
+    // a decision. Uses the brightest channel, so all vivid colours count as
+    // fully bright. The key light is left on, so black reads as dramatic.
     function voidBrightness(c) {
         return Math.max(c.r, c.g, c.b);
     }
@@ -430,15 +289,12 @@ export function buildSkybox(scene) {
 }
 
 // ─── Stars ───────────────────────────────────────────────────────────────────
+// Soft round dot: a white radial gradient fading to transparent.
 function makeStarTexture() {
-    // Create a tiny invisible canvas (like a small blank drawing board)
     const c = document.createElement('canvas');
     c.width = c.height = 64; // 64x64 pixels, very small
     const ctx = c.getContext('2d'); // This gives the 2D drawing API
 
-    // 32, 32, 0 = inner circle: center at (32,32), radius 0 (a single point)
-    // 32, 32, 32 = outer circle: center at (32,32), radius 32 (reaches the edges)
-    // gradient that starts from the exact center and expands outward to the edge.
     const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
     g.addColorStop(0, 'rgba(255,255,255,1)'); // center: solid white
     g.addColorStop(1, 'rgba(255,255,255,0)'); // edge: fully transparent
@@ -452,16 +308,10 @@ function makeStarTexture() {
 const STAR_ROTATE_SPEED = 0.03;
 
 export function buildStars(scene) {
-    // Halved from 1000. These sit in FRONT of the skybox, which already has its
-    // own painted stars, so the two fields were competing — a second, brighter,
-    // additively-blended layer of specks over an image that did not need them.
-    // Fewer of them reads as depth over the nebula rather than as noise on it.
+    // The skybox already has painted stars; more than this competes with it.
     const STAR_COUNT = 500;
-    // Stars used to be scattered through a ±100 CUBE centred on the origin, which
-    // put a share of them inside the room — visible as bright specks floating in
-    // front of the walls and through the table. Spawning them on a spherical
-    // SHELL instead (well outside the 14 × 7 × 14 room) keeps the field looking
-    // the same from the centre while guaranteeing none can be indoors.
+    // Stars sit on a shell well outside the room (14 × 7 × 14), so none can
+    // appear indoors.
     const STAR_MIN_RADIUS = 45;   // comfortably beyond the room's far corner (~10)
     const STAR_MAX_RADIUS = 110;
     const starPositions = new Float32Array(STAR_COUNT * 3);
@@ -494,9 +344,7 @@ export function buildStars(scene) {
     starPoints.rotation.z = 0.15;
     scene.add(starPoints);
 
-    // Star field turns together with the skybox warp — same toggle, same
-    // eased uFlowStrength — so both read as one swirling motion instead of
-    // a moving background behind motionless points.
+    // Turns with the skybox swirl (same toggle and strength), so both move as one.
     function updateStars(dt) {
         starPoints.rotation.y += STAR_ROTATE_SPEED * uFlowStrength.value * dt;
     }
