@@ -10,22 +10,21 @@ import { NOISE_GLSL } from './noise.js';
 export const uProgress          = { value: 0.0 };
 export const uNoiseFreq         = { value: 0.35 };
 
-// Edge (rim) width, one per category: objects sample noise at a 4x higher
-// frequency than the room, so a shared value made their rim ~2.5x heavier.
-// 0.10 gives objects the same ~7% rim the walls get.
+// Edge width. While a surface dissolves, a thin coloured band (the "edge") is
+// drawn along the border of each hole, just before that part disappears.
 export const uDissolveEdge       = { value: 0.25 };  // room walls
 export const uObjectDissolveEdge = { value: 0.10 };  // table + stage objects
-// Room rim colour: black, a dark dissolve front against the warm walls.
+// Edge colour for the room
 export const uDissolveEdgeColor = { value: new THREE.Color(0x000000) };
 
-// Objects' rim colour, separate from the room's: they dissolve against black
-// space, where a dark rim would be invisible. Defaults to the particle colour.
+// Edge colour for the table and objects.
 export const uObjectDissolveEdgeColor = { value: new THREE.Color(0xffffff) };
 
-// Rim follows the surface's own lit colour (x gain) instead of a fixed colour.
-// The objects are hollow meshes, and a fixed colour outlined every hole's empty
-// interior. Gain < 1 darkens the rim, > 1 makes it glow. Floats, not booleans,
-// so the shader can mix() without branching.
+// Edge colour = the object's own colour, instead of the fixed colour above.
+// Why: the 3D models are hollow shells. With a fixed colour (white), every hole
+// showed a bright white outline around the empty inside of the object, which
+// was the most eye-catching thing on screen. Using the object's own colour, a
+// hole just looks like the object getting thinner.
 export const uObjectEdgeFollow = { value: 1.0 };
 export const uObjectEdgeGain   = { value: 0.35 };
 
@@ -36,8 +35,10 @@ const EDGE_GAIN_UNUSED = { value: 1.0 };
 // Default for meshes already in their root's space.
 const IDENTITY_MATRIX = { value: new THREE.Matrix4() };
 
-// Fresnel rim tint: edges at grazing angles blend toward this colour, so objects
-// pick up their surroundings. Set every frame from the ambient light (lighting.js).
+// Outline tint (a separate effect from the dissolve edge): where an object's
+// surface turns away from the camera, at its outline, it blends toward this
+// colour, so objects pick up the colour around them (warm in the room, bluish in
+// space). Set every frame from the ambient light in lighting.js.
 export const uRimColor    = { value: new THREE.Color(0xffffff) };
 export const uRimStrength = { value: 0.0 };
 
@@ -75,7 +76,7 @@ export function updateDissolveTransparency() {
 //   freqScale:     extra multiplier on uFreq (table/objects use finer noise)
 //   scaleUniform:  the mesh's scale factor, so every object dissolves with the
 //                  same world-size blobs whatever size its GLB was
-//   edgeUniform:   rim width. Must be the same one passed to makeParticleMaterial,
+//   edgeUniform:   edge width. Must be the same one passed to makeParticleMaterial,
 //                  or the particles won't sit on the edge.
 //   localMatrixUniform: child-to-root transform (see posExpr below)
 export function injectDissolve(material, progressUniform, { space = 'local', freqScale = 1.0, scaleUniform = { value: 1.0 }, edgeUniform = uDissolveEdge, edgeColorUniform = uDissolveEdgeColor, edgeFollowUniform = EDGE_FOLLOW_OFF, edgeGainUniform = EDGE_GAIN_UNUSED, localMatrixUniform = IDENTITY_MATRIX } = {}) {
@@ -126,7 +127,7 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
             '#include <dithering_fragment>',
             `#include <dithering_fragment>
 
-            // Fresnel rim tint: silhouette edges blend toward the environment colour.
+            // Outline tint: the object's outline blends toward the surroundings' colour.
             {
                 vec3  rimViewDir = normalize(vViewPosition);
                 float rimFactor  = pow(1.0 - max(dot(normalize(vNormal), rimViewDir), 0.0), 3.0);
@@ -154,11 +155,14 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
     };
 }
 
-// ─── The same dissolve, for the SHADOW pass ─────────────────────────────────
-// Shadows are drawn with a separate depth material that knows nothing about the
-// dissolve, so a half-dissolved object cast its full shadow. Use this as the
-// mesh's customDepthMaterial: same noise, same discard, so the shadow dissolves
-// with the surface.
+// ─── The same dissolve, for SHADOWS ──────────────────────────────────────────
+// Makes an object's shadow dissolve together with the object.
+// three.js draws shadows in a separate step, using its own simple material that
+// knows nothing about the dissolve. Without this, a half-dissolved object (or an
+// invisible one) still cast its complete shadow, and when the objects came back
+// to the room all their shadows appeared at once. This material cuts out the
+// same holes as the surface, so the shadow gets holes at the same moment.
+// Set as the mesh's customDepthMaterial (see glbLoader.js).
 //
 // Options MUST match the injectDissolve() call for the same mesh.
 export function makeDissolveDepthMaterial(progressUniform, {
@@ -196,7 +200,7 @@ export function makeDissolveDepthMaterial(progressUniform, {
              ${NOISE_GLSL}` +
             shader.fragmentShader;
 
-        // Only the fully dissolved part is discarded; the rim still casts.
+        // Only the fully dissolved part is cut out; the edge still casts a shadow.
         shader.fragmentShader = shader.fragmentShader.replace(
             '#include <clipping_planes_fragment>',
             `#include <clipping_planes_fragment>
@@ -212,51 +216,38 @@ export function makeDissolveDepthMaterial(progressUniform, {
     return depthMat;
 }
 
-// ─── Particle settings (all on GUI sliders) ──────────────────────────────────
+// ─── Particle settings (GUI sliders) ──────────────────────────────────────────
 export const uParticleColor = { value: new THREE.Color(0xffffff) };
 
-// Sideways sway of the particle stream. 0 = straight.
+// Sideways sway of the particle stream (0 = straight).
 export const uParticleSwirl = { value: 0.05 };
 
-// Multiplier on the on-screen size (applied to the 3–8 px clamp in the shader).
+// Size on screen (multiplier).
 export const uParticleSize = { value: 0.8 };
 
-// Twinkle strength: each speck grows by up to this fraction at each flash (and
-// its rays/brightness by half that). Size, not brightness, because at 3–8 px
-// under the glow a brightness change barely shows.
+// How much each particle grows when it twinkles (0 = no twinkle).
 export const uParticleTwinkle = { value: 0.6 };
 
-// Ray length multiplier. 0 = round dot, 1 = long rays. Rays are screen-aligned,
-// like real lens diffraction, and grow with each twinkle.
+// How strong the star rays are (0 = round dot, no rays).
 export const uParticleSpikes = { value: 0.7 };
 
-// Ray SHARPNESS (the k in 1/(1 + |x|*k)), i.e. ray width. Half-width in px is
-// about spriteRadius / k: 8 gives ~0.4 px. Much higher and rays go sub-pixel
-// and vanish (110 did); much lower and the speck becomes a blob.
+// How thin the rays are. Higher = thinner; too high (e.g. 110) and they vanish.
 export const uParticleSpikeSharp = { value: 8.0 };
 
-// Ray taper exponent. LOWER = longer rays. Tapering makes them end in points
-// instead of being cut off at the sprite's edge.
+// How far the rays reach before fading out. Lower = longer rays.
 export const uParticleSpikeLength = { value: 2.0 };
 
-// Shrink over life: size x 1/(1 + t * shrink). Shrinking reads as receding
-// into the distance; fading alone reads as a light being dimmed.
+// How much a particle shrinks as it fades out.
 export const uParticleShrink = { value: 2.0 };
 
-// How long a speck lives after the dissolve front passes it, in noise units.
-// Counterintuitive: SMALLER looks longer. The threshold only sweeps 2.4 units,
-// so at large values specks are still half alive when the dissolve ends and get
-// cut off. ~1.4 lets them play their whole fade.
+// How long a particle lives after the edge passes it. Too large and particles
+// are cut off when the dissolve ends; ~1.4 lets them fade out fully.
 export const uParticleLife = { value: 1.4 };
 
-// How far a speck travels over its life, in world units (stream + scatter).
+// How far a particle travels during its life.
 export const uParticleDrift = { value: 4.5 };
 
-// 0 = flat: plain soft white dots.
-// 1 = shiny: star glint, twinkle, tint and the selective bloom pass
-//     (effects/particleBloom.js). The bloom does most of the "shine": only a
-//     post-process can spread light onto neighbouring pixels.
-// A uniform, not two materials, so switching is instant. Treated as on/off.
+// 0 = flat soft dots, 1 = shiny star particles with glow (effects/particleBloom.js).
 export const uParticleShiny = { value: 1.0 };
 
 // Camera layer for the particles, so the bloom pass can render only them.

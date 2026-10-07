@@ -173,26 +173,20 @@ export function createDebugGUI({
     dissolveFolder.add(uDissolveEdge,       'value', 0, 0.8,  0.01 ).name('Edge Width (Room)');
     dissolveFolder.add(uObjectDissolveEdge, 'value', 0, 0.5,  0.005).name('Edge Width (Objects)');
     dissolveFolder.add(uNoiseFreq,    'value', 0.1, 1.5, 0.01).name('Noise Frequency');
-    // The colour of the rim at the dissolve front. One picker rather than the
-    // three R/G/B sliders this used to be: the useful range here is a narrow
-    // band of warm near-whites, which is a colour you choose by eye, not by
-    // solving for three numbers.
+    // The colour of the edge around the holes in the walls (black by default).
     const edgeColorProxy = { color: '#' + uDissolveEdgeColor.value.getHexString() };
     dissolveFolder.addColor(edgeColorProxy, 'color').name('Edge Color (Room)')
         .onChange((hex) => uDissolveEdgeColor.value.set(hex));
 
-    // Separate from the room's, and defaulted to match Particle Color below —
-    // the same arrangement the demo uses (two uniforms, one shared starting
-    // value, two controls), so the rim and the specks it sheds read as one
-    // material without being welded together.
+    // Edge colour for the table and objects, separate from the room's. White by
+    // default, like the particles. Ignored while "Edge Uses Object Color" is on.
     const objectEdgeColorProxy = { color: '#' + uObjectDissolveEdgeColor.value.getHexString() };
     dissolveFolder.addColor(objectEdgeColorProxy, 'color').name('Edge Color (Objects)')
         .onChange((hex) => uObjectDissolveEdgeColor.value.set(hex));
 
-    // When on, the picker above is ignored and the rim takes the surface's own
-    // lit colour instead — the fix for a fixed colour drawing a bright outline
-    // around every hole it opens in a hollow mesh. Brightness scales it: below 1
-    // the front darkens, above 1 it glows.
+    // When on, the edge uses the object's own colour instead of the picker above,
+    // so holes in the hollow models don't get a bright outline. Brightness: below
+    // 1 the edge is darker than the object, above 1 it glows.
     const edgeFollowProxy = { on: uObjectEdgeFollow.value > 0.5 };
     dissolveFolder.add(edgeFollowProxy, 'on').name('Edge Uses Object Color')
         .onChange((v) => { uObjectEdgeFollow.value = v ? 1.0 : 0.0; });
@@ -208,10 +202,9 @@ export function createDebugGUI({
     // stream — the calmest setting, and worth starting from when judging the feel.
     dissolveFolder.add(uParticleSwirl, 'value', 0, 0.25, 0.005).name('Particle Sway');
 
-    // Size is the sprite's on-screen diameter. Life is how long a speck lasts
-    // after the front passes (it was welded to the rim width, which is why
-    // narrowing the rim made them vanish early); Drift is how far it travels in
-    // that time. Speed is Drift / Life, so raising Life alone slows them down.
+    // Size is a particle's size on screen. Life is how long it lasts after the
+    // dissolve edge passes it; Drift is how far it travels in that time.
+    // Speed is Drift / Life, so raising Life alone slows them down.
     dissolveFolder.add(uParticleSize,  'value', 0.3, 3.0, 0.05).name('Particle Size');
     dissolveFolder.add(uParticleLife,  'value', 0.4, 4.0, 0.1 ).name('Particle Life');
     dissolveFolder.add(uParticleDrift, 'value', 0.2, 8.0, 0.1 ).name('Particle Drift');
