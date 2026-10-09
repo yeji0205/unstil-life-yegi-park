@@ -83,7 +83,7 @@ const LIGHT_DISTANCE = 10.5; // magnitude of the original (-6, 7, 5) position
 
 // Points the key light out of the nebula's brightest patch, where the visible sun
 // sits in space. Keep elevation ≥ 0°, or shadows fall upward onto the wall.
-export const lightAngle = { elevation: 55, azimuth: -50 };
+const lightAngle = { elevation: 55, azimuth: -50 };
 
 // ─── Lighting the objects without lighting the room ──────────────────────────
 // A light only reaches meshes on its layer. The key light is dimmed for
@@ -125,6 +125,12 @@ export const roomLighting = {
 // from the skybox in main.js): sharp on glossy or metal parts, soft light on
 // matte ones. Only in space; strength is a GUI slider (Env Map Strength).
 export const environmentMap = { strength: 1.0 };
+
+// How much the fill light in space takes the background's colour (measured from
+// the skybox in space.js): 0 = white, 1 = the full colour. The full colour made
+// objects look painted (a blue vase in the blue nebula); this tints their shadow
+// sides so they sit in the background's light. GUI slider (Background Tint).
+export const ambientTint = { strength: 0.65 };
 
 // ─── Visible light source ("sun") ────────────────────────────────────────────
 // A directional light has no position, so in space there was nothing showing
@@ -170,106 +176,148 @@ function createSun() {
     return { group, coreMat, glowMat };
 }
 
+// ─── The lights ──────────────────────────────────────────────────────────────
+
+// Single key light from upper-left-front — matches the photo's Rembrandt-style
+// raking light. Its position comes from lightAngle; the visible sun is put in
+// the same direction.
+function createKeyLight(sunGroup) {
+    const light = new THREE.DirectionalLight(0xffe8b0, 2.6);
+    light.castShadow = true;
+    // Shadow camera framed tightly (±5) around the table and objects, so the map's
+    // resolution isn't wasted on empty floor. Anything outside it casts no shadow.
+    light.shadow.bias        = -0.0002;
+    light.shadow.camera.near = 0.5;
+    light.shadow.camera.far  = 26;
+    light.shadow.camera.left = -5;
+    light.shadow.camera.right = 5;
+    light.shadow.camera.top  = 5;
+    light.shadow.camera.bottom = -5;
+    setShadowQuality(light, 2048);
+
+    // lightAngle → position (the light always aims at the origin).
+    const el = THREE.MathUtils.degToRad(lightAngle.elevation);
+    const az = THREE.MathUtils.degToRad(lightAngle.azimuth);
+    const horizontal = Math.cos(el) * LIGHT_DISTANCE; // shrinks to 0 as it goes overhead
+    light.position.set(
+        Math.sin(az) * horizontal,
+        Math.sin(el) * LIGHT_DISTANCE,
+        Math.cos(az) * horizontal
+    );
+    sunGroup.position.copy(light.position).normalize().multiplyScalar(SUN_DISTANCE);
+    return light;
+}
+
+// ─── Shadow resolution ───────────────────────────────────────────────────────
+// A bigger map means smaller stair-steps on shadow edges (most visible on the
+// pale plinths), at 4x the cost per doubling. normalBias is kept at just over
+// one texel: less gives shadow acne, more detaches shadows from objects.
+const SHADOW_FRUSTUM = 10; // world units across (camera.left..right)
+function setShadowQuality(light, size) {
+    light.shadow.mapSize.set(size, size);
+    light.shadow.normalBias = 1.2 * (SHADOW_FRUSTUM / size);
+    // Dispose the old map so three builds one at the new size next frame.
+    if (light.shadow.map) {
+        light.shadow.map.dispose();
+        light.shadow.map = null;
+    }
+}
+
+// ─── Left-wall fill ──────────────────────────────────────────────────────────
+// The key light comes from the left, so the left wall faces away from it and
+// got only flat ambient. This light shines from +X back toward it (and gives
+// the objects a soft second edge). No shadows: they'd point the other way and
+// look confused, and a shadow-casting light costs a whole extra render.
+function createWallFill() {
+    const light = new THREE.DirectionalLight(0xffd0a0, 0.55);
+    light.position.set(6, 1.5, 2);
+    light.castShadow = false;
+    return light;
+}
+
+// The objects-only key (OBJECT_LIGHT_LAYER), aimed along the beam so the
+// visible shaft appears to light the still life. No shadows: the beam and
+// the key light already cast them.
+function createObjectKey() {
+    const light = new THREE.DirectionalLight(0xffe8b0, roomLighting.objectKey);
+    light.castShadow = false;
+    light.layers.set(OBJECT_LIGHT_LAYER);
+    light.position.copy(new THREE.Vector3().subVectors(BEAM_TIP, BEAM_BASE).normalize().multiplyScalar(12));
+    return light;
+}
+
+// ─── The shaft as an actual light ────────────────────────────────────────────
+// The beam mesh is only visible haze; it lights nothing. This spotlight, on
+// the same axis and cone, makes the lit pool on the table and floor. It casts
+// shadows, or the beam would shine through the table.
+function createBeamLight() {
+    const light = new THREE.SpotLight(0xffe8b0, roomLighting.beam);
+    light.position.copy(BEAM_TIP);
+    light.target.position.copy(BEAM_BASE);
+    light.angle    = Math.atan(BEAM_RADIUS / BEAM_LEN);
+    light.penumbra = roomLighting.beamSoftness;
+    light.decay    = 0;     // no distance falloff: the shaft reads as even
+    light.castShadow = true;
+    light.shadow.mapSize.set(1024, 1024);
+    light.shadow.camera.near = 0.5;
+    light.shadow.camera.far  = 20;
+    light.shadow.bias        = -0.0005;
+    // normalBias stops curved surfaces (the scanned stone) shadowing themselves
+    // with thin dark streaks. 0.02 is a few texels, small next to the objects.
+    light.shadow.normalBias  = 0.02;
+    return light;
+}
+
+// Every frame: the visible cone and its spotlight follow the GUI settings
+// together (width, softness, haze, shift), and fade out by p = 0.4, so the beam
+// doesn't hang in the air while the walls around it dissolve.
+function updateBeam(beam, beamLight, p) {
+    beam.uBeamFade.value = THREE.MathUtils.clamp((0.4 - p) / 0.35, 0, 1);
+    // Fades with the visible beam, so there's never a lit pool without a shaft.
+    beamLight.intensity = roomLighting.beam * beam.uBeamFade.value;
+    beamLight.shadow.intensity = roomLighting.beamShadow;
+
+    beam.beamMesh.scale.set(roomLighting.beamWidth, 1, roomLighting.beamWidth);
+    beamLight.angle = Math.atan((BEAM_RADIUS * roomLighting.beamWidth) / BEAM_LEN);
+    beamLight.penumbra = roomLighting.beamSoftness;
+    // Softness 0 -> exponent 1 (linear fade); 1 -> 5 (tight core, wide fade).
+    beam.uBeamEdge.value = 1.0 + roomLighting.beamSoftness * 4.0;
+    beam.uBeamHaze.value = roomLighting.beamHaze;
+
+    const sx = roomLighting.beamShiftX, sz = roomLighting.beamShiftZ;
+    beam.beamMesh.position.set(BEAM_CENTER.x + sx, BEAM_CENTER.y, BEAM_CENTER.z + sz);
+    beamLight.position.set(BEAM_TIP.x + sx, BEAM_TIP.y, BEAM_TIP.z + sz);
+    beamLight.target.position.set(BEAM_BASE.x + sx, BEAM_BASE.y, BEAM_BASE.z + sz);
+    beamLight.target.updateMatrixWorld();
+}
+
+// Every frame: the sun fades in over the second half of the scroll, after the
+// beam has gone, so one light source hands over to the other. Returns its
+// eased strength (0 → 1).
+function updateSun(sun, p) {
+    const sunFade = THREE.MathUtils.clamp((p - 0.45) / 0.45, 0, 1);
+    const sunEase = sunFade * sunFade * (3 - 2 * sunFade); // smoothstep
+    sun.coreMat.opacity = sunEase;
+    sun.glowMat.opacity = sunEase * 0.85;
+    sun.group.visible   = sunEase > 0.001; // skip drawing it entirely in the room
+    return sunEase;
+}
+
 // ─── Lighting ────────────────────────────────────────────────────────────────
 export function setupLighting(scene) {
     // Warm ambient fill (intensity is set every frame in updateLighting).
     const ambientLight = new THREE.AmbientLight(0x3d2010, 0.4);
-    scene.add(ambientLight);
-
-    // Single key light from upper-left-front — matches the photo's Rembrandt-style raking light
-    const directionalLight = new THREE.DirectionalLight(0xffe8b0, 2.6);
-    directionalLight.castShadow = true;
-    // Shadow camera framed tightly (±5) around the table and objects, so the map's
-    // resolution isn't wasted on empty floor. Anything outside it casts no shadow.
-    directionalLight.shadow.bias        = -0.0002;
-    directionalLight.shadow.camera.near = 0.5;
-    directionalLight.shadow.camera.far  = 26;
-    directionalLight.shadow.camera.left = -5;
-    directionalLight.shadow.camera.right = 5;
-    directionalLight.shadow.camera.top  = 5;
-    directionalLight.shadow.camera.bottom = -5;
-    scene.add(directionalLight);
-
-    // ─── Shadow resolution ───────────────────────────────────────────────────
-    // A bigger map means smaller stair-steps on shadow edges (most visible on the
-    // pale plinths), at 4x the cost per doubling. normalBias is kept at just over
-    // one texel: less gives shadow acne, more detaches shadows from objects.
-    const SHADOW_FRUSTUM = 10; // world units across (camera.left..right)
-    function setShadowQuality(size) {
-        directionalLight.shadow.mapSize.set(size, size);
-        directionalLight.shadow.normalBias = 1.2 * (SHADOW_FRUSTUM / size);
-        // Dispose the old map so three builds one at the new size next frame.
-        if (directionalLight.shadow.map) {
-            directionalLight.shadow.map.dispose();
-            directionalLight.shadow.map = null;
-        }
-    }
-    setShadowQuality(2048);
-
-    // ─── Left-wall fill ──────────────────────────────────────────────────────
-    // The key light comes from the left, so the left wall faces away from it and
-    // got only flat ambient. This light shines from +X back toward it (and gives
-    // the objects a soft second edge). No shadows: they'd point the other way and
-    // look confused, and a shadow-casting light costs a whole extra render.
-    const wallFill = new THREE.DirectionalLight(0xffd0a0, 0.55);
-    wallFill.position.set(6, 1.5, 2);
-    wallFill.castShadow = false;
-    scene.add(wallFill);
-
-    // The objects-only key (OBJECT_LIGHT_LAYER), aimed along the beam so the
-    // visible shaft appears to light the still life. No shadows: the beam and
-    // the key light already cast them.
-    const objectKey = new THREE.DirectionalLight(0xffe8b0, roomLighting.objectKey);
-    objectKey.castShadow = false;
-    objectKey.layers.set(OBJECT_LIGHT_LAYER);
-    objectKey.position.copy(new THREE.Vector3().subVectors(BEAM_TIP, BEAM_BASE).normalize().multiplyScalar(12));
-    scene.add(objectKey);
-
-    const { group: sunGroup, coreMat: sunCoreMat, glowMat: sunGlowMat } = createSun();
-    scene.add(sunGroup);
-
-    // Converts lightAngle into the key light's position (it always aims at the
-    // origin), and puts the visible sun in the same direction.
-    function applyLightAngle() {
-        const el = THREE.MathUtils.degToRad(lightAngle.elevation);
-        const az = THREE.MathUtils.degToRad(lightAngle.azimuth);
-        const horizontal = Math.cos(el) * LIGHT_DISTANCE; // shrinks to 0 as it goes overhead
-        directionalLight.position.set(
-            Math.sin(az) * horizontal,
-            Math.sin(el) * LIGHT_DISTANCE,
-            Math.cos(az) * horizontal
-        );
-        sunGroup.position.copy(directionalLight.position)
-            .normalize().multiplyScalar(SUN_DISTANCE);
-    }
-    applyLightAngle();
-
-    const { beamMesh, uBeamFade, uBeamEdge, uBeamHaze } = createBeam();
-    scene.add(beamMesh);
-
-    // ─── The shaft as an actual light ────────────────────────────────────────
-    // The beam mesh is only visible haze; it lights nothing. This spotlight, on
-    // the same axis and cone, makes the lit pool on the table and floor. It casts
-    // shadows, or the beam would shine through the table.
-    const beamLight = new THREE.SpotLight(0xffe8b0, roomLighting.beam);
-    beamLight.position.copy(BEAM_TIP);
-    beamLight.target.position.copy(BEAM_BASE);
-    beamLight.angle    = Math.atan(BEAM_RADIUS / BEAM_LEN);
-    beamLight.penumbra = roomLighting.beamSoftness;
-    beamLight.decay    = 0;     // no distance falloff: the shaft reads as even
-    beamLight.castShadow = true;
-    beamLight.shadow.mapSize.set(1024, 1024);
-    beamLight.shadow.camera.near = 0.5;
-    beamLight.shadow.camera.far  = 20;
-    beamLight.shadow.bias        = -0.0005;
-    // normalBias stops curved surfaces (the scanned stone) shadowing themselves
-    // with thin dark streaks. 0.02 is a few texels, small next to the objects.
-    beamLight.shadow.normalBias  = 0.02;
-    scene.add(beamLight);
-    scene.add(beamLight.target);
+    const sun = createSun();
+    const directionalLight = createKeyLight(sun.group);
+    const wallFill = createWallFill();
+    const objectKey = createObjectKey();
+    const beam = createBeam();
+    const beamLight = createBeamLight();
+    scene.add(ambientLight, directionalLight, wallFill, objectKey, sun.group, beam.beamMesh,
+        beamLight, beamLight.target);
 
     // The light colours and intensities at p = 1, set per skybox by
-    // setSpacePreset() (see LIGHTING_PRESETS in scene/environment.js).
+    // setSpacePreset() (see LIGHTING_PRESETS in scene/space.js).
     let spacePreset = {
         ambientColor:         [0.05, 0.08, 0.22],
         ambientIntensity:     0.0,
@@ -280,13 +328,9 @@ export function setupLighting(scene) {
 
     // Called once per frame with the smoothed room→space progress (0→1).
     function updateLighting(p) {
-        // The beam is gone by p = 0.4, so it doesn't hang in the air while the
-        // walls around it dissolve.
-        uBeamFade.value = THREE.MathUtils.clamp((0.4 - p) / 0.35, 0, 1);
-
         // Recomputed every frame, so a skybox change applies immediately even
         // while sitting still.
-        const [ar, ag, ab] = spacePreset.ambientColor;
+        const [ar, ag, ab] = spacePreset.ambientColor.map((c) => 1 + (c - 1) * ambientTint.strength);
         const [dr, dg, db] = spacePreset.directionalColor;
 
         // Ambient: dark warm brown (room) → space preset
@@ -303,45 +347,21 @@ export function setupLighting(scene) {
             THREE.MathUtils.lerp(0.91, dg, p),   // 0xe8 = 232 → 0.91
             THREE.MathUtils.lerp(0.69, db, p)    // 0xb0 = 176 → 0.69
         );
-        directionalLight.intensity = THREE.MathUtils.lerp(2.6 * roomLighting.roomKey, spacePreset.directionalIntensity, p);
-
-        // Room-only light: in space the preset is the whole look.
-        objectKey.intensity = THREE.MathUtils.lerp(roomLighting.objectKey, 0.0, p);
-
-        // Fades with the visible beam, so there's never a lit pool without a shaft.
-        beamLight.intensity = roomLighting.beam * uBeamFade.value;
-        beamLight.shadow.intensity        = roomLighting.beamShadow;
+        directionalLight.intensity = THREE.MathUtils.lerp(
+            2.6 * roomLighting.roomKey, spacePreset.directionalIntensity, p);
         directionalLight.shadow.intensity = roomLighting.keyShadow;
 
-        // Width and softness drive the visible cone and the spotlight together.
-        beamMesh.scale.set(roomLighting.beamWidth, 1, roomLighting.beamWidth);
-        beamLight.angle = Math.atan((BEAM_RADIUS * roomLighting.beamWidth) / BEAM_LEN);
-        beamLight.penumbra = roomLighting.beamSoftness;
-        // Softness 0 -> exponent 1 (linear fade); 1 -> 5 (tight core, wide fade).
-        uBeamEdge.value = 1.0 + roomLighting.beamSoftness * 4.0;
-        uBeamHaze.value = roomLighting.beamHaze;
-
-        const sx = roomLighting.beamShiftX, sz = roomLighting.beamShiftZ;
-        beamMesh.position.set(BEAM_CENTER.x + sx, BEAM_CENTER.y, BEAM_CENTER.z + sz);
-        beamLight.position.set(BEAM_TIP.x + sx, BEAM_TIP.y, BEAM_TIP.z + sz);
-        beamLight.target.position.set(BEAM_BASE.x + sx, BEAM_BASE.y, BEAM_BASE.z + sz);
-        beamLight.target.updateMatrixWorld();
-
-        // Room-only too: there's no wall left to light in space.
+        // Room-only lights: in space the preset is the whole look, and there's
+        // no wall left to light.
+        objectKey.intensity = THREE.MathUtils.lerp(roomLighting.objectKey, 0.0, p);
         wallFill.intensity = THREE.MathUtils.lerp(0.55 * roomLighting.wallFill, 0.0, p);
 
-        // The sun fades in over the second half of the scroll, after the beam has
-        // gone, so one light source hands over to the other.
-        const sunFade = THREE.MathUtils.clamp((p - 0.45) / 0.45, 0, 1);
-        const sunEase = sunFade * sunFade * (3 - 2 * sunFade); // smoothstep
-        sunCoreMat.opacity = sunEase;
-        sunGlowMat.opacity = sunEase * 0.85;
-        sunGroup.visible   = sunEase > 0.001; // skip drawing it entirely in the room
+        updateBeam(beam, beamLight, p);
 
         // The environment map fades in with the sun: none in the room, where
         // objects shouldn't reflect the nebula.
-        scene.environmentIntensity = environmentMap.strength * sunEase;
+        scene.environmentIntensity = environmentMap.strength * updateSun(sun, p);
     }
 
-    return { ambientLight, directionalLight, updateLighting, setSpacePreset, applyLightAngle, setShadowQuality };
+    return { updateLighting, setSpacePreset };
 }

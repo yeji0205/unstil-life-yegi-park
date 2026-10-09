@@ -18,9 +18,9 @@ Point-by-point comparison against the submitted technical proposal
 | Proposal item | Status in code |
 |---|---|
 | Room: six `PlaneGeometry` meshes, inward normals, ambient + directional light, `PCFSoftShadowMap` | Exactly as proposed (`src/scene/room.js`, `src/scene/lighting.js`, `src/setup/renderer.js`) |
-| Space: `BoxGeometry` skybox, back-side rendering, cube map textures | Exactly as proposed (`src/scene/environment.js`) |
-| Stars: `BufferGeometry` particles, randomized positions, procedural texture | Exactly as proposed |
-| Objects imported as GLB via `GLTFLoader` | Exactly as proposed (`src/objects/table.js`, `src/objects/stageObjects.js`) |
+| Space: `BoxGeometry` skybox, back-side rendering, cube map textures | Exactly as proposed (`src/scene/space.js`) |
+| Stars: `BufferGeometry` particles, randomized positions, procedural texture | Exactly as proposed (`src/scene/stars.js`) |
+| Objects imported as GLB via `GLTFLoader` | Exactly as proposed (`src/objects/tableSetup.js`, `src/objects/objectsSetup.js`) |
 | Dissolve effect: 3D Simplex noise injected via `onBeforeCompile`, world-space noise for room walls / local-space for objects, threshold comparison → fragment discard | Exactly as proposed, line-for-line the Codrops technique cited in the proposal (`src/effects/dissolve.js`) |
 | Object particle effect: `Points` geometry, same Simplex noise, visible only near the dissolve boundary, scattered outward by a velocity attribute | Exactly as proposed |
 | Floating formula `P = P_initial + p·(H + A⊙sin(ω·t))`, per-object variation in `H`, `A`, `ω` | Exactly as proposed (`src/effects/floating.js`) |
@@ -41,7 +41,7 @@ Point-by-point comparison against the submitted technical proposal
 
 | Proposal item | Status |
 |---|---|
-| **Phase 5 reappearance** — "new objects appear by running each object's dissolve progress in reverse"; reverse scroll "display[s] a different set of pre-loaded objects" | **Not implemented.** After the dissolve timeline completes, stage objects are permanently removed from the scene; only the table returns on scroll-back. There is no second object set and no reverse-dissolve reappearance. |
+| **Phase 5 reappearance** — "new objects appear by running each object's dissolve progress in reverse"; reverse scroll "display[s] a different set of pre-loaded objects" | **Not implemented.** After the dissolve timeline completes, still-life objects are permanently removed from the scene; only the table returns on scroll-back. There is no second object set and no reverse-dissolve reappearance. |
 
 ### Implemented beyond the proposal ➕
 
@@ -101,48 +101,72 @@ src/setup/                     the machinery for viewing the scene
 
 src/effects/                   visual effects (GPU shaders, post-process, floating)
   dissolve.js                  dissolve shader injection (see §4), shadow-pass
-                                dissolve, particle shaders
-  dissolveParticles.js         where the dissolve particles start (sampled over
-                                a model's surface) and fly; makeParticlePoints
+                                dissolve
+  dissolveParticles.js         the dissolve particles: settings, particle shader
+                                (makeParticleMaterial), where they start (sampled
+                                over a model's surface) and fly; makeParticlePoints
   noise.js                     shared 3D Simplex noise GLSL (Ashima Arts)
   skyboxFlow.js                curl-noise "Starry Night" swirl on the skybox
   particleBloom.js             selective glow on the particles (the one post-process)
   floating.js                  per-frame float/bob/sway of the objects, table
-                                collision (the bear's legs: objects/teddyLegs.js)
+                                collision (the bear's legs: objects/skeletonPose.js)
 
 src/scene/                     the scenes: what is in them and how they change
   room.js                      6-plane room (floor/ceiling/4 walls)
-  environment.js               skybox (3 packs + solid colour + upload), stars,
+  space.js                     skybox (3 packs + solid colour + upload),
                                 LIGHTING_PRESETS keyed by skybox name
+  skyboxUpload.js              reading an uploaded skybox folder: matching files
+                                to the 6 faces, explaining seams
+  stars.js                     the star field, turning with the skybox swirl
   lighting.js                  ambient/directional lights, room↔space colour
                                 lerp, objects-only key light, volumetric beam
-  phaseMachine.js              room/space/dissolving/done, scroll handling,
-                                dissolve timeline (pause/scrub), object swap
+  phaseMachine.js              room/space/dissolving/done and the scroll: owns
+                                uProgress, decides when the dissolve runs
+  dissolveTimeline.js          the object dissolve itself: 5 s timer, pause,
+                                scrub, shadows, re-forming on the way home
+  journey.js                   P / "Play Journey": the whole artwork plays by
+                                itself (room, into space, slow orbit, dissolve,
+                                back home); any scroll or drag stops it
 
 src/objects/                   the table and the still life
-  table.js                     the table: loading, swapping, dissolve, particles;
+  tableSetup.js                sets up whichever table is picked: its shape
+                                (from the two files below or table.glb), then
+                                dissolve, particles, floor placement, swapping;
                                 loadScene (table first, then the objects on it)
-  plinth.js                    the Box/Cylinder tables: colour, textures, floor
-                                contact shading
+  builtinTable.js              the Box/Cylinder tables, built with three.js:
+                                colour, textures, floor contact shading
   customTable.js               normalising an uploaded table (scale, centre,
                                 strip ground planes)
-  stageObjects.js              the 5 still-life objects: loading, placement on
+  objectsSetup.js              the 5 still-life objects: loading, placement on
                                 the table, dissolve, particles
-  teddyLegs.js                 the skeleton bear's legs: sitting on the table,
+  skeletonPose.js              posing a model by its skeleton (for now only the
+                                teddy): legs folded sitting on the table,
                                 hanging once it floats
-  objectVariants.js            swapping models: stone choice, the objects that
-                                change on each return, the mannequin's finish
+  objectSwap.js                swapping models: stone choice, the objects that
+                                change on each return, the mannequin's finish;
+                                the return models are loaded at startup and kept
+                                hidden, so a swap never loads mid-journey
+  modelCleanup.js              removing a model and freeing its GPU memory
 
 src/audio/
   ambientSound.js              room/space beds, dissolve one-shot
 
 src/ui/
   loadingScreen.js             "Unstil Life" text, particle-dissolve intro
-  gui.js                       lil-gui debug panel (all dropdowns/buttons)
-  perfHud.js, soundHint.js     fps readout, "click for sound" hint
+  gui.js                       lil-gui debug panel: builds it from ui/gui/
+  gui/                         one file per panel section (playback buttons,
+                                Scene, Dissolve Look, Scene Contents + skybox,
+                                Room Textures, Sound, Objects/Camera) and
+                                controls.js, the shared building blocks
+  topHint.js                   the one line at the top: "press P to begin the
+                                journey" with "(auto play)" under it, or "click anywhere
+                                to turn on sound" if someone scrolls while the
+                                sound is off
+  screenHint.js                a fading line of text over the scene (for topHint)
+  perfHud.js                   fps readout
 ```
 
-## 4. Dissolve shader (room, table, stage objects)
+## 4. Dissolve shader (room, table, still-life objects)
 
 One shared technique (`injectDissolve` in `dissolve.js`), injected via
 `onBeforeCompile` into `MeshStandardMaterial`/`MeshPhysicalMaterial`: a 3D
@@ -173,7 +197,7 @@ git history (`src/render/paintingIntro.js`).
   light (`0xffe8b0`, intensity 2.6) with shadows, matching a Rembrandt-style
   raking-light photo reference. A fake volumetric light beam (additive-blended
   cone) fades out in the first 40% of the room→space scroll.
-- **Space** (per-background preset, `LIGHTING_PRESETS` in `environment.js`):
+- **Space** (per-background preset, `LIGHTING_PRESETS` in `space.js`):
   - `space_blue` / `space_red` / `sky`: ambient stays low, directional climbs — moody,
     high-contrast, "the sun does all the work" look.
   - `None (solid color)`: no ambient; the environment map (below) lights the
@@ -207,8 +231,8 @@ fade prevents seams at the skybox cube's face borders.
 A second GUI dropdown ("Table") lets the table be swapped live between the
 default GLB, a plain Box, a Cylinder, or a **user-uploaded custom `.glb`**
 file (via a hidden file input + `URL.createObjectURL`). Swapping keeps the
-existing stage objects in place and just shifts them by the surface-height
-delta, rather than reloading everything (`setTable()` in `objects/table.js`).
+existing still-life objects in place and just shifts them by the surface-height
+delta, rather than reloading everything (`setTable()` in `objects/tableSetup.js`).
 
 ## 9. Camera behavior
 

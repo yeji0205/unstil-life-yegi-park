@@ -29,7 +29,16 @@ const ZOOM_OUT_EXTRA = 8.0;
 // target height. See setGazeHeight.
 const GAZE_RISE = 1.4;
 
-export function createCameraControls(camera, domElement) {
+// The orbit limits ease between room and space instead of snapping. A snap
+// teleported the camera back into the room's ±30° cone in one frame.
+const LIMIT_RELEASE_START = 0.6;   // fully room-limited at or below this p
+const LIMIT_RELEASE_END   = 0.95;  // fully free at or above (unchanged)
+
+// The cone may open instantly but only close at this rate, so a fast scroll
+// home can't wrench the camera round. It may lag p for a second or two.
+const CONE_CLOSE_RATE = 1.0; // radians per second
+
+function createOrbitControls(camera, domElement) {
     const controls = new OrbitControls(camera, domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
@@ -44,6 +53,30 @@ export function createCameraControls(camera, domElement) {
     controls.target.set(0, -0.69, -0.5); // aimed at scene center, shifted up with camera
     // Disabled until the loading screen is gone; main.js enables it then.
     controls.enabled = false;
+    return controls;
+}
+
+// Moves the orbit cone toward where release t (0 = room, 1 = free) says it
+// should be: opening is instant, closing at most CONE_CLOSE_RATE per second.
+function moveCone(cone, t, dt) {
+    if (t >= 1) {
+        // Fully free in space; the cone is parked open for the way back.
+        cone.az = Math.PI; cone.polarMin = 0; cone.polarMax = Math.PI;
+        return;
+    }
+    // Where p says the cone should be...
+    const wantAz  = THREE.MathUtils.lerp(ROOM_AZIMUTH, Math.PI, t);
+    const wantMin = THREE.MathUtils.lerp(ROOM_LIMITS.minPolar, 0,       t);
+    const wantMax = THREE.MathUtils.lerp(ROOM_LIMITS.maxPolar, Math.PI, t);
+    // ...and how far it may move there this frame: opening free, closing capped.
+    const step = CONE_CLOSE_RATE * dt;
+    cone.az       = wantAz  >= cone.az       ? wantAz  : Math.max(wantAz,  cone.az - step);
+    cone.polarMin = wantMin <= cone.polarMin ? wantMin : Math.min(wantMin, cone.polarMin + step);
+    cone.polarMax = wantMax >= cone.polarMax ? wantMax : Math.max(wantMax, cone.polarMax - step);
+}
+
+export function createCameraControls(camera, domElement) {
+    const controls = createOrbitControls(camera, domElement);
 
     // Snapshot at startup. The pull-back is computed from this plus p, never from
     // last frame's position, which used to feed back and run away.
@@ -63,17 +96,8 @@ export function createCameraControls(camera, domElement) {
     // doesn't come back the moment space is reached.
     const zoomState = { hasZoomedOut: false };
 
-    // The orbit limits ease between room and space instead of snapping. A snap
-    // teleported the camera back into the room's ±30° cone in one frame.
-    const LIMIT_RELEASE_START = 0.6;   // fully room-limited at or below this p
-    const LIMIT_RELEASE_END   = 0.95;  // fully free at or above (unchanged)
-
-    // The cone may open instantly but only close at this rate, so a fast scroll
-    // home can't wrench the camera round. It may lag p for a second or two.
-    const CONE_CLOSE_RATE = 1.0; // radians per second
-    let coneAz       = ROOM_AZIMUTH;
-    let conePolarMin = ROOM_LIMITS.minPolar;
-    let conePolarMax = ROOM_LIMITS.maxPolar;
+    // The current orbit cone (see moveCone).
+    const cone = { az: ROOM_AZIMUTH, polarMin: ROOM_LIMITS.minPolar, polarMax: ROOM_LIMITS.maxPolar };
     let lastLimitMs  = null;
     // Moves camera and target up together: the frame shifts, the angle and
     // distance stay the same.
@@ -92,31 +116,12 @@ export function createCameraControls(camera, domElement) {
         lastLimitMs = now;
 
         const t = THREE.MathUtils.smoothstep(progressValue, LIMIT_RELEASE_START, LIMIT_RELEASE_END);
-
-        if (t >= 1) {
-            // Fully free in space; the cone is parked open for the way back.
-            coneAz = Math.PI; conePolarMin = 0; conePolarMax = Math.PI;
-            controls.minAzimuthAngle = -Infinity;
-            controls.maxAzimuthAngle =  Infinity;
-            controls.minPolarAngle   = 0;
-            controls.maxPolarAngle   = Math.PI;
-        } else {
-            // Where p says the cone should be...
-            const wantAz  = THREE.MathUtils.lerp(ROOM_AZIMUTH, Math.PI, t);
-            const wantMin = THREE.MathUtils.lerp(ROOM_LIMITS.minPolar, 0,       t);
-            const wantMax = THREE.MathUtils.lerp(ROOM_LIMITS.maxPolar, Math.PI, t);
-
-            // ...and how far it may move there this frame: opening free, closing capped.
-            const step = CONE_CLOSE_RATE * dt;
-            coneAz       = wantAz  >= coneAz       ? wantAz  : Math.max(wantAz,  coneAz - step);
-            conePolarMin = wantMin <= conePolarMin ? wantMin : Math.min(wantMin, conePolarMin + step);
-            conePolarMax = wantMax >= conePolarMax ? wantMax : Math.max(wantMax, conePolarMax - step);
-
-            controls.minAzimuthAngle = -coneAz;
-            controls.maxAzimuthAngle =  coneAz;
-            controls.minPolarAngle   =  conePolarMin;
-            controls.maxPolarAngle   =  conePolarMax;
-        }
+        moveCone(cone, t, dt);
+        // Fully free in space: no azimuth limit at all.
+        controls.minAzimuthAngle = t >= 1 ? -Infinity : -cone.az;
+        controls.maxAzimuthAngle = t >= 1 ?  Infinity :  cone.az;
+        controls.minPolarAngle   = cone.polarMin;
+        controls.maxPolarAngle   = cone.polarMax;
         controls.minDistance = 2;
         controls.maxDistance = 200;
         // enableZoom managed every frame by updateZoom()

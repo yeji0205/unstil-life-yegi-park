@@ -9,7 +9,8 @@ Read this fully before making any changes.
 
 A scroll-driven Three.js web application that transitions a classical Still Life room into
 cosmic space. One scalar parameter `uProgress` (0↔1) drives all scene transitions.
-Single entry point: `main.js` — all logic lives in one file currently.
+Entry point: `main.js` builds the scene from the modules in `src/` and runs the
+animation loop. Check the code with `npm run lint` (ESLint, see `eslint.config.mjs`).
 
 **Live:** https://yeji0205.github.io/unstil-life-yegi-park/
 **Run locally:** `npm run dev` (Vite dev server)
@@ -41,19 +42,13 @@ Single entry point: `main.js` — all logic lives in one file currently.
 
 ## Architecture
 
-### Single file structure
-Everything is in `main.js`. Sections in order:
-1. Renderer + Scene + Camera
-2. Skybox (space environment)
-3. Stars
-4. `NOISE_GLSL` constant (shared by all shaders)
-5. Shared dissolve uniforms (`uProgress`, `uDissolveEdge`, `uNoiseFreq`, `uDissolveEdgeColor`)
-6. `makeRoomMaterial(hex)` — dissolve shader factory
-7. Room planes (6× PlaneGeometry)
-8. Lighting
-9. Cylinder + dissolve shader + particles
-10. OrbitControls + scroll state machine
-11. Animate loop
+### How it fits together
+Every frame, `main.js` asks the phase machine (`src/scene/phaseMachine.js`) for
+`p` (= `uProgress`) and the phase, hands `p` to the modules that follow it
+(lighting, floating, camera, sound) and renders. Shaders read the same values
+through shared uniform objects (`{ value }`). The phase machine is the only
+place that sets `uProgress`; nothing tells an effect to start, each one reads
+the numbers every frame.
 
 ### Key files
 ```
@@ -62,12 +57,20 @@ src/             — grouped by what each part is in the artwork:
   setup/           renderer, camera, camera controls
   effects/         visual effects (dissolve, dissolveParticles, noise, skyboxFlow, floating,
                    particleBloom — the only post-process)
-  scene/           the scenes and how they change (room, environment = skybox + stars,
-                   lighting, phaseMachine)
-  objects/         table (table, plinth = Box/Cylinder, customTable = uploads), the
-                   still-life objects (stageObjects), the teddy's skeleton legs
-                   (teddyLegs), swapping models (objectVariants: stones, return cycle)
-  ui/, audio/
+  scene/           the scenes and how they change (room, space = skybox background,
+                   skyboxUpload, stars, lighting, phaseMachine, dissolveTimeline, journey =
+                   the artwork playing by itself when P is pressed)
+  objects/         table (tableSetup, builtinTable = Box/Cylinder, customTable = uploads), the
+                   still-life objects (objectsSetup), posing models by their skeleton
+                   (skeletonPose; for now only the teddy), swapping models (objectSwap: stones,
+                   return cycle; the return models are preloaded hidden), removing models
+                   (modelCleanup). main.js warms up all shaders behind the loading screen
+                   (warmUpShadersWhenReady), so nothing compiles mid-journey.
+  ui/              loading screen, perf HUD, the one line of text at the top (topHint:
+                   "press P to begin the journey", "(auto play)" under it, or the sound note
+                   after a scroll while the sound is off), and the lil-gui panel
+                   (gui.js, built from one file per section in ui/gui/)
+  audio/           room/space sound and the dissolve sound
 index.html       — minimal shell, loads main.js
 vite.config.js   — sets base: '/unstil-life-yegi-park/' for GitHub Pages
 public/asset/    — the ONLY asset tree. Vite serves public/ at the site root in
@@ -87,7 +90,7 @@ source/blend/    — Blender authoring files. Deliberately outside public/ so th
 
 To add a skybox: drop the folder in `public/asset/skybox/`, rename its faces to
 the six words above, then add the folder name to `SKYBOX_OPTIONS` and a matching
-entry to `LIGHTING_PRESETS` (both in `src/scene/environment.js`).
+entry to `LIGHTING_PRESETS` (both in `src/scene/space.js`).
 
 ---
 
@@ -118,8 +121,10 @@ uProgress = 1.0  → room fully dissolved, space visible
 'done'       → scroll re-enabled, user can restore room
 ```
 
-Variables: `phase` (string), `phaseStart` (clock time), `scrollBlocked` (boolean).
-Reset to `'room'` when `uProgress` drops below 0.95.
+Variables: `phase` (string), `targetP` (scroll target), `scrollBlocked` (boolean).
+Reset to `'room'` when the scroll target drops below 0.95. The object dissolve
+itself (timer, pause, scrub, re-forming on the way home) is in
+`src/scene/dissolveTimeline.js`; the phase machine decides when it runs.
 
 ---
 
@@ -197,12 +202,12 @@ $$P = P_\text{initial} + p \cdot (H + A \odot \sin(\omega\, t))$$
 
 - `p` = uProgress (scales entire effect — no float when room visible)
 - `t` = `clock.getElapsedTime()` (continuous oscillation)
-- `H` ∈ ℝ³ — upward rise, **varies per object**
-- `A` ∈ ℝ³ — per-axis amplitude, **varies per object**
-- `ω` ∈ ℝ³ — per-axis frequency, **varies per object**
+- `H` — upward rise, **varies per object** (`OBJECT_DEFS` in objectsSetup.js)
+- `phase` — offset of each object's waves, **varies per object**
+- `A`, `ω` — amplitude and frequency, shared by all objects (floating.js)
 
-Per-object variation ensures independent drift. Always scale by `p` so objects
-only float when room is dissolving.
+The per-object rise and phase make the objects drift independently. Floating
+starts at `p = FLOAT_START` (0.2) and is eased, so objects stay still in the room.
 
 ---
 
@@ -210,26 +215,29 @@ only float when room is dissolving.
 
 `renderer.outputColorSpace = THREE.SRGBColorSpace` (gamma corrected).
 
-| | Room | Space |
+| | Room (p = 0) | Space (p = 1) |
 |---|---|---|
-| AmbientLight intensity | 0.7 | 0.0 |
-| DirectionalLight intensity | 1.05 | 3.5 |
-| DirectionalLight color | `#fff5e0` (warm) | `#ffffff` (pure white) |
+| AmbientLight intensity | 0.4 × Room Ambient slider | per skybox: 0.7 (starry), 0 (solid colour) |
+| AmbientLight color | warm brown | the skybox's measured colour, mixed with white by Background Tint (0.65) |
+| DirectionalLight intensity | 2.6 × Room Key slider | per skybox: 5.4 (starry), 1.2 (solid colour) |
+| DirectionalLight color | warm amber `#ffe8b0` | white |
 
-Lerped each frame: `THREE.MathUtils.lerp(roomVal, spaceVal, p)`.
-Ambient color also lerps from warm white → deep blue as `p` increases.
+Lerped each frame in `updateLighting(p)` (src/scene/lighting.js); the space
+values are `LIGHTING_PRESETS` in src/scene/space.js. In space the environment
+map (built from the skybox in main.js) adds the background's light and
+reflections, fading in with the visible sun from p = 0.45 to 0.9.
 
 ---
 
 ## Camera
 
-- `PerspectiveCamera` FOV 35°, position `(0, 1.0, 4)`, target `(0, -2.5, -1)`
-- Orbital radius ≈ 6.1 units
-- `ROOM_RETURN_DIST = 7.0` — threshold for zoom→room-restore handoff
+- `PerspectiveCamera` FOV 35°, position `(-0.2, -0.29, 5.52)`, target `(0, -0.69, -0.5)`
+- Orbital radius ≈ 6.0 units
+- `ROOM_RETURN_DIST = 5.5` (setup/cameraControls.js) — threshold for zoom→room-restore handoff
 
 | Mode | Azimuth | Polar | Zoom |
 |---|---|---|---|
-| Room | ±0.55π | 0.1π – 1.65 rad | off |
+| Room | ±30° (π/6) | 0.1π – 1.65 rad | off |
 | Space | unlimited | 0 – π | on (2–200 units) |
 
 `hasZoomedOut` flag: prevents room from reappearing immediately when dissolve
@@ -259,26 +267,26 @@ Follow Clean Code principles — names must be descriptive and unambiguous.
 
 ---
 
-## Planned (Not Yet Implemented)
+## Not implemented
 
-- Load 4 GLB models via `GLTFLoader` (tulip/vase, teddy bear, doll, water glass)
-- Per-object `H`, `A`, `ω` variation for independent floating
-- Sequential object dissolve (one per object, 3s gap between each)
-- Phase 5: room reforms, new objects appear (reverse dissolve)
-- Web Audio API: café ambient fade with `uProgress`, per-object disappearance sounds
+- Sequential object dissolve (one object after another). The table and all
+  objects dissolve together over `dissolveDuration`.
 
 ## Debug GUI (lil-gui)
 
 A `lil-gui` debug panel is always present. Comment out the `gui` block before final release.
-Controls: `uProgress`, `uDissolveEdge`, `uNoiseFreq`, edge color RGB, ambient/directional intensity.
-Loose top-level buttons (the ones you press rather than adjust): dissolve trigger,
-background motion, and the flat/shiny particle A/B toggle.
+Built in src/ui/gui.js from one file per section in src/ui/gui/. The panel imports
+the settings it shows; main.js only passes the actions (load a table, swap a stone…).
+Loose top-level buttons (the ones you press rather than adjust): the journey (also
+the P key), dissolve trigger, pause, the scrub bar, background motion, and the
+flat/shiny particle A/B toggle.
 
 ## What NOT to implement without discussion
 
-- Do not restructure into multiple files without confirming (single file is preferred for AI context)
+- Do not restructure the modules in src/ without confirming (see Key files)
 - Do not add physics engine — floating is purely mathematical (sinusoidal)
-- Do not use CSS or HTML elements for UI — canvas only
+- Keep the UI to lil-gui and the few existing DOM overlays (loading screen, the top
+  hint, the custom-skybox dialogs); don't add new HTML UI without asking
 - Do not add post-processing without confirming. There is now exactly ONE
   post-process — the selective particle bloom in `src/effects/particleBloom.js` —
   and it is opt-in, only rendering while shiny particle mode is on. Do not move
@@ -295,6 +303,6 @@ background motion, and the flat/shiny particle A/B toggle.
   only the glow, as an additive full-screen quad.
 - Known cosmetic limitation: the perf HUD's `calls`/`tris` readout is wrong while
   shiny mode is on, because `renderer.info` resets per `render()` call and the
-  composer makes several. The fps/ms figures are still correct (they're timed
+  glow pass makes several. The fps/ms figures are still correct (they're timed
   from the animation loop, not from `renderer.info`).
 - Do not add `DRACOLoader` unless GLB files were explicitly exported with Draco compression

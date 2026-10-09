@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { PRIMITIVE_TABLE_HEIGHT } from './plinth.js';
+import { BUILTIN_TABLE_HEIGHT } from './builtinTable.js';
 
 // ─── Normalising a user-supplied table ───────────────────────────────────────
 // Uploaded models can be any scale (e.g. exported in millimetres) or have their
 // pivot far away, which put the table surface, and every object on it, far off
-// screen. So custom tables are scaled to the plinths' height and centred.
+// screen. So custom tables are scaled to the built-in tables' height and centred.
 //
 // Many free models also include a big ground plane the artist posed them on,
 // which would dissolve along with the table. A mesh is removed as a ground plane
@@ -53,7 +53,7 @@ export function normalizeCustomTable(root) {
     if (size.y < 1e-6) throw new Error('the GLB has no measurable height');
 
     const center = box.getCenter(new THREE.Vector3());
-    const k = PRIMITIVE_TABLE_HEIGHT / size.y;
+    const k = BUILTIN_TABLE_HEIGHT / size.y;
 
     // Scale, then move so the bottom is at y=0 and the centre at x=z=0. The
     // offsets were measured before scaling, so they're scaled by k too.

@@ -1,19 +1,23 @@
 import * as THREE from 'three';
 import { NOISE_GLSL } from './noise.js';
 
-// Noise dissolve (Codrops technique) for the room, table and objects, plus the
-// particle system the table and objects shed while dissolving.
+// Noise dissolve for the room, table and objects: holes that open in the surface
+// and its shadow. The particles they shed are in dissolveParticles.js.
+//
+// Based on: "Implementing a Dissolve Effect with Shaders and Particles in
+// Three.js", Codrops, 17 Feb 2025.
+// https://tympanus.net/codrops/2025/02/17/implementing-a-dissolve-effect-with-shaders-and-particles-in-three-js/
 
 // ─── Shared dissolve uniforms ────────────────────────────────────────────────
-// GUI-tunable values shared by every dissolve shader. Each object still owns its
+// GUI-tunable values shared by every dissolve shader. The room dissolves with the
+// central uProgress (scene/phaseMachine.js); the table and each object own their
 // own progress uniform so they can dissolve independently.
-export const uProgress          = { value: 0.0 };
 export const uNoiseFreq         = { value: 0.35 };
 
 // Edge width. While a surface dissolves, a thin coloured band (the "edge") is
 // drawn along the border of each hole, just before that part disappears.
 export const uDissolveEdge       = { value: 0.25 };  // room walls
-export const uObjectDissolveEdge = { value: 0.10 };  // table + stage objects
+export const uObjectDissolveEdge = { value: 0.10 };  // table + still-life objects
 // Edge colour for the room
 export const uDissolveEdgeColor = { value: new THREE.Color(0x000000) };
 
@@ -37,8 +41,10 @@ const IDENTITY_MATRIX = { value: new THREE.Matrix4() };
 
 // ─── Transparency, only while dissolving ─────────────────────────────────────
 // Transparent materials are expensive (no early-Z, sorting, blending), so they
-// are made transparent only while dissolving. Flipping `transparent` does not
-// recompile the shader.
+// are made transparent only while dissolving. three.js compiles a separate shader
+// for the transparent version, so both versions are compiled in advance (see
+// precompileDissolveShaders below and warmUpShaders in main.js); otherwise the
+// first switch freezes a frame.
 const dissolveMaterials = [];
 
 // Removes a disposed mesh's materials from the list. Call on every object swap,
@@ -57,7 +63,7 @@ export function forgetDissolveMaterials(root) {
 export function updateDissolveTransparency() {
     for (const { material, progress } of dissolveMaterials) {
         // ownsAlpha: needs transparency anyway (e.g. cut-out leaf textures).
-        // Set in objects/table.js and stageObjects.js before the dissolve forces transparency on.
+        // Set in objects/tableSetup.js and objectsSetup.js before the dissolve forces transparency on.
         const needsAlpha = material.userData.ownsAlpha || progress.value > 0.001;
         if (material.transparent !== needsAlpha) material.transparent = needsAlpha;
     }
@@ -72,7 +78,12 @@ export function updateDissolveTransparency() {
 //   edgeUniform:   edge width. Must be the same one passed to makeParticleMaterial,
 //                  or the particles won't sit on the edge.
 //   localMatrixUniform: child-to-root transform (see posExpr below)
-export function injectDissolve(material, progressUniform, { space = 'local', freqScale = 1.0, scaleUniform = { value: 1.0 }, edgeUniform = uDissolveEdge, edgeColorUniform = uDissolveEdgeColor, edgeFollowUniform = EDGE_FOLLOW_OFF, edgeGainUniform = EDGE_GAIN_UNUSED, localMatrixUniform = IDENTITY_MATRIX } = {}) {
+export function injectDissolve(material, progressUniform, {
+    space = 'local', freqScale = 1.0, scaleUniform = { value: 1.0 },
+    edgeUniform = uDissolveEdge, edgeColorUniform = uDissolveEdgeColor,
+    edgeFollowUniform = EDGE_FOLLOW_OFF, edgeGainUniform = EDGE_GAIN_UNUSED,
+    localMatrixUniform = IDENTITY_MATRIX,
+} = {}) {
     dissolveMaterials.push({ material, progress: progressUniform });
     material.onBeforeCompile = (shader) => {
         shader.uniforms.uProgress    = progressUniform;
@@ -144,7 +155,7 @@ export function injectDissolve(material, progressUniform, { space = 'local', fre
 // invisible one) still cast its complete shadow, and when the objects came back
 // to the room all their shadows appeared at once. This material cuts out the
 // same holes as the surface, so the shadow gets holes at the same moment.
-// Set as the mesh's customDepthMaterial (see objects/table.js and stageObjects.js).
+// Set as the mesh's customDepthMaterial (see objects/tableSetup.js and objectsSetup.js).
 //
 // Options MUST match the injectDissolve() call for the same mesh.
 export function makeDissolveDepthMaterial(progressUniform, {
@@ -198,227 +209,54 @@ export function makeDissolveDepthMaterial(progressUniform, {
     return depthMat;
 }
 
-// ─── Particle settings (GUI sliders) ──────────────────────────────────────────
-export const uParticleColor = { value: new THREE.Color(0xffffff) };
+// ─── Dissolve on one mesh of a loaded model (table and still-life objects) ───
+// Gives the mesh its own copy of the material with the dissolve, and a shadow
+// that dissolves the same way (same noise, same options). The noise is read in
+// the model root's space, so the pattern stays on the model as it floats and its
+// particles read the same noise. Returns the new material.
+export function addMeshDissolve(mesh, root, progressUniform, {
+    material = mesh.material.clone(), freqScale, scaleUniform = { value: 1.0 },
+    cacheKey, depthCacheKey = cacheKey + '_depth',
+}) {
+    // Remember if the material needs transparency anyway (e.g. cut-out leaves),
+    // so it's never made opaque between dissolves.
+    material.userData.ownsAlpha = material.transparent === true || material.alphaTest > 0
+        || (material.opacity ?? 1) < 1 || !!material.alphaMap;
+    material.transparent = true;
 
-// Sideways sway of the particle stream (0 = straight).
-export const uParticleSwirl = { value: 0.05 };
-
-// Size on screen (multiplier).
-export const uParticleSize = { value: 0.8 };
-
-// How much each particle grows when it twinkles (0 = no twinkle).
-export const uParticleTwinkle = { value: 0.6 };
-
-// How strong the star rays are (0 = round dot, no rays).
-export const uParticleSpikes = { value: 0.7 };
-
-// How thin the rays are. Higher = thinner; too high (e.g. 110) and they vanish.
-export const uParticleSpikeSharp = { value: 8.0 };
-
-// How far the rays reach before fading out. Lower = longer rays.
-export const uParticleSpikeLength = { value: 2.0 };
-
-// How much a particle shrinks as it fades out.
-export const uParticleShrink = { value: 2.0 };
-
-// How long a particle lives after the edge passes it. Too large and particles
-// are cut off when the dissolve ends; ~1.4 lets them fade out fully.
-export const uParticleLife = { value: 1.4 };
-
-// How far a particle travels during its life.
-export const uParticleDrift = { value: 4.5 };
-
-// 0 = flat soft dots, 1 = shiny star particles with glow (effects/particleBloom.js).
-export const uParticleShiny = { value: 1.0 };
-
-// Camera layer for the particles, so the bloom pass can render only them.
-export const PARTICLE_BLOOM_LAYER = 1;
-
-export const objectParticleVertexShader = /* glsl */`
-    attribute vec3  aVelocity;
-    uniform float   uObjectProgress;
-    uniform float   uEdge;
-    uniform float   uFreq;
-    uniform float   uScale;      // mesh scale factor (see injectDissolve)
-    uniform float   uFreqScale;  // must match the surface's freqScale
-    uniform float   uStreamStrength; // 1 = flow into the sky (objects), low = scatter (table)
-    uniform float   uSwirl;          // see uParticleSwirl
-    uniform float   uShiny;          // see uParticleShiny
-    uniform float   uSize;           // see uParticleSize
-    uniform float   uTwinkle;        // see uParticleTwinkle
-    uniform float   uShrink;         // see uParticleShrink
-    uniform float   uLife;           // see uParticleLife
-    uniform float   uDrift;          // see uParticleDrift
-    uniform float   uTime;
-    varying float   vAlpha;
-    varying float   vSparkle;    // twinkle factor for the rays/brightness
-    varying float   vRandom;     // stable per-particle 0..1
-    ${NOISE_GLSL}
-
-    void main(){
-        // Same noise and threshold as the surface, so a particle appears exactly
-        // where the surface breaks up.
-        float threshold    = mix(-1.2, 1.2, uObjectProgress);
-        float noise        = snoise3(position * uScale * uFreq * uFreqScale);
-        float distFromEdge = noise - threshold;
-        float driftBand    = uLife;
-
-        // Hidden before the edge reaches it, and after its life is over.
-        if(distFromEdge > uEdge || distFromEdge < -driftBand){
-            gl_Position  = vec4(9999., 9999., 9999., 1.);
-            gl_PointSize = 0.;
-            vAlpha       = 0.;
-            return;
-        }
-
-        // Age: 0 at the dissolve front, 1 at the end of its life.
-        float t = clamp(-distFromEdge / driftBand, 0., 1.);
-
-        // Drift is in local space; divide by scale so every object's stream is
-        // the same length in the world.
-        float invScale = 1.0 / uScale;
-
-        // Own random direction + shared stream up and back into the sky.
-        vec3 streamDir = normalize(vec3(0.15, 1.0, 0.4));
-        vec3 pos = position
-                 + aVelocity * t * uDrift * 0.233                       // per-particle spread, scaled with drift
-                 + streamDir * t * uDrift * invScale * uStreamStrength;     // shared flow into the background
-
-        // Slow sideways sway. One phase for both axes on purpose: sin on x with
-        // cos on z traces a circle, which made the stream corkscrew.
-        float swayPhase = position.y * 0.8 + uTime * 0.18;
-        float sway      = sin(swayPhase) * uSwirl * t * invScale;
-        pos.x += sway;
-        pos.z += sway * 0.6; // slight asymmetry so it isn't a flat plane of motion
-
-        // ─── Fading away: alpha AND size together ────────────────────────────
-        // Full for the first quarter of life, then fades. A linear 1-t left the
-        // whole field half-faded, which read as haze.
-        vAlpha = 1.0 - smoothstep(0.25, 1.0, t);
-        float lifeShrink = 1.0 / (1.0 + t * uShrink);
-
-        // Safety net: fade out any stragglers as the dissolve ends, so none hang
-        // in mid-air after the object is gone.
-        vAlpha *= 1.0 - smoothstep(0.92, 1.0, uObjectProgress);
-
-        // Stable per-particle random number, hashed from its position, so no
-        // extra attribute or per-frame upload is needed.
-        float random = fract(sin(dot(position, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-        vRandom      = random;
-
-        // ─── Twinkle (shiny only) ────────────────────────────────────────────
-        // Own speed and start per particle, so they never flash in sync.
-        float flare = 0.5 + 0.5 * sin(uTime * (1.6 + random * 2.4) + random * 31.4);
-        float pulse = flare * flare * 2.0 - 1.0; // -1..1, biased low so peaks are brief
-
-        // Only ever ADDS size: a two-way pulse stacked with the other size
-        // multipliers shrank specks to sub-pixel.
-        float sizePulse = mix(1.0, 1.0 + uTwinkle * max(pulse, 0.0), uShiny);
-
-        // Rays/brightness at half depth; full depth on both reads as a strobe.
-        vSparkle = mix(1.0, 1.0 + uTwinkle * 0.5 * max(pulse, 0.0), uShiny);
-
-        vec4 mvPos   = modelViewMatrix * vec4(pos, 1.);
-        // Varied sizes, so the field doesn't look like identical stamps.
-        float sizeVariation = mix(1.0, 0.7 + 0.7 * random, uShiny);
-
-        // ─── Size, clamped in screen pixels ──────────────────────────────────
-        // Camera distance varies ~5x (room, space, zoom), so a plain 1/z size is
-        // either too big close up or invisible far away. The core is clamped to
-        // 3–8 px; the rays extend to the quad edge (1/ink = ~2.2x the core).
-        float ink    = mix(1.0, 0.45, uShiny);
-        float inkCss = 30. * mix(1.0, 1.7, uShiny) * uSize * ink / -mvPos.z;
-        // Multipliers applied AFTER the clamp. Floor of 1.5 px so a live speck
-        // never shrinks to nothing; disappearing is alpha's job.
-        inkCss       = clamp(inkCss, 3.0, 8.0) * sizeVariation * sizePulse * lifeShrink;
-        inkCss       = max(inkCss, 1.5);
-        gl_PointSize = max(1., inkCss / ink);
-        gl_Position  = projectionMatrix * mvPos;
-    }
-`;
-
-export const objectParticleFragmentShader = /* glsl */`
-    uniform vec3      uParticleColor;
-    uniform float     uShiny;
-    uniform float     uSpikes;
-    uniform float     uSpikeSharp;
-    uniform float     uSpikeLength;
-    varying float vAlpha;
-    varying float vSparkle;
-    varying float vRandom;
-
-    void main(){
-        if(vAlpha < 0.01) discard;
-        vec2  uv = gl_PointCoord - .5;
-        float d  = length(uv);
-
-        // ─── Flat mode: soft round dot ───────────────────────────────────────
-        if(uShiny < 0.5){
-            if(d > .5) discard;
-            float alpha = vAlpha * (1. - d * 2.); // 1 at center, 0 at edge → soft circle
-            // >1 so overlapping specks add up to a bright core.
-            gl_FragColor = vec4(uParticleColor * 1.6, alpha);
-            return;
-        }
-
-        // ─── Shiny mode: star glint, drawn procedurally (no texture) ─────────
-        vec2  p = uv * 2.0;          // -1..1 across the quad
-        float r = length(p);
-        if (r > 1.0) discard;
-
-        // Round core: the bright point.
-        float core = exp(-r * r * 24.0);
-
-        // Four rays: thin ridges along x and y, tapering toward the edge.
-        // Length varies per particle and grows with the twinkle.
-        float fade = max(0.0, 1.0 - r);
-        float sx   = 1.0 / (1.0 + abs(p.x) * uSpikeSharp);
-        float sy   = 1.0 / (1.0 + abs(p.y) * uSpikeSharp);
-        float arms = (sx + sy) * pow(fade, uSpikeLength) * (0.6 + 0.8 * vRandom);
-
-        // Rays start outside the core; stacked on it, the centre clipped to white.
-        arms *= smoothstep(0.08, 0.35, r);
-
-        float shape = core + arms * uSpikes * vSparkle;
-        if (shape < 0.01) discard;
-
-        // Each speck slightly warm or cool, still driven by the colour picker.
-        vec3 warm = uParticleColor * vec3(1.12, 1.00, .82);
-        vec3 cool = uParticleColor * vec3(.84,  .93, 1.16);
-        vec3 tint = mix(warm, cool, vRandom);
-
-        // 0.8 keeps the core near white, so overlapping specks don't fuse.
-        gl_FragColor = vec4(tint * shape * vSparkle * 0.8, vAlpha);
-    }
-`;
-
-export function makeParticleMaterial(progressUniform, timeUniform, { freqScale = 4.0, scaleUniform = { value: 1.0 }, streamStrength = 1.0, edgeUniform = uObjectDissolveEdge } = {}) {
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            uObjectProgress: progressUniform,
-            uEdge:           edgeUniform,
-            uFreq:           uNoiseFreq,
-            uScale:          scaleUniform,
-            uFreqScale:      { value: freqScale },
-            uStreamStrength: { value: streamStrength },
-            uSwirl:          uParticleSwirl,
-            uSize:           uParticleSize,
-            uSpikes:         uParticleSpikes,
-            uSpikeSharp:     uParticleSpikeSharp,
-            uSpikeLength:    uParticleSpikeLength,
-            uTwinkle:        uParticleTwinkle,
-            uShrink:         uParticleShrink,
-            uLife:           uParticleLife,
-            uDrift:          uParticleDrift,
-            uShiny:          uParticleShiny,
-            uParticleColor,
-            uTime:           timeUniform,
-        },
-        vertexShader:   objectParticleVertexShader,
-        fragmentShader: objectParticleFragmentShader,
-        transparent:    true,
-        depthWrite:     false,
-        blending:       THREE.AdditiveBlending,
+    const meshToRoot = new THREE.Matrix4()
+        .multiplyMatrices(new THREE.Matrix4().copy(root.matrixWorld).invert(), mesh.matrixWorld);
+    const localMatrixUniform = { value: meshToRoot };
+    injectDissolve(material, progressUniform, {
+        space: 'local', freqScale, scaleUniform, localMatrixUniform,
+        edgeUniform: uObjectDissolveEdge, edgeColorUniform: uObjectDissolveEdgeColor,
+        edgeFollowUniform: uObjectEdgeFollow, edgeGainUniform: uObjectEdgeGain,
     });
+    // Stable key (not the uuid): what differs between meshes is uniforms, which
+    // don't change the compiled shader, so a swap reuses it instead of recompiling.
+    material.customProgramCacheKey = () => cacheKey;
+    mesh.customDepthMaterial = makeDissolveDepthMaterial(progressUniform, {
+        space: 'local', freqScale, scaleUniform, localMatrixUniform, cacheKey: depthCacheKey,
+    });
+    mesh.material = material;
+    return material;
+}
+
+// Compiles both shader versions (opaque, and transparent while dissolving) for
+// the dissolve materials inside `root`, without drawing anything. For models
+// loaded while the scene is on screen (swapped stones, the objects that come
+// back), so their first dissolve doesn't freeze a frame. compileAsync compiles in
+// the background where the browser supports it.
+export function precompileDissolveShaders(renderer, root, camera, scene) {
+    const inRoot = new Set();
+    root.traverse((child) => {
+        if (!child.isMesh) return;
+        for (const m of Array.isArray(child.material) ? child.material : [child.material]) inRoot.add(m);
+    });
+    const materials = dissolveMaterials.filter((e) => inRoot.has(e.material)).map((e) => e.material);
+    for (const transparent of [false, true]) {
+        for (const m of materials) m.transparent = transparent || !!m.userData.ownsAlpha;
+        renderer.compileAsync(root, camera, scene).catch(() => { /* drawn later anyway */ });
+    }
+    updateDissolveTransparency(); // back to what each material's progress needs
 }

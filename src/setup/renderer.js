@@ -7,11 +7,21 @@ import * as THREE from 'three';
 const PIXEL_RATIO_CAP = 1.25;
 
 // Current multiplier on that maximum, lowered by adaptive quality when frames are slow.
-export const renderScale = { value: 1.0 };
+const renderScale = { value: 1.0 };
 
-export function setRenderScale(renderer, value) {
+// The device's pixel ratio, capped, times the current renderScale.
+function applyPixelRatio(renderer) {
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP) * renderScale.value);
+}
+
+function setRenderScale(renderer, value) {
     renderScale.value = value;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP) * value);
+    applyPixelRatio(renderer);
+}
+
+// Options in the page's URL, e.g. ?aa=0 → urlOption('aa') === '0'.
+function urlOption(name) {
+    return new URLSearchParams(location.search).get(name);
 }
 
 // ─── Adaptive quality ─────────────────────────────────────────────────────────
@@ -55,23 +65,23 @@ export function createRenderer() {
     // Anti-aliasing smooths object outlines, much more cheaply than a higher pixel
     // ratio. It can only be set when the WebGL context is created, so it isn't a
     // GUI toggle: add ?aa=0 to the URL to turn it off.
-    const antialias = new URLSearchParams(location.search).get('aa') !== '0';
+    const antialias = urlOption('aa') !== '0';
 
     // Ask for the faster (discrete) GPU on laptops that have two; browsers pick
     // the low-power one by default. Only a hint: the browser or OS may ignore it.
     // The perf HUD shows which GPU was used. Add ?gpu=low to use the low-power
     // GPU instead, e.g. on battery.
-    const lowPower = new URLSearchParams(location.search).get('gpu') === 'low';
+    const lowPower = urlOption('gpu') === 'low';
     const renderer = new THREE.WebGLRenderer({
         antialias,
         powerPreference: lowPower ? 'low-power' : 'high-performance',
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP));
+    applyPixelRatio(renderer);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
     // Soft shadow edges (PCFSoft). Add ?shadows=hard to compare with plain PCF.
-    renderer.shadowMap.type = new URLSearchParams(location.search).get('shadows') === 'hard'
+    renderer.shadowMap.type = urlOption('shadows') === 'hard'
         ? THREE.PCFShadowMap
         : THREE.PCFSoftShadowMap;
     document.body.appendChild(renderer.domElement);
@@ -89,6 +99,8 @@ export function setupResize(camera, renderer) {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP));
+        // Keeps the adaptive-quality scale; resetting to full resolution here made
+        // a slow machine render at full resolution again after every resize.
+        applyPixelRatio(renderer);
     });
 }

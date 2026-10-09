@@ -5,13 +5,18 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint ."
   },
   "dependencies": {
     "lil-gui": "^0.21.0",
     "three": "^0.169.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/three": "^0.169.0",
+    "eslint": "^9.39.5",
+    "globals": "^15.15.0",
     "playwright": "^1.61.1",
     "vite": "^5.4.0"
   }

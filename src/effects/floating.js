@@ -5,15 +5,15 @@
 // t = elapsed time, floatP = eased scroll progress. Each object has its own rise
 // height H and phase, so they drift independently; A and ω are shared.
 // Also: table collision, the tulip lifting with the vase, and the bear's legs
-// (objects/teddyLegs.js).
+// (objects/skeletonPose.js).
 
-import { poseTeddyLegs } from '../objects/teddyLegs.js';
+import { updateTeddyPose } from '../objects/skeletonPose.js';
 
 // Objects start rising at this p. Also where the camera starts pulling back
 // (setup/cameraControls.js), so the two stay in sync.
 export const FLOAT_START = 0.2;
 
-export function updateFloating({ t, p, stageObjects, tableState }) {
+export function updateFloating({ t, p, stillLifeObjects, tableState }) {
     tableState.uTime.value = t;
 
     // Four steps, so the collision sees every object's position before any is written.
@@ -22,7 +22,7 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
     // smoothstep, so objects ease off the table instead of jerking into motion.
     const rawFloatP = Math.max(0, (p - FLOAT_START) / (1 - FLOAT_START));
     const floatP    = rawFloatP * rawFloatP * (3 - 2 * rawFloatP); // smoothstep
-    for (const obj of stageObjects) {
+    for (const obj of stillLifeObjects) {
         obj.uTime.value = t;
         const phi  = obj.phaseOffset;
         const rise = floatP * obj.H;
@@ -38,7 +38,7 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
     }
 
     // Step 2 — decay / reset repulsion
-    for (const obj of stageObjects) {
+    for (const obj of stillLifeObjects) {
         if (p < 0.01) {
             // Back on the table: reset, so objects don't hover.
             obj.repelY = 0;
@@ -54,9 +54,9 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
     // Step 3 — table surface keeps objects from sinking through the table.
     if (tableState.object && collisionStrengthY > 0) {
         const tableTopY = tableState.object.position.y + tableState.topOffset;
-        for (const obj of stageObjects) {
+        for (const obj of stillLifeObjects) {
             // The object's real underside (lowest vertex), not a bounding sphere,
-            // which made flat stones hover. See bottomLocalY in objects/stageObjects.js.
+            // which made flat stones hover. See bottomLocalY in objects/objectsSetup.js.
             const objBottomY = (obj._baseY + obj.repelY) + obj.bottomLocalY;
             // Includes the object's offsetY: the stones sit slightly into the table
             // on purpose, and the collision must not lift them back out.
@@ -69,8 +69,8 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
 
     // Step 3b — the tulip sits inside the vase, above the table, so it never gets
     // the table's push and would lag behind. It takes the vase's push instead.
-    const vaseObj  = stageObjects.find(o => o.label === 'vase');
-    const tulipObj = stageObjects.find(o => o.label === 'tulip');
+    const vaseObj  = stillLifeObjects.find(o => o.label === 'vase');
+    const tulipObj = stillLifeObjects.find(o => o.label === 'tulip');
     if (vaseObj && tulipObj) tulipObj.repelY = Math.max(tulipObj.repelY, vaseObj.repelY);
 
     // Table top height, or null once there's no table (needed for the bear's legs).
@@ -79,7 +79,7 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
         : null;
 
     // Step 4 — write final position + rotation to each mesh
-    for (const obj of stageObjects) {
+    for (const obj of stillLifeObjects) {
         obj.mesh.position.x = obj._baseX + obj.repelX;
         obj.mesh.position.y = obj._baseY + obj.repelY;
         obj.mesh.position.z = obj._baseZ + obj.repelZ;
@@ -94,7 +94,7 @@ export function updateFloating({ t, p, stageObjects, tableState }) {
 
         // The skeleton bear sits while it's on the table and lets its legs hang
         // once it's airborne.
-        if (obj.legBones) poseTeddyLegs(obj, tableTopY);
+        if (obj.legBones) updateTeddyPose(obj, tableTopY);
 
     }
 

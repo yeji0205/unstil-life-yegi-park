@@ -10,7 +10,7 @@ import { NOISE_GLSL } from './noise.js';
 // so it swirls like paint instead of sliding or tearing the image.
 
 export const uFlowStrength = { value: 0.0 }; // eased 0→1 by updateSkyboxFlow()
-export const uFlowTime     = { value: 0.0 };
+const uFlowTime     = { value: 0.0 };
 
 // Shared toggle: the GUI button flips `enabled`; updateSkyboxFlow() eases
 // uFlowStrength toward 0 or 1 every frame so turning it on/off doesn't snap.

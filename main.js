@@ -2,27 +2,33 @@ import * as THREE from 'three';
 
 import { createRenderer, createCamera, setupResize, createAdaptiveQuality } from './src/setup/renderer.js';
 import { setupLighting } from './src/scene/lighting.js';
-import { uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink, uParticleShiny, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, updateDissolveTransparency } from './src/effects/dissolve.js';
+import { updateDissolveTransparency, precompileDissolveShaders } from './src/effects/dissolve.js';
+import { uParticleShiny, PARTICLE_BLOOM_LAYER } from './src/effects/dissolveParticles.js';
 import { updateSkyboxFlow } from './src/effects/skyboxFlow.js';
-import { createParticleBloom, bloomSettings } from './src/effects/particleBloom.js';
-import { PARTICLE_BLOOM_LAYER } from './src/effects/dissolve.js';
+import { createParticleBloom } from './src/effects/particleBloom.js';
 
 import { buildRoom, setRoomTexture, resetRoomTextures } from './src/scene/room.js';
-import { buildSkybox, buildStars, SKYBOX_OPTIONS, SKYBOX_CUSTOM_LABEL, SKYBOX_NONE, LIGHTING_PRESETS, voidColor } from './src/scene/environment.js';
+import { buildSkybox, SKYBOX_OPTIONS, SKYBOX_NONE, LIGHTING_PRESETS } from './src/scene/space.js';
+import { buildStars } from './src/scene/stars.js';
 
-import { loadScene, setTable, setTableTexture, setTableColor, tableState, LOADING_TOTAL } from './src/objects/table.js';
-import { stageObjects } from './src/objects/stageObjects.js';
-import { setStone, setCustomStone, applyReturnObjects } from './src/objects/objectVariants.js';
+import {
+    loadScene, setTable, setTableTexture, setTableColor, tableState, LOADING_TOTAL,
+} from './src/objects/tableSetup.js';
+import { stillLifeObjects } from './src/objects/objectsSetup.js';
+import {
+    setStone, setCustomStone, applyReturnObjects, preloadReturnObjects, hiddenModels, PRELOADED_MODEL_COUNT,
+} from './src/objects/objectSwap.js';
 
 import { createLoadingScreen } from './src/ui/loadingScreen.js';
 import { createPerfHud } from './src/ui/perfHud.js';
-import { createSoundHint } from './src/ui/soundHint.js';
+import { createTopHint } from './src/ui/topHint.js';
 import { createDebugGUI } from './src/ui/gui.js';
 
-import { createAmbientSoundTracks, ROOM_SOUND_OPTIONS, SPACE_SOUND_OPTIONS, DISSOLVE_SOUND_OPTIONS, SOUND_CUSTOM_LABEL } from './src/audio/ambientSound.js';
+import { createAmbientSoundTracks } from './src/audio/ambientSound.js';
 
 import { createCameraControls } from './src/setup/cameraControls.js';
-import { createPhaseMachine } from './src/scene/phaseMachine.js';
+import { createPhaseMachine, uProgress } from './src/scene/phaseMachine.js';
+import { createJourney } from './src/scene/journey.js';
 import { updateFloating } from './src/effects/floating.js';
 
 // Entry point: builds the scene from the modules in src/, wires up the GUI,
@@ -51,8 +57,7 @@ const { loadSkybox, loadCustomSkybox, setVoidColor, skybox } = buildSkybox(scene
 // ─── Environment map ─────────────────────────────────────────────────────────
 // Renders the current background once into a pre-blurred map (PMREM), so
 // surfaces can reflect it: sharp on glossy parts, blurry on rough ones. Rebuilt
-// whenever the background changes. Its strength is set every frame in
-// lighting.js (environmentMap).
+// whenever the background changes. 
 const pmremGenerator = new THREE.PMREMGenerator(renderer);
 const envScene = new THREE.Scene();
 const envSky = new THREE.Mesh(skybox.geometry, skybox.material); // shares the skybox's textures
@@ -65,6 +70,7 @@ function refreshEnvironment() {
     envTarget?.dispose();
     envTarget = next;
     scene.environment = envTarget.texture;
+    warmUpShadersWhenReady(); // the shaders depend on whether there is an environment map
 }
 const { updateStars } = buildStars(scene);
 buildRoom(scene);
@@ -112,16 +118,21 @@ function selectCustomSkybox(files) {
         (report) => customSkyboxReport?.(report),
     );
     if (result === true) { setSpacePreset(base); return true; }
-    return result; // e.g. ['top', 'bottom'] — the GUI names them in its error
+    return result; // { missing, unsupported } — the GUI names them in its error
 }
 
 // ─── Camera controls ─────────────────────────────────────────────────────────
 const cameraControls = createCameraControls(camera, renderer.domElement);
 
-// The GUI keeps one debug folder per stage object: added when an object loads,
+// The GUI keeps one debug folder per still-life object: added when an object loads,
 // removed when it's swapped for another model (stone choice, return from space).
+// Each newly loaded model also gets its shaders compiled in advance (see the
+// shader warm-up below).
 const objectFolderEvents = {
-    onObjectReady:   (label, entry, scaleFactor) => gui.addObjectFolder(label, entry, scaleFactor),
+    onObjectReady: (label, entry, scaleFactor) => {
+        gui.addObjectFolder(label, entry, scaleFactor);
+        precompileDissolveShaders(renderer, entry.mesh, camera, scene);
+    },
     onObjectRemoved: (entry) => gui.removeObjectFolder(entry),
 };
 
@@ -132,35 +143,22 @@ const ambientSound = createAmbientSoundTracks();
 
 // ─── Debug GUI ───────────────────────────────────────────────────────────────
 const gui = createDebugGUI({
-    uProgress, uDissolveEdge, uObjectDissolveEdge, uNoiseFreq, uDissolveEdgeColor, uObjectDissolveEdgeColor, uObjectEdgeFollow, uObjectEdgeGain, uParticleColor, uParticleSwirl, uParticleSize, uParticleLife, uParticleDrift, uParticleTwinkle, uParticleSpikes, uParticleSpikeSharp, uParticleSpikeLength, uParticleShrink, uParticleShiny,
-    bloomSettings,
-    skyboxOptions: SKYBOX_OPTIONS, defaultSkybox: SKYBOX_OPTIONS[0], skyboxCustomLabel: SKYBOX_CUSTOM_LABEL,
     onSkyboxChange: selectBackground,
     onCustomSkyboxFiles: selectCustomSkybox,
-    skyboxNoneLabel: SKYBOX_NONE, voidColor, onVoidColorChange: selectVoidColor,
+    onVoidColorChange: selectVoidColor,
     // Swaps the table. The objects stay and are just moved to the new surface height.
     onTableChange: (kind) => setTable(scene, kind),
     onCustomTableFile: (file) => setTable(scene, 'custom', { customUrl: URL.createObjectURL(file) }),
     onTableTextureFile: (file, type) => setTableTexture(file, type),
+    onTableColorChange: (hex) => setTableColor(hex),
     onRoomTextureFile: (surface, slotLabel, file) => setRoomTexture(surface, slotLabel, file),
     onRoomTextureReset: (surface) => resetRoomTextures(surface),
-    onTableColorChange: (hex) => setTableColor(hex),
     onStoneChange: (name) => setStone(scene, name, objectFolderEvents),
     onCustomStoneFile: (file) => setCustomStone(scene, URL.createObjectURL(file), objectFolderEvents),
-     roomSoundOptions: ROOM_SOUND_OPTIONS, defaultRoomSound: ROOM_SOUND_OPTIONS[0],
-    spaceSoundOptions: SPACE_SOUND_OPTIONS, defaultSpaceSound: SPACE_SOUND_OPTIONS[0],
-    soundCustomLabel: SOUND_CUSTOM_LABEL,
-    onRoomSoundChange: (label) => ambientSound.room.setSound(label),
-    onCustomRoomSoundFile: (file) => ambientSound.room.setCustomFile(file),
-    roomSoundVolume: ambientSound.room.volume,
-    onSpaceSoundChange: (label) => ambientSound.space.setSound(label),
-    onCustomSpaceSoundFile: (file) => ambientSound.space.setCustomFile(file),
-    spaceSoundVolume: ambientSound.space.volume,
-    dissolveSoundOptions: DISSOLVE_SOUND_OPTIONS, defaultDissolveSound: DISSOLVE_SOUND_OPTIONS[0],
-    onDissolveSoundChange: (label) => ambientSound.dissolve.setSound(label),
-    onCustomDissolveSoundFile: (file) => ambientSound.dissolve.setCustomFile(file),
-    dissolveSoundVolume: ambientSound.dissolve.volume,
+    // The room, space and dissolve sounds: the Sound folder picks and loads them.
+    soundTracks: ambientSound,
     // The dissolve sound starts by itself: it follows the dissolve every frame.
+    onJourneyToggle: () => journey.toggle(),
     onDissolveClick: () => phaseMachine.triggerDissolve(),
     // Functions, not direct references: the GUI is built before phaseMachine,
     // so it's looked up when called.
@@ -179,8 +177,8 @@ customSkyboxReport = gui.reportSkyboxImages;
 // ─── Phase state machine ─────────────────────────────────────────────────────
 const clock = new THREE.Clock();
 const phaseMachine = createPhaseMachine({
-    scene, camera, cameraControls,
-    tableState, stageObjects,
+    camera, cameraControls,
+    tableState, stillLifeObjects,
     // The Dissolve button only works in space.
     onPhaseChange: (phase) => gui.setDissolveAvailable(phase === 'space'),
     // When everything has dissolved, swap in the objects that come back, so the
@@ -188,13 +186,66 @@ const phaseMachine = createPhaseMachine({
     onObjectsDissolved: () => applyReturnObjects(scene, objectFolderEvents),
 });
 
+// ─── The journey ─────────────────────────────────────────────────────────────
+// Press P (or the GUI button) and the artwork plays by itself: into space, the
+// dissolve, and back home (see scene/journey.js). The line of text at the top
+// hides while it plays.
+let topHint = null; // shown once the loading screen is gone
+const journey = createJourney({
+    phaseMachine, controls: cameraControls.controls,
+    onChange: (playing) => {
+        gui.setJourneyPlaying(playing);
+        topHint?.setJourneyPlaying(playing);
+    },
+});
+
 // ─── Loading screen + asset loading ──────────────────────────────────────────
 // Once the "Unstil Life" text-dissolve loading screen is gone, scroll/orbit
 // interaction unlocks.
-const loadingScreen = createLoadingScreen(LOADING_TOTAL, () => {
+// ─── Shader warm-up ──────────────────────────────────────────────────────────
+// three.js compiles a shader the first time it draws something in a new state,
+// and that frame freezes. The first dissolve needs new versions of nearly every
+// shader (transparent surfaces, the glow), so it froze for a moment. Once
+// everything has loaded, while the loading screen still covers the canvas, one
+// hidden frame is drawn mid-dissolve so they're all compiled in advance. The
+// models kept hidden for the return (objectSwap.js) are shown for that frame
+// too, so their shaders, geometry and textures are ready when they're swapped in.
+const ASSET_COUNT = LOADING_TOTAL + PRELOADED_MODEL_COUNT;
+let assetsLoaded = 0;
+let warmedUp = false;
+let loadingScreenGone = false;
+function warmUpShadersWhenReady() {
+    // Needs every model and the environment map; pointless once the scene shows.
+    if (warmedUp || loadingScreenGone || assetsLoaded < ASSET_COUNT || !scene.environment) return;
+    warmedUp = true;
+    const hidden = hiddenModels();
+    const models = [tableState, ...stillLifeObjects, ...hidden];
+    const saved = [uProgress.value, ...models.map((m) => m.uProgress.value)];
+    uProgress.value = 0.5;
+    for (const m of models) m.uProgress.value = 0.5;
+    for (const m of hidden) m.mesh.visible = true;
+    updateDissolveTransparency();
+    particleBloom.render(); // the scene, the particles and their glow
+    for (const m of hidden) m.mesh.visible = false;
+    uProgress.value = saved[0];
+    models.forEach((m, i) => { m.uProgress.value = saved[i + 1]; });
+    updateDissolveTransparency();
+    // The frame above compiled the transparent versions; this compiles the opaque
+    // ones too, including the hidden models' (they're opaque again back home).
+    precompileDissolveShaders(renderer, scene, camera, scene);
+}
+function onAssetDone() {
+    loadingScreen.markAssetLoaded();
+    assetsLoaded++;
+    warmUpShadersWhenReady();
+}
+
+const loadingScreen = createLoadingScreen(ASSET_COUNT, () => {
+    loadingScreenGone = true;
     gui.gui.show();
-    // Shows "click to play sound" until audio is playing.
-    createSoundHint(ambientSound.onStarted);
+    // "press P to begin the journey (auto play)" (or the sound note, see ui/topHint.js).
+    topHint = createTopHint(ambientSound.onStarted);
+    journey.enable();
     cameraControls.controls.enabled = true;
     phaseMachine.enableInteraction();
 });
@@ -203,9 +254,13 @@ const loadingScreen = createLoadingScreen(LOADING_TOTAL, () => {
 const perfHud = createPerfHud(renderer);
 
 loadScene(scene, {
-    onAssetLoaded: () => loadingScreen.markAssetLoaded(),
-    onAssetFailed: () => loadingScreen.markAssetLoaded(), // still advance so the loading screen doesn't hang
+    onAssetLoaded: onAssetDone,
+    onAssetFailed: onAssetDone, // still advance so the loading screen doesn't hang
     onObjectReady: objectFolderEvents.onObjectReady,
+    // Then the models that come back from space, kept hidden until then.
+    onTableReady: (surfaceY) => preloadReturnObjects(scene, surfaceY, {
+        onAssetLoaded: onAssetDone, onAssetFailed: onAssetDone,
+    }),
 });
 
 // ─── Animate ─────────────────────────────────────────────────────────────────
@@ -217,13 +272,14 @@ function animate() {
     lastT = t;
 
     const { p, phase } = phaseMachine.update(t);
+    journey.update(dt, phase, p);
 
     cameraControls.updateZoom(uProgress.value, { roomReturnBlocked: phase === 'dissolving' });
     updateLighting(p);
     updateSkyboxFlow(t);
     updateStars(dt);
     ambientSound.update(p, t, phaseMachine.getDissolvePlayback());
-    updateFloating({ t, p, stageObjects, tableState });
+    updateFloating({ t, p, stillLifeObjects, tableState });
     updateDissolveTransparency(); // keep materials opaque unless mid-dissolve
     cameraControls.updateAutoZoomOut(p);
 
@@ -245,6 +301,6 @@ function animate() {
 
 function particlesOnScreen() {
     const midDissolve = (u) => u.value > 0.001 && u.value < 0.999;
-    return midDissolve(tableState.uProgress) || stageObjects.some((o) => midDissolve(o.uProgress));
+    return midDissolve(tableState.uProgress) || stillLifeObjects.some((o) => midDissolve(o.uProgress));
 }
 animate();

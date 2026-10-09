@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 
-// ─── The teddy bear's legs (bear_skeleton.glb) ───────────────────────────────
-// The only object with a skeleton. Its leg bones 'legR' / 'legL' get two poses:
-// sitting (folded forward) while it's on the table, and hanging straight once
-// it floats. setupTeddyLegs runs once when the model loads; poseTeddyLegs runs
-// every frame (from floating.js) and blends between the two poses.
+// ─── Posing a model by its skeleton: sitting and hanging ─────────────────────
+// Built only for the teddy bear models (bear_ribbon.glb, bear_skeleton.glb).
+// Their leg bones get two poses: sitting (legs folded forward) while on the
+// table, and hanging straight once they float. setupTeddyPose runs once when
+// the model loads; updateTeddyPose runs every frame (from floating.js) and
+// blends between the two.
 
 // Sitting = rest pose folded forward 85°, thighs roughly horizontal (past 90°
 // looked over-folded).
@@ -17,9 +18,9 @@ const LEG_STRAIGHTEN_DEG = 5;
 const LEG_CLEAR_START = 0.15, LEG_CLEAR_END = 1.20;
 
 // Builds both poses, puts the bear in the sitting one and seats it on the table.
-// Returns the bones and poses for poseTeddyLegs, or null if the model has no
+// Returns the bones and poses for updateTeddyPose, or null if the model has no
 // leg bones (every object except the skeleton bear).
-export function setupTeddyLegs(mesh, surfaceY, boxMinY) {
+export function setupTeddyPose(mesh, surfaceY, boxMinY) {
     let legBones = null;
     mesh.traverse((child) => {
         if (!child.isSkinnedMesh || legBones) return;
@@ -77,7 +78,7 @@ export function setupTeddyLegs(mesh, surfaceY, boxMinY) {
 
 // Every frame: the bear sits while it's on the table and lets its legs hang once
 // it's airborne. tableTopY is null once there's no table.
-export function poseTeddyLegs(obj, tableTopY) {
+export function updateTeddyPose(obj, tableTopY) {
     // Based on the bear's actual height above the table, not on scroll
     // progress: the table rises too, so progress can't tell whether the
     // bear is still sitting on it. Thresholds are in units of the bear's

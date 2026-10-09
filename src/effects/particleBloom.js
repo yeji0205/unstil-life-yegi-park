@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PARTICLE_BLOOM_LAYER } from './dissolve.js';
+import { PARTICLE_BLOOM_LAYER } from './dissolveParticles.js';
 
 // ─── Glow around the dissolve particles ──────────────────────────────────────
 // Each frame (only while particles exist):
@@ -62,30 +62,18 @@ const BLUR_SHADER = /* glsl */`
     }
 `;
 
-export function createParticleBloom(renderer, scene, camera) {
-    // Half float, so bright particle cores stay above 1.0 through the blur.
-    // No depth buffer: particles don't write depth.
-    const targetOptions = { type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false };
-    const rtParticles = new THREE.WebGLRenderTarget(1, 1, targetOptions);
-    const rtBlur      = new THREE.WebGLRenderTarget(1, 1, targetOptions);
+const QUAD_VERTEX_SHADER = /* glsl */`
+    varying vec2 vUv;
+    void main(){
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+    }
+`;
 
-    // One full-screen quad, reused for both blur passes and the overlay. Its
-    // vertex shader writes clip space directly, so the camera doesn't matter.
-    const quadScene  = new THREE.Scene();
-    const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const quad       = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null);
-    quad.frustumCulled = false;
-    quadScene.add(quad);
-
-    const QUAD_VERTEX_SHADER = /* glsl */`
-        varying vec2 vUv;
-        void main(){
-            vUv = uv;
-            gl_Position = vec4(position.xy, 0.0, 1.0);
-        }
-    `;
-
-    const blurMaterial = new THREE.ShaderMaterial({
+// The blur pass: one direction per use (horizontal, then vertical), with a
+// soft high-pass on the first so only bright particle cores glow.
+function makeBlurMaterial() {
+    return new THREE.ShaderMaterial({
         uniforms: {
             tSrc:       { value: null },
             uTexel:     { value: new THREE.Vector2() },
@@ -99,12 +87,14 @@ export function createParticleBloom(renderer, scene, camera) {
         depthTest:  false,
         depthWrite: false,
     });
+}
 
-    // The overlay: the glow map added onto the finished frame. Additive, no
-    // depth interaction, drawn after the normal render with autoClear off.
-    const overlayMaterial = new THREE.ShaderMaterial({
+// The overlay: the glow map added onto the finished frame. Additive, no
+// depth interaction, drawn after the normal render with autoClear off.
+function makeOverlayMaterial(glowTexture) {
+    return new THREE.ShaderMaterial({
         uniforms: {
-            uGlow:     { value: rtParticles.texture },
+            uGlow:     { value: glowTexture },
             uStrength: { value: bloomSettings.composite },
         },
         vertexShader:   QUAD_VERTEX_SHADER,
@@ -123,6 +113,25 @@ export function createParticleBloom(renderer, scene, camera) {
         depthWrite:  false,
         transparent: true,
     });
+}
+
+export function createParticleBloom(renderer, scene, camera) {
+    // Half float, so bright particle cores stay above 1.0 through the blur.
+    // No depth buffer: particles don't write depth.
+    const targetOptions = { type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false };
+    const rtParticles = new THREE.WebGLRenderTarget(1, 1, targetOptions);
+    const rtBlur      = new THREE.WebGLRenderTarget(1, 1, targetOptions);
+
+    // One full-screen quad, reused for both blur passes and the overlay. Its
+    // vertex shader writes clip space directly, so the camera doesn't matter.
+    const quadScene  = new THREE.Scene();
+    const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const quad       = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null);
+    quad.frustumCulled = false;
+    quadScene.add(quad);
+
+    const blurMaterial    = makeBlurMaterial();
+    const overlayMaterial = makeOverlayMaterial(rtParticles.texture);
 
     // Sized from the drawing buffer, which includes the pixel ratio the adaptive
     // quality (setup/renderer.js) changes at runtime.

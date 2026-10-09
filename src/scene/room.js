@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
-import { uProgress, injectDissolve } from '../effects/dissolve.js';
+import { injectDissolve } from '../effects/dissolve.js';
+import { uProgress } from './phaseMachine.js';
 
 // The room: six textured planes that dissolve with the scroll, with darkened
 // floor seams. Wall and floor textures can be replaced from the GUI.
@@ -73,6 +74,12 @@ function loadPbrTextures(kind, w, h) {
 
 // Six separate planes, each with its own size, texture, colour and edge shading.
 // Which edges of a plane get darkened, as (left, right, bottom, top) flags.
+// Base colour of the floor (dark brown under the planks texture). Also used by
+// the built-in tables' floor contact shading, so their tint matches the floor.
+export const FLOOR_COLOR = 0x2e1c0e;
+// Base colour of the four walls (warm dark plaster under the texture).
+const WALL_COLOR = 0x3d3520;
+
 // Only the wall/floor seam is shaded; darkening every corner made the room feel
 // heavy. Declared above roomParts, which reads them at load time.
 const EDGES_WALL_BOTTOM = [0, 0, 1, 0];
@@ -83,17 +90,23 @@ const EDGES_NONE        = [0, 0, 0, 0];
 // darkened.
 const roomParts = [
     // floor — weathered planks
-    { w: 14, h: 14, pos: [0, -3.5,  0], rx: -Math.PI / 2, ry: 0,            color: 0x2e1c0e, tex: 'floor', edges: EDGES_FLOOR },
+    { w: 14, h: 14, pos: [0, -3.5,  0], rx: -Math.PI / 2, ry: 0,
+      color: FLOOR_COLOR, tex: 'floor', edges: EDGES_FLOOR },
     // ceiling — same plaster, mostly in darkness above the key light
-    { w: 14, h: 14, pos: [0,  3.5,  0], rx:  Math.PI / 2, ry: 0,            color: 0x1e1810, tex: 'wall',  edges: EDGES_NONE },
+    { w: 14, h: 14, pos: [0,  3.5,  0], rx:  Math.PI / 2, ry: 0,
+      color: 0x1e1810,    tex: 'wall',  edges: EDGES_NONE },
     // wall the camera faces (the one you see behind the table)
-    { w: 14, h:  7, pos: [0,  0,   -7], rx: 0,            ry: 0,            color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL_BOTTOM },
+    { w: 14, h:  7, pos: [0,  0,   -7], rx: 0,            ry: 0,
+      color: WALL_COLOR,  tex: 'wall',  edges: EDGES_WALL_BOTTOM },
     // wall behind the camera
-    { w: 14, h:  7, pos: [0,  0,    7], rx: 0,            ry: Math.PI,      color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL_BOTTOM },
+    { w: 14, h:  7, pos: [0,  0,    7], rx: 0,            ry: Math.PI,
+      color: WALL_COLOR,  tex: 'wall',  edges: EDGES_WALL_BOTTOM },
     // left wall
-    { w: 14, h:  7, pos: [-7, 0,    0], rx: 0,            ry:  Math.PI / 2, color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL_BOTTOM },
+    { w: 14, h:  7, pos: [-7, 0,    0], rx: 0,            ry:  Math.PI / 2,
+      color: WALL_COLOR,  tex: 'wall',  edges: EDGES_WALL_BOTTOM },
     // right wall
-    { w: 14, h:  7, pos: [ 7, 0,    0], rx: 0,            ry: -Math.PI / 2, color: 0x3d3520, tex: 'wall',  edges: EDGES_WALL_BOTTOM },
+    { w: 14, h:  7, pos: [ 7, 0,    0], rx: 0,            ry: -Math.PI / 2,
+      color: WALL_COLOR,  tex: 'wall',  edges: EDGES_WALL_BOTTOM },
 ];
 
 function makeRoomMaterial(hex, texSet, w, h, edges) {
