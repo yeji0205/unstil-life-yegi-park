@@ -1,7 +1,5 @@
 # Unstil Life
 
-A scroll-driven 3D interactive artwork that transitions a classical Still Life room into cosmic space.
-
 **[Live Demo →](https://yeji0205.github.io/unstil-life-yegi-park/)**
 
 <p>
@@ -19,7 +17,7 @@ as human. Their slow disappearance carries the central idea that all things are
 equally transient from a cosmic perspective, appearing briefly and dissolving
 again as part of a continuous cycle.
 
-## The cycle
+## The cycle of life, in five phases
 
 <p align="center">
   <picture>
@@ -61,5 +59,3 @@ Built with [three.js](https://threejs.org). Dissolve technique after Codrops,
 Models from [Sketchfab](https://sketchfab.com), skyboxes from
 [OpenGameArt](https://opengameart.org/content/space-skyboxes-0), textures from
 [Poly Haven](https://polyhaven.com), sounds from [Freesound](https://freesound.org).
-
-Yegi Park, Seminar 3D-Rendering & Computational Art 2026, Hasso Plattner Institute.
