@@ -1,61 +1,62 @@
 # unstil life — system overview (current implementation)
 
 This document describes what is **actually implemented** in the codebase right
-now, as a companion to `architecture.md` (which records the original
-concept/decisions from early development and is no longer fully up to date —
-most of what's below was added after it). Use this to check the current build
-against the original project proposal/concept.
+now. It is the companion to the project description (Sections 1–3 of the
+seminar document) and can be used to check one against the other.
+`architecture_plan.md` holds the original plan and early design decisions; it
+is kept as a record and is no longer up to date.
 
 ---
 
-## 0. Proposal check: Technical Approach (Section 2) vs. implementation
+## 0. Project description vs. implementation
 
-Point-by-point comparison against the submitted technical proposal
-("2 Technical Approach", Figure 2 + Tables 1–4).
+Point-by-point check of the project description (Section 1 "Topic", Section 2
+"Technical Approach", Figure 2, Tables 1–2) against the code.
 
-### Built as proposed ✅
+### Built as described ✅
 
-| Proposal item | Status in code |
+| Description | In code |
 |---|---|
-| Room: six `PlaneGeometry` meshes, inward normals, ambient + directional light, `PCFSoftShadowMap` | Exactly as proposed (`src/scene/room.js`, `src/scene/lighting.js`, `src/setup/renderer.js`) |
-| Space: `BoxGeometry` skybox, back-side rendering, cube map textures | Exactly as proposed (`src/scene/space.js`) |
-| Stars: `BufferGeometry` particles, randomized positions, procedural texture | Exactly as proposed (`src/scene/stars.js`) |
-| Objects imported as GLB via `GLTFLoader` | Exactly as proposed (`src/objects/tableSetup.js`, `src/objects/objectsSetup.js`) |
-| Dissolve effect: 3D Simplex noise injected via `onBeforeCompile`, world-space noise for room walls / local-space for objects, threshold comparison → fragment discard | Exactly as proposed, line-for-line the Codrops technique cited in the proposal (`src/effects/dissolve.js`) |
-| Object particle effect: `Points` geometry, same Simplex noise, visible only near the dissolve boundary, scattered outward by a velocity attribute | Exactly as proposed |
-| Floating formula `P = P_initial + p·(H + A⊙sin(ω·t))`, per-object variation in `H`, `A`, `ω` | Exactly as proposed (`src/effects/floating.js`) |
-| Scroll → shared progress parameter `p` (0–1) as master state driving dissolve, lighting, floating | Exactly as proposed (`src/scene/phaseMachine.js`) |
-| At `p = 1`: scroll disabled, object dissolution proceeds via elapsed time | As proposed (triggered by a GUI button rather than automatically — minor difference) |
-| `OrbitControls`, bounded rotation while `p < 1`, bounds removed + zoom at `p = 1` | Exactly as proposed (`src/setup/cameraControls.js`) |
-| Lighting transition: warm interior fades, cold space light strengthens, driven by `p` | As proposed, extended with per-background presets (see §6) |
-| Sound: ambient café atmosphere, gain interpolated by `p` via the Web Audio API | As proposed (`src/audio/ambientSound.js`, `asset/sound/cafe.m4a` from Freesound) — full volume in the room, fading to silence in space. Extended with a GUI sound picker (Café / None / user-uploaded custom audio) and volume slider. Starts on the first click/key gesture (browser autoplay policy — wheel doesn't count as an activation, so scroll alone can't unlock audio). |
+| Room: six `PlaneGeometry` meshes, inward normals, ambient + directional light, `PCFSoftShadowMap` | `src/scene/room.js`, `src/scene/lighting.js`, `src/setup/renderer.js` |
+| Space: `BoxGeometry` skybox, back-side rendering, six cube map images | `src/scene/space.js` (3 skybox sets, plus a solid colour and uploads) |
+| Stars: `BufferGeometry` points at random positions | `src/scene/stars.js` (with a small canvas-drawn star texture) |
+| Objects: GLB via `GLTFLoader`, `MeshStandardMaterial`, measured and rescaled on load | `src/objects/objectsSetup.js` (`targetHeight` per object), table in `src/objects/tableSetup.js` |
+| Dissolve: 3D Simplex noise injected before compiling, world space for the room walls, local space for the table and objects, threshold → discard | `src/effects/dissolve.js` (`injectDissolve`, `addMeshDissolve`), after the Codrops technique |
+| Particles: point primitives sampled from the object's own triangles (area-weighted), same noise, visible only near the dissolve edge, scattered by a velocity attribute | `src/effects/dissolveParticles.js` (`makeParticlePoints`) |
+| Floating: `P = P_initial + f·(H + A⊙sin(ω·t + φ))`, `f` a smoothstep starting at p = 0.2, per-object `H` and `φ`, vertical table collision | `src/effects/floating.js`; `H` and `φ` (`phaseOffset`) per object in `OBJECT_DEFS`; `A` and `ω` are shared by all objects |
+| Scroll accumulated into `p` (0–1), driving dissolve, floating, lighting, sound | `src/scene/phaseMachine.js` (owns `uProgress`) |
+| Four states room / space / dissolving / done; during the dissolve, time drives it and scroll is blocked | `src/scene/phaseMachine.js`, timer in `src/scene/dissolveTimeline.js` (5 s) |
+| Objects replaced while invisible; scrolling home re-forms them in reverse | `applyReturnObjects` in `src/objects/objectSwap.js`; `followScroll` in `dissolveTimeline.js` |
+| Orbit camera angle-bounded in the room, free with zoom in space | `src/setup/cameraControls.js` |
+| Automatic journey: key P plays the whole cycle (Figure 2, Section 1) | `src/scene/journey.js` (see §5) |
+| Lighting: warm room light fades, the objects take on the light and colour of space | `src/scene/lighting.js`, presets in `src/scene/space.js`, environment map in `main.js` (see §7) |
+| Sound: café ambience, gain `1 − p`, silence in space, a dissolve sound | `src/audio/ambientSound.js` |
+| Audio unlock on the first `pointerdown` / `keydown` (Table 2) | `src/audio/ambientSound.js` (also retried on `wheel`, which browsers refuse) |
 
-### Deviations from the proposal ⚠️
+### Details worth knowing ⚠️
 
-| Proposal said | What the code actually does |
+| Description says | Code detail |
 |---|---|
-| "Imported materials are replaced with `MeshStandardMaterial` to enable dissolve shader injection across all objects" | Materials are **cloned**, not force-replaced — `GLTFLoader` already yields `MeshStandardMaterial` for standard glTF materials, so the end state matches for 4 of 5 objects without an explicit replace step. The glass cup is a deliberate exception: its transmission-based material rendered black in this dim scene, so it is replaced with a hand-tuned semi-transparent `MeshPhysicalMaterial`. The *purpose* (dissolve injection on every object) is fulfilled for all objects. |
-| Object dissolution starts automatically when `p` reaches 1 | Dissolution is armed at `p = 1` but starts on a GUI button click ("▶ Dissolve Objects") — a deliberate UX choice to give the viewer a moment in space first. |
+| (4) "The objects dissolve into particles" | The dissolve starts when the viewer presses **Dissolve** (GUI, enabled in space) or when the journey reaches it. It does not start by itself. |
+| "the disappearance of objects" | The table dissolves together with the objects, over the same 5 s. |
+| "new objects appear on the table" | Each return swaps the teddy (ribbon ↔ skeleton), the flower (tulip ↔ daffodil) and the stone (agate ↔ fluorite); the mannequin alternates its finish (wood ↔ walnut). The vase stays. |
 
-### Proposed but NOT implemented ❌
+### Beyond the description ➕
 
-| Proposal item | Status |
-|---|---|
-| **Phase 5 reappearance** — "new objects appear by running each object's dissolve progress in reverse"; reverse scroll "display[s] a different set of pre-loaded objects" | **Not implemented.** After the dissolve timeline completes, still-life objects are permanently removed from the scene; only the table returns on scroll-back. There is no second object set and no reverse-dissolve reappearance. |
-
-### Implemented beyond the proposal ➕
-
-Not in the proposal at all — added during development:
-
-- **Background motion** (§7): GUI-toggleable curl-noise swirl on the skybox
-  texture + synced star-field rotation (Vrellis *Starry Night* reference).
-- **Table system** (§8): live-swappable table geometry (default GLB / Box /
-  Cylinder / user-uploaded custom GLB) from a GUI dropdown.
-- **Per-background lighting presets + fresnel rim tint** (§6): lighting adapts
-  to the selected background; object edges pick up the surrounding color.
-- **Module refactor** (§3): the single-file app was split into modules, since
-  regrouped (Oct 2026) by what each part is in the artwork: setup, effects,
-  scene, objects, ui, audio.
+- **Selective particle glow** (`src/effects/particleBloom.js`): optional
+  "shiny" particles with a bloom pass on the particles only (GUI toggle, off
+  by default).
+- **Background motion** (§8): a curl-noise swirl on the skybox and a synced
+  rotation of the stars (GUI toggle).
+- **Table system** (§9): GLB / Box / Cylinder / uploaded table, swappable live.
+- **Uploads in the debug panel**: own skybox (PNG, JPG, WebP, AVIF, GIF, BMP,
+  TGA, with clear messages for unsupported or damaged files), table, stone,
+  room textures, sounds.
+- **Shader warm-up and preloading**: every shader is compiled behind the
+  loading screen and the returning models are loaded at startup, so nothing
+  stalls mid-journey.
+- **Adaptive quality**: the resolution drops on slow machines to keep the
+  frame rate (`src/setup/renderer.js`).
 
 ---
 
@@ -63,26 +64,27 @@ Not in the proposal at all — added during development:
 
 ```
 page load
-  → loading screen (particle-dissolve "Unstil Life" text, while GLBs load)
-  → interactive scene unlocks (scroll + orbit)
-      'room'       — scroll dissolves the room, revealing space
-      'space'      — orbit/zoom freely; "Dissolve Objects" button arms
-      'dissolving' — objects vanish one by one, automatically, over ~18s
-      'done'       — scroll re-enabled, room can reform
+  → loading screen ("Unstil Life" text dissolving into particles, while the
+    models load and the shaders are compiled)
+  → interactive scene unlocks (scroll, drag, key P); the top line reads
+    "press P to begin the journey (auto play)"
+      'room'       — scroll up dissolves the room, objects start to float
+      'space'      — free orbit and zoom; the Dissolve button is enabled
+      'dissolving' — table and objects dissolve together over 5 s, scroll blocked
+      'done'       — scroll down re-forms the room and the (new) objects
 ```
 
-## 2. Status vs. the original 5-phase plan (from `architecture.md`)
+The journey (key P) drives the same path by itself; see §5.
+
+## 2. The five phases of the project description
 
 | Phase | Description | Status |
 |---|---|---|
-| 1 | Room with soft lighting, objects on table | **Done** — real GLB still-life objects (vase, tulip, cup, wooden dummy, teddy), not placeholders anymore |
-| 2 | Scroll → environment dissolves, objects rise | **Done** |
-| 3 | Full space, objects float weightlessly | **Done** |
-| 4 | Objects disappear one by one (timer-based) | **Done** — sequential dissolve with particle bursts |
-| 5 | Room reforms, new objects appear | **Partial** — room reforms on scroll-back; no *new* objects introduced yet |
-
-Beyond the original plan, several features were added that aren't in
-`architecture.md` at all (sections 4–8 below).
+| 1 | Room with soft lighting and shadows, objects on the table | **Done**: vase with tulips, teddy bear, wooden mannequin, stone, round table |
+| 2 | The environment transforms into space, objects rise | **Done** |
+| 3 | Outer space, objects float weightlessly | **Done** |
+| 4 | Objects dissolve into particles, leaving empty space | **Done**: all together over 5 s, started by the Dissolve button or the journey |
+| 5 | The room reforms, new objects appear | **Done**: the objects re-form in reverse as the room returns, partly as new models (see §0) |
 
 ## 3. Module architecture
 
@@ -169,28 +171,48 @@ src/ui/
 ## 4. Dissolve shader (room, table, still-life objects)
 
 One shared technique (`injectDissolve` in `dissolve.js`), injected via
-`onBeforeCompile` into `MeshStandardMaterial`/`MeshPhysicalMaterial`: a 3D
-Simplex noise field is compared against a threshold that sweeps from -1.2 to
-1.2 as the object's own progress uniform goes 0→1; fragments below the
-threshold are discarded, with a thin glowing edge band at the boundary. Room
-walls use *world*-space noise (dissolves in place); table/objects use
-*local*-space noise (pattern rides with the object as it floats). Each
-dissolving thing (room, table, each of the 5 objects) owns its own progress
-uniform so they can be sequenced independently — driven by `phaseMachine.js`'s
-`'dissolving'` phase timeline (tulip/vase/cup at 0s/0s/3s, dummy at 5s, teddy
-at 10s, table last at 15s, each over 3s).
+`onBeforeCompile` into the models' own materials: a 3D Simplex noise field is
+compared against a threshold that sweeps from -1.2 to 1.2 as the progress
+uniform goes 0→1; fragments below the threshold are discarded, with a thin
+edge band at the boundary (dark for the room, white for the objects). Room
+walls use *world*-space noise (dissolves in place) and read `uProgress`
+directly; the table and objects use *local*-space noise (the pattern rides
+with the object as it floats) and each has its own progress uniform. The
+dissolve timeline (`dissolveTimeline.js`) moves all of them together over
+`dissolveDuration` (5 s, GUI slider), can pause and scrub, and on the way home
+sets them from `p`, so the objects re-form in step with the room.
 
-Every dissolving surface also gets a particle burst (`objectParticleVertexShader`
-in `dissolve.js`) sampled from its own geometry, visible only in a narrow band
-around the current dissolve edge.
+The table and each object also get dissolve particles
+(`makeParticlePoints` in `dissolveParticles.js`), sampled from their own
+geometry and visible only in a narrow band around the current dissolve edge.
+The room has no particles (a deliberate choice).
 
-## 5. Painting intro (removed)
+## 5. The journey (auto play)
+
+`src/scene/journey.js`. Key P or the GUI button "▶ Play Journey" plays the
+whole cycle without input, as a list of steps:
+
+| Step | Length | What it does |
+|---|---|---|
+| room | 4 s | glides the camera back to the start view if the viewer looked around |
+| to space | 6 s | moves the scroll target 0 → 1 |
+| look around | 8 s | the camera starts one slow swing around the scene |
+| dissolve | 5 s | presses Dissolve; the swing follows the dissolve's progress |
+| emptiness | 8 s | the swing turns back (rests only 3 frames, while the new models appear) |
+| home | 6 s | moves the scroll target 1 → 0, the swing ends at the start view |
+| arrive | until p ≈ 0 | holds the start view |
+
+It drives the same controls a viewer would (`phaseMachine.setScrollTarget`,
+`triggerDissolve`), so every effect reacts exactly as it does to scrolling.
+Any scroll or drag stops it and hands control back.
+
+## 6. Painting intro (removed)
 
 A painting-to-scene intro used to play before interaction unlocked. It had been
 switched off for some time and was removed in October 2026; it remains in the
 git history (`src/render/paintingIntro.js`).
 
-## 6. Lighting model
+## 7. Lighting model
 
 - **Room** (fixed): warm ambient fill (`0x3d2010`, intensity 0.4 — raised from
   an earlier 0.15 after "too dark" feedback) + a single warm directional key
@@ -198,8 +220,9 @@ git history (`src/render/paintingIntro.js`).
   raking-light photo reference. A fake volumetric light beam (additive-blended
   cone) fades out in the first 40% of the room→space scroll.
 - **Space** (per-background preset, `LIGHTING_PRESETS` in `space.js`):
-  - `space_blue` / `space_red` / `sky`: ambient stays low, directional climbs — moody,
-    high-contrast, "the sun does all the work" look.
+  - `space_blue` / `space_red` / `sky`: ambient 0.7, tinted with the skybox's
+    measured colour (mixed with white by "Background Tint", 0.65), and a strong
+    white directional light (5.4): the sun does most of the work.
   - `None (solid color)`: no ambient; the environment map (below) lights the
     objects evenly with the background colour, so a dark colour gives dark
     objects. Weak directional key (1.2). The colour is live (`voidColor`, white
@@ -212,13 +235,13 @@ git history (`src/render/paintingIntro.js`).
   whenever the background changes): objects reflect their real surroundings,
   sharply on glossy or metal parts and as soft light on matte ones. Its
   strength (`environmentMap.strength`, GUI "Env Map Strength") fades in with
-  the sun, so it is 0 in the room. (An earlier `RoomEnvironment` attempt was
+  the sun (p = 0.45 → 0.9), so it is 0 in the room. (An earlier `RoomEnvironment` attempt was
   reverted because it also lit the room; the fade-in avoids that.) It replaced
   a Fresnel "rim tint" that mixed one average colour into object outlines.
   Note: the table top and the vase are marked fully metallic in their GLB
   files, so they show the strongest reflections.
 
-## 7. Background motion (not in the original plan)
+## 8. Background motion (beyond the description)
 
 A GUI toggle ("🌀 Animate Background") eases in (`uFlowStrength` in
 `skyboxFlow.js`) a curl-noise UV warp on the skybox texture — inspired by
@@ -226,7 +249,7 @@ Petros Vrellis' animated *Starry Night* — plus a synced slow rotation of the
 star field (same eased strength, so both read as one swirling motion). Edge
 fade prevents seams at the skybox cube's face borders.
 
-## 8. Table system (not in the original plan)
+## 9. Table system (beyond the description)
 
 A second GUI dropdown ("Table") lets the table be swapped live between the
 default GLB, a plain Box, a Cylinder, or a **user-uploaded custom `.glb`**
@@ -234,14 +257,15 @@ file (via a hidden file input + `URL.createObjectURL`). Swapping keeps the
 existing still-life objects in place and just shifts them by the surface-height
 delta, rather than reloading everything (`setTable()` in `objects/tableSetup.js`).
 
-## 9. Camera behavior
+## 10. Camera behavior
 
 - Room-mode: azimuth/polar clamped to keep the camera inside the room and
   above the floor (derived from the room's geometry). Space-mode: free orbit.
 - During the room→space scroll, the camera automatically pulls back
-  (`ZOOM_OUT_EXTRA`) and tilts its gaze upward (`LOOK_UP_EXTRA`, via the
-  look-at target rising faster than the camera itself) starting exactly when
-  objects begin floating (`FLOAT_START`), so they stay in frame as they rise.
+  (`ZOOM_OUT_EXTRA`) and raises its gaze with the objects (`GAZE_RISE`; the
+  camera and its target move up together, so the flat-on view of the table is
+  kept), starting exactly when objects begin floating (`FLOAT_START`), so they
+  stay in frame as they rise.
   This is computed as a pure function of scroll progress `p` from a
   camera-offset snapshot taken at startup — an earlier version re-derived the
   offset from the previous frame's camera position, which fed back on itself
@@ -250,26 +274,18 @@ delta, rather than reloading everything (`setTable()` in `objects/tableSetup.js`
   original room framing, at which point scroll switches back to
   restoring the room.
 
-## 10. Known open items / tradeoffs worth flagging
+## 11. Known open items / tradeoffs worth flagging
 
-- **Glass cup material**: currently a hand-tuned semi-transparent
-  `MeshPhysicalMaterial` (icy-blue tint, opacity 0.30), not the GLB's real
-  transmission-based glass. True transmission was tried and rejected — in
-  this dim, single-key-light room, transmission (which shows whatever's
-  literally behind the object) reads as near-black, and boosting environment
-  reflections didn't fix it without a brighter/more detailed backdrop. The
-  current material is the practical compromise; it reads a bit "plasticky"
-  up close. Two follow-up ideas discussed but not implemented: (a) hybrid
-  opacity + transmission, (b) a small dedicated light near the cup just to
-  guarantee a highlight from the usual camera angle.
-- **`architecture.md`** is stale relative to this document — it predates the
-  module refactor and everything in §5–8. Worth deciding whether to fold this
-  file into it, replace it, or keep both (historical decisions vs. current
-  state).
-- Debug GUI (lil-gui) is currently the *only* way to change skybox/table/
-  background-motion — there's no polished end-user UI for these yet.
+- The debug GUI (lil-gui) is the only way to change the skybox, table,
+  background motion and the Dissolve button; there is no end-user UI for these.
+  Viewers without it still have scroll, drag and the journey (key P).
+- The perf HUD's `calls`/`tris` readout is wrong while shiny particles are on
+  (several render passes per frame); fps/ms stay correct.
+- `architecture_plan.md` is the original plan, kept as a record; this document
+  is the current state.
 
-## 11. Tech stack (unchanged from `architecture.md`)
+## 12. Tech stack
 
-Three.js r0.169, Vite, GLSL via `onBeforeCompile`, GLTFLoader, OrbitControls.
-Deployed to GitHub Pages via GitHub Actions.
+Three.js r0.169, Vite 5, GLSL via `onBeforeCompile`, GLTFLoader, OrbitControls,
+lil-gui, Web Audio API. ESLint 9 (`npm run lint`). Deployed to GitHub Pages via
+GitHub Actions.

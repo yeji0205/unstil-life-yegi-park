@@ -1,4 +1,8 @@
-# unstil life — architecture
+# unstil life — architecture plan
+
+> The original plan and early design decisions, kept as a record. It is no
+> longer up to date: the current implementation is described in
+> [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md).
 
 ## concept
 
