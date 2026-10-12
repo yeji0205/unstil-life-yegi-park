@@ -162,8 +162,9 @@ For each object:
    (`src/effects/dissolveParticles.js`), which puts it on `PARTICLE_BLOOM_LAYER`. A `new THREE.Points`
    built by hand is invisible to the bloom pass and will silently never glow.
 8. Two selectable appearances, switched live by the `uParticleShiny` uniform
-   (`✨ Shiny Particles` button in the GUI): `0` = flat evenly-lit white dots
-   (the default and the fast path), `1` = the Codrops demo's shiny look.
+   (`✨ Shiny Particles` / `⚪ Flat White Particles` button in the GUI): `1` =
+   the Codrops demo's shiny look (**the default**), `0` = flat evenly-lit white
+   dots (the fast path).
    Shiny is **two** things, and neither works alone:
    - **Selective bloom** (`src/effects/particleBloom.js`) does all the work. A
      point sprite can only fill its own quad, so a "glow" drawn inside one just
@@ -289,8 +290,9 @@ flat/shiny particle A/B toggle.
   hint, the custom-skybox dialogs); don't add new HTML UI without asking
 - Do not add post-processing without confirming. There is now exactly ONE
   post-process — the selective particle bloom in `src/effects/particleBloom.js` —
-  and it is opt-in, only rendering while shiny particle mode is on. Do not move
-  it onto the default path, and do not add a second (FXAA, DOF, vignette)
+  and it only renders while shiny particle mode is on (the default) AND
+  particles are on screen, i.e. mid-dissolve. Do not run it on frames without
+  particles, and do not add a second post-process (FXAA, DOF, vignette)
   without asking.
 - **NEVER route the on-screen render through an `EffectComposer`.** This scene
   has several ADDITIVE layers (volumetric light cone, star field, particles).

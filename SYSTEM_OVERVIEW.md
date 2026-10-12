@@ -43,9 +43,9 @@ Point-by-point check of the project description (Section 1 "Topic", Section 2
 
 ### Beyond the description ➕
 
-- **Selective particle glow** (`src/effects/particleBloom.js`): optional
-  "shiny" particles with a bloom pass on the particles only (GUI toggle, off
-  by default).
+- **Selective particle glow** (`src/effects/particleBloom.js`): "shiny",
+  twinkling particles with a bloom pass on the particles only (on by default;
+  the GUI switches to flat white dots).
 - **Background motion** (§8): a curl-noise swirl on the skybox and a synced
   rotation of the stars (GUI toggle).
 - **Table system** (§9): GLB / Box / Cylinder / uploaded table, swappable live.

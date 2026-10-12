@@ -6,7 +6,8 @@ import { dissolveDuration } from './dissolveTimeline.js';
 // dissolve, a moment of emptiness, and the way home. It drives the same controls
 // a viewer would (the scroll target and the Dissolve button), so everything else
 // reacts exactly as it does to scrolling. Any scroll or camera drag stops it and
-// hands control back to the viewer.
+// hands control back to the viewer. Pressed in space, mid-dissolve or after it,
+// it carries on from there instead of starting over.
 
 const ROOM_WAIT      = 4; // seconds looking at the still life
 const TO_SPACE       = 6; // "scrolling" up into space
@@ -78,15 +79,43 @@ function journeySteps(phaseMachine) {
     ];
 }
 
-// If P is pressed away from the room: wait for a running dissolve to finish,
-// then glide home first, then start.
+// If P is pressed half-way between room and space: glide home first, then start.
 function goHomeSteps(phaseMachine) {
     const from = phaseMachine.getScrollTarget();
     return [
-        { until: ({ phase }) => phase !== 'dissolving' },
         { seconds: Math.max(TO_ROOM * from, 1), scroll: [from, 0], toStartView: true },
         { until: ({ p }) => p <= 0.001, holdStartView: true },
     ];
+}
+
+// If P is pressed in space, mid-dissolve or after it, the journey carries on
+// from the matching step (an index into journeySteps) instead of rewinding.
+const JOIN_STEP = { space: 2, dissolving: 3, done: 4 };
+
+// The steps to play when P is pressed, given where the scene is now.
+function stepsFrom(phaseMachine, phase, atHome) {
+    const steps = journeySteps(phaseMachine);
+    if (atHome) return { steps, joined: false };
+    if (phase in JOIN_STEP) return { steps: steps.slice(JOIN_STEP[phase]), joined: true };
+    return { steps: [...goHomeSteps(phaseMachine), ...steps], joined: false };
+}
+
+// After joining mid-way, the camera is wherever the viewer left it. Every frame
+// for START_GLIDE seconds, this pulls it from there onto the journey's path:
+// the difference measured on the first frame shrinks to zero, so it neither
+// jumps nor stops. Returns false once the blend is over.
+function blendOntoPath(controls, blend, dt, startView) {
+    const onPath = cameraAngles(controls); // where the journey put it this frame
+    blend.offset ??= {
+        theta: angleDelta(onPath.theta, blend.from.theta),
+        phi:   blend.from.phi - startView.phi,
+    };
+    blend.time += dt;
+    const remaining = 1 - smoothstep(Math.min(1, blend.time / START_GLIDE));
+    setCameraAngles(controls,
+        onPath.theta + blend.offset.theta * remaining,
+        startView.phi + blend.offset.phi * remaining);
+    return remaining > 0;
 }
 
 // Moves the camera for this frame, as the step says. progress: how far through
@@ -118,8 +147,10 @@ export function createJourney({ phaseMachine, controls, onChange }) {
     let stepFrames = 0;
     let holdEnd = 0;  // stepTime when the step's holdFrames were over
     let enabled = false; // only after the loading screen
-    let lastP = 0;       // p of the last frame, to know if the journey starts at home
+    let lastP = 0;       // p and phase of the last frame, to know where the journey starts
+    let lastPhase = 'room';
     let glideFrom = startView; // the camera's view when a toStartView step began
+    let blend = null;    // easing the camera onto the path after joining mid-way
 
     function enterStep(i) {
         index = i;
@@ -134,7 +165,9 @@ export function createJourney({ phaseMachine, controls, onChange }) {
     function start() {
         if (!enabled || steps) return;
         const atHome = lastP <= 0.001 && phaseMachine.getScrollTarget() === 0;
-        steps = [...(atHome ? [] : goHomeSteps(phaseMachine)), ...journeySteps(phaseMachine)];
+        const plan = stepsFrom(phaseMachine, lastPhase, atHome);
+        steps = plan.steps;
+        blend = plan.joined ? { from: cameraAngles(controls), offset: null, time: 0 } : null;
         enterStep(0);
         onChange?.(true);
     }
@@ -162,6 +195,7 @@ export function createJourney({ phaseMachine, controls, onChange }) {
     // Called every frame with the phase machine's phase and p.
     function update(dt, phase, p) {
         lastP = p;
+        lastPhase = phase;
         if (!steps) return;
         stepTime += dt;
         stepFrames++;
@@ -171,6 +205,7 @@ export function createJourney({ phaseMachine, controls, onChange }) {
             phaseMachine.setScrollTarget(from + (to - from) * stepProgress(step));
         }
         moveCamera(controls, step, { progress: stepProgress(step), stepTime, startView, glideFrom });
+        if (blend && !blendOntoPath(controls, blend, dt, startView)) blend = null;
         const done = step.until ? step.until({ phase, p }) : stepTime >= step.seconds;
         if (!done) return;
         if (index + 1 < steps.length) enterStep(index + 1);

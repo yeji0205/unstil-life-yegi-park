@@ -4,7 +4,10 @@ A scroll-driven 3D interactive artwork that transitions a classical Still Life r
 
 **[Live Demo →](https://yeji0205.github.io/unstil-life-yegi-park/)**
 
-![The still life in the room, the first scene](docs/first-scene.jpg)
+<p>
+  <img src="docs/first-scene.jpg" width="49%" alt="The still life in the room, the first scene">
+  <img src="docs/dissolve.jpg" width="49%" alt="The still life in space, half dissolved into particles">
+</p>
 
 The Still Life is a traditional art genre depicting inanimate objects arranged
 with care in a controlled spatial setting. This project extends the genre by
@@ -15,6 +18,20 @@ matter, the flower as plant, the teddy bear as animal, and the wooden mannequin
 as human. Their slow disappearance carries the central idea that all things are
 equally transient from a cosmic perspective, appearing briefly and dissolving
 again as part of a continuous cycle.
+
+## The cycle
+
+```mermaid
+flowchart LR
+    Life["<b>Life</b><br/>the still life in the room"]
+    Release["<b>Release</b><br/>the room opens into space,<br/>the objects float"]
+    Dissolution["<b>Dissolution</b><br/>the objects dissolve<br/>into particles"]
+    Stillness["<b>Stillness</b><br/>empty space"]
+    Rebirth["<b>Rebirth</b><br/>the room returns<br/>with new objects"]
+
+    Life --> Release --> Dissolution --> Stillness --> Rebirth
+    Rebirth -.-> Life
+```
 
 ## How to experience it
 
@@ -39,7 +56,7 @@ Check the code with `npm run lint`.
 
 ## Documentation
 
-- [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md): what is implemented, module by module, checked against the project description
+- [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md): how it is built: the modules, the dissolve shader, lighting, camera and the journey
 - [AGENTS.md](AGENTS.md): rules and conventions for working on the code (written for AI coding agents)
 - [architecture_plan.md](architecture_plan.md): the original plan, kept as a record
 
