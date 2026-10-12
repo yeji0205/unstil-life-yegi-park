@@ -20,9 +20,13 @@ animation loop. Check the code with `npm run lint` (ESLint, see `eslint.config.m
 
 ## Hard Rules — Never Violate
 
-- **NEVER use `BoxGeometry` for the room.** Normals point outward — `DirectionalLight`
-  calculates `dot(normal, lightDir)` as negative → room goes black. Use 6 individual
-  `PlaneGeometry` meshes with manually rotated inward-facing normals instead.
+- **Build the room from 6 `PlaneGeometry` meshes, not one `BoxGeometry`.** Each
+  wall is its own mesh, so it gets its own size, UVs, texture and colour (the GUI's
+  Room Textures work per wall), facing inward. Note for the record: a `BoxGeometry`
+  with `side: BackSide` would also be lit correctly. three.js flips the normals for
+  back faces (`FLIP_SIDED`), so do not "fix" lighting by switching geometry. The
+  first room went black because it used `ShaderMaterial` (see the next rule), and
+  the switch to planes happened in the same commit, so the planes got the credit.
 
 - **NEVER use `ShaderMaterial` for lit objects.** `ShaderMaterial` does not respond to
   Three.js lights. Always use `MeshStandardMaterial` + `onBeforeCompile` to inject
@@ -59,7 +63,8 @@ src/             — grouped by what each part is in the artwork:
                    particleBloom — the only post-process)
   scene/           the scenes and how they change (room, space = skybox background,
                    skyboxUpload, stars, lighting, phaseMachine, dissolveTimeline, journey =
-                   the artwork playing by itself when P is pressed)
+                   the artwork playing by itself when P is pressed; pressed mid-way, it
+                   carries on from there)
   objects/         table (tableSetup, builtinTable = Box/Cylinder, customTable = uploads), the
                    still-life objects (objectsSetup), posing models by their skeleton
                    (skeletonPose; for now only the teddy), swapping models (objectSwap: stones,
@@ -193,22 +198,25 @@ For each object:
    than stored as an attribute, so the shared geometry builder needs no extra
    buffer (and no per-frame upload, unlike the demo).
 
-Particles appear only within `uEdge * 1.5` band around dissolve threshold.
+A particle appears when the dissolve edge reaches its spot on the surface (same noise,
+same threshold) and stays visible for `uLife` behind the edge while it drifts out,
+then disappears (see the vertex shader in `dissolveParticles.js`).
 
 ---
 
 ## Floating Animation Formula
 
-$$P = P_\text{initial} + p \cdot (H + A \odot \sin(\omega\, t))$$
+$$P = P_\text{initial} + f \cdot (H + A \odot \sin(\omega\, t + \varphi))$$
 
-- `p` = uProgress (scales entire effect — no float when room visible)
+- `f` — floating factor: 0 until `p = FLOAT_START` (0.2), then a smoothstep to 1 at
+  `p = 1`, so objects stay still in the room and ease off the table
 - `t` = `clock.getElapsedTime()` (continuous oscillation)
 - `H` — upward rise, **varies per object** (`OBJECT_DEFS` in objectsSetup.js)
-- `phase` — offset of each object's waves, **varies per object**
-- `A`, `ω` — amplitude and frequency, shared by all objects (floating.js)
+- `φ` — oscillation offset (`phaseOffset`), **varies per object**
+- `A`, `ω` — amplitude and frequency per axis, **shared by all objects** (floating.js)
 
-The per-object rise and phase make the objects drift independently. Floating
-starts at `p = FLOAT_START` (0.2) and is eased, so objects stay still in the room.
+The per-object rise and offset make the objects drift independently. A vertical
+collision pass keeps them from sinking through the table.
 
 ---
 
@@ -253,14 +261,14 @@ Follow Clean Code principles — names must be descriptive and unambiguous.
 | Pattern | Rule | Example |
 |---|---|---|
 | Uniforms | always prefix `u`, full descriptive name | `uProgress`, `uDissolveEdge`, `uNoiseFreq`, `uDissolveEdgeColor` |
-| Per-object uniforms | `u` + ObjectName + Property | `uCylinderProgress`, `uCylinderTime` |
+| Per-object state | on the object's entry, not a global | `entry.uProgress`, `tableState.uProgress` |
 | Particle color | `uParticleColor` (shared name across objects) | `uParticleColor` |
-| Constants | SCREAMING_SNAKE_CASE, fully spelled out | `CYLINDER_RADIUS`, `CYLINDER_PARTICLE_COUNT`, `ROOM_RETURN_DIST` |
-| Geometry | descriptive + `Geometry` suffix | `cylinderParticleGeometry`, `starGeometry` |
-| Materials | descriptive + `Material` suffix | `cylinderMat`, `cylinderParticleMaterial` |
-| Shaders | descriptive + `VertexShader` / `FragmentShader` | `cylinderParticleVertexShader` |
-| Three.js instances | full descriptive name, no abbreviation | `directionalLight`, `textureLoader` |
-| Phase timing | `phaseStart` (clock seconds), `phase` (string) | — |
+| Constants | SCREAMING_SNAKE_CASE, fully spelled out | `ROOM_RETURN_DIST`, `FLOAT_START`, `PRELOADED_MODEL_COUNT` |
+| Geometry | descriptive + `Geometry` suffix | `starGeometry` |
+| Materials | descriptive + `Material` suffix | `overlayMaterial`, `customDepthMaterial` |
+| Shaders | descriptive + `VertexShader` / `FragmentShader` | `objectParticleVertexShader` |
+| Three.js instances | full descriptive name, no abbreviation | `directionalLight`, `ambientLight` |
+| Phase state | `phase` (string), `targetP` (scroll target) | — |
 
 **GLSL uniform names** (inside shader strings) must match the key in `shader.uniforms`:
 - JS variable `uDissolveEdge` → `shader.uniforms.uEdge = uDissolveEdge` (key stays `uEdge`)
@@ -275,7 +283,8 @@ Follow Clean Code principles — names must be descriptive and unambiguous.
 
 ## Debug GUI (lil-gui)
 
-A `lil-gui` debug panel is always present. Comment out the `gui` block before final release.
+A `lil-gui` debug panel is part of the release: it holds the Dissolve button and the
+uploads. It is hidden during the loading screen and shown afterwards (main.js).
 Built in src/ui/gui.js from one file per section in src/ui/gui/. The panel imports
 the settings it shows; main.js only passes the actions (load a table, swap a stone…).
 Loose top-level buttons (the ones you press rather than adjust): the journey (also

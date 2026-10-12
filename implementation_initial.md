@@ -1,8 +1,8 @@
-# unstil life — architecture plan
+# unstil life — implementation (initial)
 
 > The original plan and early design decisions, kept as a record. It is no
 > longer up to date: the current implementation is described in
-> [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md).
+> [implementation_current.md](implementation_current.md).
 
 ## concept
 
@@ -16,14 +16,13 @@ The viewer interacts by scrolling (room ↔ space transition) and orbiting/zoomi
 
 ### room
 - **Geometry:** 6 individual `PlaneGeometry` meshes (floor, ceiling, 4 walls), each rotated
-  so normals point inward → required for correct PBR lighting from inside
-- **Why not `BoxGeometry`:** `BoxGeometry` with `BackSide` rendering cannot be correctly lit
-  from inside using Three.js standard lighting. `BackSide` flips which face is rendered but
-  does NOT flip the normals used for lighting calculations — normals still point outward.
-  `DirectionalLight` computes `dot(normal, lightDir)` which becomes negative (light hits the
-  outside of the box), so the room appears black regardless of light position.
-  Six individual `PlaneGeometry` meshes with manually rotated inward-facing normals solve
-  this — `dot(normal, lightDir)` is positive and the room is correctly illuminated.
+  so its normal points inward
+- **Why not `BoxGeometry`:** each wall as its own mesh gets its own size, UVs, texture and
+  colour. (Correction: this section used to say that `BackSide` does not flip the normals,
+  so a box room could not be lit. That is wrong: three.js flips the normals of back faces
+  (`FLIP_SIDED`), so a lit box room works. The first room went black because it used
+  `ShaderMaterial`, which ignores three.js lights; the planes and `MeshStandardMaterial`
+  came in the same commit.)
 - **Material:** `MeshStandardMaterial` with dissolve shader injected via `onBeforeCompile`
 - **Lighting:**
   - `AmbientLight` (warm white, intensity 2.8 in room → 0.0 in space)
@@ -34,10 +33,9 @@ The viewer interacts by scrolling (room ↔ space transition) and orbiting/zoomi
 ### space
 - **Skybox:** `BoxGeometry(1000,1000,1000)` with 6 `MeshBasicMaterial` faces using
   cube map textures (`asset/skybox/<name>/{right,left,top,bottom,front,back}.png`), rendered `BackSide`
-- **Why `BoxGeometry` + `BackSide` works here:** `MeshBasicMaterial` ignores lighting
-  entirely — no normal vectors, no dot product calculations. It simply displays the texture
-  color directly. So the outward-pointing normals of `BoxGeometry` cause no problem —
-  there is no lighting math to get wrong.
+- **Why the skybox needs no lighting:** `MeshBasicMaterial` ignores lights entirely: it
+  shows the texture colours as they are. The lights in space light the objects, not the
+  sky, so the skybox's normals don't matter.
 - **Stars:** 1000 `Points` with additive blending, canvas-generated radial gradient texture,
   warm tint (`r=1, g=0.9, b=0.8`), randomly distributed in a 200-unit cube
 - **Lighting:** zero ambient, pure white directional at 8.0 intensity — simulates
@@ -49,8 +47,7 @@ The viewer interacts by scrolling (room ↔ space transition) and orbiting/zoomi
 
 **Trigger:** mouse `wheel` event maps `deltaY` to `uProgress` (0.0 → 1.0)
 
-**Technique:** Codrops noise-based dissolve
-(ref: tympanus.net/codrops/2025/02/17/implementing-a-dissolve-effect-with-shaders-and-particles-in-three-js/)
+**Technique:** [Codrops noise-based dissolve](https://tympanus.net/codrops/2025/02/17/implementing-a-dissolve-effect-with-shaders-and-particles-in-three-js/)
 
 ### dissolve shader (room walls)
 Injected into `MeshStandardMaterial` via `onBeforeCompile` — PBR lighting preserved:
@@ -153,6 +150,16 @@ uProgress = 1.0, close    → scroll restores room (zoom disabled)
 - `hasZoomedOut` flag prevents room re-appearing immediately after dissolve
   (camera starts inside the threshold)
 
+### 5-phase plan (from abstract)
+
+| Phase | Description | Status |
+|---|---|---|
+| 1 | Room with soft lighting, objects on table | partial (room done, objects placeholder) |
+| 2 | Scroll → environment dissolves, objects rise | dissolve done, floating done |
+| 3 | Full space, objects float weightlessly | space done |
+| 4 | Objects disappear one by one (timer-based) | not started |
+| 5 | Room reforms, new objects appear | not started |
+
 ### camera
 - `PerspectiveCamera`, FOV 35°, position `(0, 1.0, 4)`, target `(0, -2.5, -1)`
 - `OrbitControls` with two modes:
@@ -178,40 +185,3 @@ ambientLight.intensity = lerp(2.8, 0.0, p);
 dirLight.color.setRGB(lerp(1.00, 1.00, p), lerp(0.96, 1.00, p), lerp(0.88, 1.00, p));
 dirLight.intensity = lerp(3.5, 8.0, p);
 ```
-
----
-
-## tech stack
-
-| Tool | Role |
-|---|---|
-| **Three.js r0.169** | 3D rendering, scene graph, PBR materials |
-| **Vite** | Dev server, ES module bundler, GitHub Pages build |
-| **GLSL / onBeforeCompile** | Dissolve shader injected into MeshStandardMaterial |
-| **3D Simplex Noise (GLSL)** | Organic dissolve shape, particle edge sync |
-| **OrbitControls** | Camera interaction with dynamic angle/zoom limits |
-| **GLTFLoader** | (planned) loading .glb object models |
-| **Web Audio API** | (planned) ambient sound fade across phases |
-
-## color space
-`renderer.outputColorSpace = THREE.LinearSRGBColorSpace` — matches first-universe
-project aesthetic. No gamma correction applied → monitor darkens output, compensated
-by higher light intensities (ambient 2.8, directional up to 8.0).
-
----
-
-## 5-phase plan (from abstract)
-
-| Phase | Description | Status |
-|---|---|---|
-| 1 | Room with soft lighting, objects on table | partial (room done, objects placeholder) |
-| 2 | Scroll → environment dissolves, objects rise | dissolve done, floating done |
-| 3 | Full space, objects float weightlessly | space done |
-| 4 | Objects disappear one by one (timer-based) | not started |
-| 5 | Room reforms, new objects appear | not started |
-
-## deployment
-- GitHub Pages via GitHub Actions (`static.yml`)
-- Vite build (`npm run build`) → `dist/` deployed
-- Base path: `/unstil-life-yegi-park/`
-- Skybox textures in `public/asset/skybox/<name>/` → copied to `dist/` by Vite

@@ -21,17 +21,12 @@ again as part of a continuous cycle.
 
 ## The cycle
 
-```mermaid
-flowchart LR
-    Life["<b>Life</b><br/>the still life in the room"]
-    Release["<b>Release</b><br/>the room opens into space,<br/>the objects float"]
-    Dissolution["<b>Dissolution</b><br/>the objects dissolve<br/>into particles"]
-    Stillness["<b>Stillness</b><br/>empty space"]
-    Rebirth["<b>Rebirth</b><br/>the room returns<br/>with new objects"]
-
-    Life --> Release --> Dissolution --> Stillness --> Rebirth
-    Rebirth -.-> Life
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/cycle-dark.svg">
+    <img src="docs/cycle-light.svg" width="640" alt="The cycle: Life (the still life in the room) → Release (the room opens into space, the objects float) → Dissolution (the objects dissolve into particles) → Stillness (empty space) → Rebirth (the room returns with new objects) → Life">
+  </picture>
+</p>
 
 ## How to experience it
 
@@ -56,9 +51,8 @@ Check the code with `npm run lint`.
 
 ## Documentation
 
-- [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md): how it is built: the modules, the dissolve shader, lighting, camera and the journey
-- [AGENTS.md](AGENTS.md): rules and conventions for working on the code (written for AI coding agents)
-- [architecture_plan.md](architecture_plan.md): the original plan, kept as a record
+- [implementation_current.md](implementation_current.md): how it is built: the modules, the dissolve shader, lighting, camera and the journey
+- [implementation_initial.md](implementation_initial.md): the original plan, kept as a record
 
 ## Credits
 

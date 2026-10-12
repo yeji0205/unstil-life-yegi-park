@@ -1,9 +1,9 @@
-# unstil life — system overview (current implementation)
+# unstil life — implementation (current)
 
 This document describes what is **actually implemented** in the codebase right
 now. It is the companion to the project description (Sections 1–3 of the
 seminar document) and can be used to check one against the other.
-`architecture_plan.md` holds the original plan and early design decisions; it
+`implementation_initial.md` holds the original plan and early design decisions; it
 is kept as a record and is no longer up to date.
 
 ---
@@ -29,7 +29,7 @@ Point-by-point check of the project description (Section 1 "Topic", Section 2
 | Objects replaced while invisible; scrolling home re-forms them in reverse | `applyReturnObjects` in `src/objects/objectSwap.js`; `followScroll` in `dissolveTimeline.js` |
 | Orbit camera angle-bounded in the room, free with zoom in space | `src/setup/cameraControls.js` |
 | Automatic journey: key P plays the whole cycle (Figure 2, Section 1) | `src/scene/journey.js` (see §5) |
-| Lighting: warm room light fades, the objects take on the light and colour of space | `src/scene/lighting.js`, presets in `src/scene/space.js`, environment map in `main.js` (see §7) |
+| Lighting: warm room light fades, the objects take on the light and colour of space | `src/scene/lighting.js`, presets in `src/scene/space.js`, environment map in `main.js` (see §6) |
 | Sound: café ambience, gain `1 − p`, silence in space, a dissolve sound | `src/audio/ambientSound.js` |
 | Audio unlock on the first `pointerdown` / `keydown` (Table 2) | `src/audio/ambientSound.js` (also retried on `wheel`, which browsers refuse) |
 
@@ -46,9 +46,9 @@ Point-by-point check of the project description (Section 1 "Topic", Section 2
 - **Selective particle glow** (`src/effects/particleBloom.js`): "shiny",
   twinkling particles with a bloom pass on the particles only (on by default;
   the GUI switches to flat white dots).
-- **Background motion** (§8): a curl-noise swirl on the skybox and a synced
+- **Background motion** (§7): a curl-noise swirl on the skybox and a synced
   rotation of the stars (GUI toggle).
-- **Table system** (§9): GLB / Box / Cylinder / uploaded table, swappable live.
+- **Table system** (§8): GLB / Box / Cylinder / uploaded table, swappable live.
 - **Uploads in the debug panel**: own skybox (PNG, JPG, WebP, AVIF, GIF, BMP,
   TGA, with clear messages for unsupported or damaged files), table, stone,
   room textures, sounds.
@@ -206,13 +206,7 @@ It drives the same controls a viewer would (`phaseMachine.setScrollTarget`,
 `triggerDissolve`), so every effect reacts exactly as it does to scrolling.
 Any scroll or drag stops it and hands control back.
 
-## 6. Painting intro (removed)
-
-A painting-to-scene intro used to play before interaction unlocked. It had been
-switched off for some time and was removed in October 2026; it remains in the
-git history (`src/render/paintingIntro.js`).
-
-## 7. Lighting model
+## 6. Lighting model
 
 - **Room** (fixed): warm ambient fill (`0x3d2010`, intensity 0.4 — raised from
   an earlier 0.15 after "too dark" feedback) + a single warm directional key
@@ -241,7 +235,7 @@ git history (`src/render/paintingIntro.js`).
   Note: the table top and the vase are marked fully metallic in their GLB
   files, so they show the strongest reflections.
 
-## 8. Background motion (beyond the description)
+## 7. Background motion (beyond the description)
 
 A GUI toggle ("🌀 Animate Background") eases in (`uFlowStrength` in
 `skyboxFlow.js`) a curl-noise UV warp on the skybox texture — inspired by
@@ -249,7 +243,7 @@ Petros Vrellis' animated *Starry Night* — plus a synced slow rotation of the
 star field (same eased strength, so both read as one swirling motion). Edge
 fade prevents seams at the skybox cube's face borders.
 
-## 9. Table system (beyond the description)
+## 8. Table system (beyond the description)
 
 A second GUI dropdown ("Table") lets the table be swapped live between the
 default GLB, a plain Box, a Cylinder, or a **user-uploaded custom `.glb`**
@@ -257,7 +251,7 @@ file (via a hidden file input + `URL.createObjectURL`). Swapping keeps the
 existing still-life objects in place and just shifts them by the surface-height
 delta, rather than reloading everything (`setTable()` in `objects/tableSetup.js`).
 
-## 10. Camera behavior
+## 9. Camera behavior
 
 - Room-mode: azimuth/polar clamped to keep the camera inside the room and
   above the floor (derived from the room's geometry). Space-mode: free orbit.
@@ -274,18 +268,12 @@ delta, rather than reloading everything (`setTable()` in `objects/tableSetup.js`
   original room framing, at which point scroll switches back to
   restoring the room.
 
-## 11. Known open items / tradeoffs worth flagging
+## 10. Known open items / tradeoffs worth flagging
 
 - The debug GUI (lil-gui) is the only way to change the skybox, table,
   background motion and the Dissolve button; there is no end-user UI for these.
   Viewers without it still have scroll, drag and the journey (key P).
 - The perf HUD's `calls`/`tris` readout is wrong while shiny particles are on
   (several render passes per frame); fps/ms stay correct.
-- `architecture_plan.md` is the original plan, kept as a record; this document
+- `implementation_initial.md` is the original plan, kept as a record; this document
   is the current state.
-
-## 12. Tech stack
-
-Three.js r0.169, Vite 5, GLSL via `onBeforeCompile`, GLTFLoader, OrbitControls,
-lil-gui, Web Audio API. ESLint 9 (`npm run lint`). Deployed to GitHub Pages via
-GitHub Actions.
