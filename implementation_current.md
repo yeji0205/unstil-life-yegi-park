@@ -1,279 +1,403 @@
 # unstil life — implementation (current)
 
-This document describes what is **actually implemented** in the codebase right
-now. It is the companion to the project description (Sections 1–3 of the
-seminar document) and can be used to check one against the other.
-`implementation_initial.md` holds the original plan and early design decisions; it
-is kept as a record and is no longer up to date.
+How the artwork is built, part by part. Built-in three.js features are only
+named; the project's own techniques are explained with their formulas and the
+code that implements them. 
 
 ---
 
-## 0. Project description vs. implementation
+## 1. State machine and the parameter p
 
-Point-by-point check of the project description (Section 1 "Topic", Section 2
-"Technical Approach", Figure 2, Tables 1–2) against the code.
+One value drives the whole scene: the progress parameter $p \in [0, 1]$
+(`uProgress`), 0 = room, 1 = space. Scroll moves a **target** $p^*$; $p$
+follows it with an exponential ease, so the motion is soft and the same at any
+frame rate:
 
-### Built as described ✅
+$$p \leftarrow p + (p^* - p)\,\bigl(1 - e^{-\Delta t/\tau}\bigr)$$
 
-| Description | In code |
-|---|---|
-| Room: six `PlaneGeometry` meshes, inward normals, ambient + directional light, `PCFSoftShadowMap` | `src/scene/room.js`, `src/scene/lighting.js`, `src/setup/renderer.js` |
-| Space: `BoxGeometry` skybox, back-side rendering, six cube map images | `src/scene/space.js` (3 skybox sets, plus a solid colour and uploads) |
-| Stars: `BufferGeometry` points at random positions | `src/scene/stars.js` (with a small canvas-drawn star texture) |
-| Objects: GLB via `GLTFLoader`, `MeshStandardMaterial`, measured and rescaled on load | `src/objects/objectsSetup.js` (`targetHeight` per object), table in `src/objects/tableSetup.js` |
-| Dissolve: 3D Simplex noise injected before compiling, world space for the room walls, local space for the table and objects, threshold → discard | `src/effects/dissolve.js` (`injectDissolve`, `addMeshDissolve`), after the Codrops technique |
-| Particles: point primitives sampled from the object's own triangles (area-weighted), same noise, visible only near the dissolve edge, scattered by a velocity attribute | `src/effects/dissolveParticles.js` (`makeParticlePoints`) |
-| Floating: `P = P_initial + f·(H + A⊙sin(ω·t + φ))`, `f` a smoothstep starting at p = 0.2, per-object `H` and `φ`, vertical table collision | `src/effects/floating.js`; `H` and `φ` (`phaseOffset`) per object in `OBJECT_DEFS`; `A` and `ω` are shared by all objects |
-| Scroll accumulated into `p` (0–1), driving dissolve, floating, lighting, sound | `src/scene/phaseMachine.js` (owns `uProgress`) |
-| Four states room / space / dissolving / done; during the dissolve, time drives it and scroll is blocked | `src/scene/phaseMachine.js`, timer in `src/scene/dissolveTimeline.js` (5 s) |
-| Objects replaced while invisible; scrolling home re-forms them in reverse | `applyReturnObjects` in `src/objects/objectSwap.js`; `followScroll` in `dissolveTimeline.js` |
-| Orbit camera angle-bounded in the room, free with zoom in space | `src/setup/cameraControls.js` |
-| Automatic journey: key P plays the whole cycle (Figure 2, Section 1) | `src/scene/journey.js` (see §5) |
-| Lighting: warm room light fades, the objects take on the light and colour of space | `src/scene/lighting.js`, presets in `src/scene/space.js`, environment map in `main.js` (see §6) |
-| Sound: café ambience, gain `1 − p`, silence in space, a dissolve sound | `src/audio/ambientSound.js` |
-| Audio unlock on the first `pointerdown` / `keydown` (Table 2) | `src/audio/ambientSound.js` (also retried on `wheel`, which browsers refuse) |
+with $\tau = 0.28$ s, and $\tau = 0.75$ s on the way home so the return is
+slower. Every effect reads $p$ each frame; nothing is told to start.
 
-### Details worth knowing ⚠️
+A state machine decides what scroll does:
 
-| Description says | Code detail |
-|---|---|
-| (4) "The objects dissolve into particles" | The dissolve starts when the viewer presses **Dissolve** (GUI, enabled in space) or when the journey reaches it. It does not start by itself. |
-| "the disappearance of objects" | The table dissolves together with the objects, over the same 5 s. |
-| "new objects appear on the table" | Each return swaps the teddy (ribbon ↔ skeleton), the flower (tulip ↔ daffodil) and the stone (agate ↔ fluorite); the mannequin alternates its finish (wood ↔ walnut). The vase stays. |
+| State | Entered when | Scroll | What happens |
+|---|---|---|---|
+| `room` | start, or $p^* < 0.95$ | moves $p^*$ | the room dissolves into space as $p$ rises |
+| `space` | $p^* = 1$ | zooms the camera | the Dissolve button becomes available |
+| `dissolving` | Dissolve pressed | **blocked** | the objects dissolve on a timer: $d = \min(1, t_d/T)$, $T = 5$ s |
+| `done` | $d = 1$ | moves $p^*$ again | the objects are swapped, then re-form on the way home |
 
-### Beyond the description ➕
+**Rebirth.** The dissolve is timer-driven (it cannot be scrolled: "death is
+uncontrollable"), the return is scroll-driven. At $d = 1$ every object is
+invisible, which is the moment to swap models. From then on the
+objects' dissolve amount follows the room: $d = p$, so scrolling home plays
+the dissolve backwards and the new still life forms together with the room.
+The returning models are loaded at startup and kept hidden, so a swap only
+shows and hides meshes.
 
-- **Selective particle glow** (`src/effects/particleBloom.js`): "shiny",
-  twinkling particles with a bloom pass on the particles only (on by default;
-  the GUI switches to flat white dots).
-- **Background motion** (§7): a curl-noise swirl on the skybox and a synced
-  rotation of the stars (GUI toggle).
-- **Table system** (§8): GLB / Box / Cylinder / uploaded table, swappable live.
-- **Uploads in the debug panel**: own skybox (PNG, JPG, WebP, AVIF, GIF, BMP,
-  TGA, with clear messages for unsupported or damaged files), table, stone,
-  room textures, sounds.
-- **Shader warm-up and preloading**: every shader is compiled behind the
-  loading screen and the returning models are loaded at startup, so nothing
-  stalls mid-journey.
-- **Adaptive quality**: the resolution drops on slow machines to keep the
-  frame rate (`src/setup/renderer.js`).
+- `src/scene/phaseMachine.js`: `easeToward`, the states, `scrollTo`,
+  `setScrollTarget` (shared by the wheel and the journey)
+- `src/scene/dissolveTimeline.js`: `advance(dt)` (timer, pause, scrub),
+  `followScroll(p)` (the reverse dissolve)
+- `src/objects/objectSwap.js`: `applyReturnObjects`, `preloadReturnObjects`
 
----
+## 2. Objects
 
-## 1. High-level flow
+Five models from Sketchfab, loaded with `GLTFLoader`: flowers in a vase, a
+teddy bear, a wooden mannequin, a stone and a round table. Each is scaled to a
+target height from its bounding box,
 
-```
-page load
-  → loading screen ("Unstil Life" text dissolving into particles, while the
-    models load and the shaders are compiled)
-  → interactive scene unlocks (scroll, drag, key P); the top line reads
-    "press P to begin the journey (auto play)"
-      'room'       — scroll up dissolves the room, objects start to float
-      'space'      — free orbit and zoom; the Dissolve button is enabled
-      'dissolving' — table and objects dissolve together over 5 s, scroll blocked
-      'done'       — scroll down re-forms the room and the (new) objects
-```
+$$s = \frac{h_\text{target}}{y_\text{max} - y_\text{min}},$$
 
-The journey (key P) drives the same path by itself; see §5.
+where $y_\text{min}, y_\text{max}$ are the bottom and top of the model's
+bounding box (`Box3`) and $h_\text{target}$ the height it should have
+(`targetHeight`). Models come in any units (centimetres, metres…); scaling all
+three axes by $s$ gives each the intended height with its proportions kept.
+The model is then set onto the table top. Stones are laid on their flattest side: the model
+is tilted in 9° steps about two axes, and the tilt with the smallest height
+wins.
 
-## 2. The five phases of the project description
+**Teddy bear pose.** The bear models have a skeleton. Their leg bones get two
+poses, sitting (folded forward 85°) and hanging (straight), blended by how
+high the bear floats above the table:
 
-| Phase | Description | Status |
+$$c = \frac{y_\text{bottom} - y_\text{table}}{r}, \qquad
+b = \operatorname{smoothstep}\!\Bigl(\frac{c - 0.15}{1.20 - 0.15}\Bigr), \qquad
+q_\text{leg} = \operatorname{slerp}(q_\text{sit}, q_\text{hang}, b)$$
+
+- $c$ — clearance: the gap between the bear's lowest point $y_\text{bottom}$
+  and the table top $y_\text{table}$, in units of the bear's size $r$, so the
+  thresholds still fit if the bear is rescaled. $c = 0$: sitting on the table.
+- $b$ — blend from sitting (0) to hanging (1): 0 below $c = 0.15$, 1 above
+  $c = 1.20$, rising smoothly in between.
+- $q_\text{sit}, q_\text{hang}$ — the leg bones' rotations (quaternions) in the
+  two poses; $q_\text{leg}$ is the rotation applied to both leg bones.
+  `slerp` blends two rotations smoothly; rotations can't simply be averaged.
+
+So the bear sits on the table and its legs unfold the higher it floats. Height,
+not $p$, drives it, because the table rises too. Built only for the given
+teddy models (the bone names `legL`, `legR`).
+
+- `src/objects/objectsSetup.js`: `OBJECT_DEFS`, `loadStillLifeObject`, `layFlat`
+- `src/objects/skeletonPose.js`: `setupTeddyPose`, `updateTeddyPose`
+- `src/objects/tableSetup.js`: the table, also swappable for a built-in Box or
+  Cylinder (`builtinTable.js`) or an uploaded model (`customTable.js`)
+
+## 3. Room
+
+Six `PlaneGeometry` meshes (floor, ceiling, four walls) with inward-facing
+normals and `MeshStandardMaterial` with PBR textures from Poly Haven. Each wall
+is its own mesh, so it gets its own size, texture tiling and colour.
+
+**Edge shading (fake ambient occlusion).** Where two planes meet, both are
+fully lit and the seam looks like a hard line. Each plane is darkened toward
+its edges in the shader:
+
+$$\lambda = \prod_{\text{edges}} \operatorname{smoothstep}(0, m, u_\text{edge}), \qquad
+\text{colour} \mathrel{*}= \operatorname{mix}(0.45, 1, \lambda)$$
+
+- $u_\text{edge}$ — distance of the pixel from one edge of the plane, in UV
+  space (0 at the edge, 1 at the opposite edge)
+- $m$ — the margin over which the darkening fades out (1.3 world units,
+  converted to UV space)
+- $\lambda$ — brightness factor: 0 right at an edge, 1 further in; the product
+  runs over the edges that touch another surface
+- $0.45$ — the brightness left right at the edge
+
+Multiplying makes a corner, where two edges meet, darker than a single edge,
+like a real one.
+
+**Lighting.** An `AmbientLight`, a `DirectionalLight` key light with soft
+shadows (`PCFSoftShadowMap`), a weak fill on the left wall, and two parts of
+our own:
+
+- **Fake volumetric light beam.** A visible shaft of light falling into the
+  room, without volumetric rendering. It is an open `ConeGeometry` from the
+  light's entry point to the floor, drawn with additive blending and this
+  fragment alpha:
+
+  $$\alpha = \underbrace{v^2}_{\text{tip}} \cdot h \cdot
+  \underbrace{|n_z|^{k}}_{\text{silhouette}} \cdot \text{fade}(p)$$
+
+  $v$ = position along the cone (1 at the tip, 0 at the floor), so the haze
+  is densest at the light source. $n_z$ = the view-space normal's $z$, i.e.
+  how directly the surface faces the camera; raising it to the power
+  $k = 1 + 4s$ (softness $s$) fades the haze toward the cone's outline, which
+  reads as a soft volume instead of a solid cone. $h$ = haze density (0.45).
+  The cone itself lights nothing, so a `SpotLight` on the same axis, with the
+  angle $\arctan(R/L)$ of the cone, casts the lit pool and the shadows on
+  table and floor. Both fade out early in the scroll:
+
+  $$\text{fade}(p) = \operatorname{clamp}\bigl((0.4 - p)/0.35,\ 0,\ 1\bigr)$$
+- **Objects-only key light.** three.js lights reach only meshes on their
+  layer. The main key is kept dim so the room falls to near-black outside
+  the beam; a second directional light on layer 2, which only the table and
+  objects join, keeps the still life bright. It points along the beam, so
+  the visible shaft appears to light the objects.
+
+- `src/scene/room.js`: `roomParts`, `makeRoomMaterial`, `injectEdgeShading`
+- `src/scene/lighting.js`: `createBeam`, `createBeamLight`, `createObjectKey`,
+  `updateLighting(p)`
+
+## 4. Space
+
+A `BoxGeometry` skybox (1000 units) with six `MeshBasicMaterial` faces, which
+ignore lights and show the images as they are, plus a star field of `Points`
+at random positions. Three skybox sets; uploads accept PNG, JPG, WebP, AVIF,
+GIF, BMP and TGA.
+
+**Lighting from the background.** Two things make the objects take on the
+colour of space:
+
+1. **Background-tinted ambient light.** Each face is drawn into a 32×32
+   canvas, which averages it, and the average colour $\bar c$ of all six is
+   normalised to its hue ($\hat c = \bar c / \max(\bar c)$), since a starry
+   sky averages to almost black. The ambient light in space takes that hue,
+   mixed with white by the Background Tint $s = 0.65$:
+
+   $$c_\text{ambient} = 1 + s\,(\hat c - 1)$$
+
+2. **Environment map.** The skybox is rendered once into a pre-blurred map
+   (`PMREMGenerator`) and set as `scene.environment`, so surfaces reflect the
+   background, sharply where glossy, softly where matte. It fades in with the
+   visible sun: $e = \operatorname{smoothstep}\bigl((p - 0.45)/0.45\bigr)$,
+   so there are no space reflections in the room.
+
+**The blend from room to space.** Every light value is interpolated by $p$,
+$x = \operatorname{lerp}(x_\text{room}, x_\text{space}, p)$:
+
+| | Room ($p = 0$) | Space ($p = 1$, starry sky) |
 |---|---|---|
-| 1 | Room with soft lighting and shadows, objects on the table | **Done**: vase with tulips, teddy bear, wooden mannequin, stone, round table |
-| 2 | The environment transforms into space, objects rise | **Done** |
-| 3 | Outer space, objects float weightlessly | **Done** |
-| 4 | Objects dissolve into particles, leaving empty space | **Done**: all together over 5 s, started by the Dissolve button or the journey |
-| 5 | The room reforms, new objects appear | **Done**: the objects re-form in reverse as the room returns, partly as new models (see §0) |
+| Ambient | warm brown, 0.4 | background hue, 0.7 |
+| Key light | warm amber `#ffe8b0`, 2.6 | white, 5.4 |
 
-## 3. Module architecture
+- `src/scene/space.js`: `buildSkybox`, `averageFaceColor`, `normalizeHue`,
+  `LIGHTING_PRESETS`
+- `main.js`: `refreshEnvironment` (the environment map)
+- `src/scene/stars.js`, `src/scene/skyboxUpload.js`
 
-The original single 1300-line `main.js` was split into `src/`, organized by
-concern. `main.js` is now a thin orchestrator that wires these together and
-runs the animation loop.
+## 5. Dissolve
 
-```
-main.js                        orchestrator: creates renderer/scene/camera,
-                                wires every module below, runs animate()
+The technique follows the Codrops article [Implementing a Dissolve Effect with
+Shaders and Particles in Three.js](https://tympanus.net/codrops/2025/02/17/implementing-a-dissolve-effect-with-shaders-and-particles-in-three-js/). 3D simplex noise $n(\mathbf x) \in [-1, 1]$
+is compared with a threshold that sweeps past the noise range as the
+progress $d$ goes from 0 to 1:
 
-src/setup/                     the machinery for viewing the scene
-  renderer.js                  WebGLRenderer + camera + resize + adaptive quality
-  cameraControls.js            OrbitControls setup, zoom hand-off,
-                                auto zoom-out/tilt during the room→space scroll
+$$\theta = \operatorname{mix}(-1.2,\ 1.2,\ d), \qquad
+\text{discard if } n(\mathbf x) < \theta, \qquad
+\text{edge band: } \theta \le n < \theta + w$$
 
-src/effects/                   visual effects (GPU shaders, post-process, floating)
-  dissolve.js                  dissolve shader injection (see §4), shadow-pass
-                                dissolve
-  dissolveParticles.js         the dissolve particles: settings, particle shader
-                                (makeParticleMaterial), where they start (sampled
-                                over a model's surface) and fly; makeParticlePoints
-  noise.js                     shared 3D Simplex noise GLSL (Ashima Arts)
-  skyboxFlow.js                curl-noise "Starry Night" swirl on the skybox
-  particleBloom.js             selective glow on the particles (the one post-process)
-  floating.js                  per-frame float/bob/sway of the objects, table
-                                collision (the bear's legs: objects/skeletonPose.js)
+Inside the edge band the colour blends toward an edge colour and becomes
+half transparent, $\text{colour} = \operatorname{mix}(c_\text{edge}, c,\ (n - \theta)/w)$,
+where $\mathbf x$ is the surface point, $c$ its lit colour, $c_\text{edge}$ the
+edge colour and $w$ the edge band's width (0.25 for the room, 0.10 for the
+objects),
+so the boundary is a soft rim instead of a hard cut. The code is injected into the
+models' own `MeshStandardMaterial` with `onBeforeCompile`, after the lighting
+is computed, so the surfaces keep their PBR lighting. A matching depth
+material makes the shadows dissolve with the surface.
 
-src/scene/                     the scenes: what is in them and how they change
-  room.js                      6-plane room (floor/ceiling/4 walls)
-  space.js                     skybox (3 packs + solid colour + upload),
-                                LIGHTING_PRESETS keyed by skybox name
-  skyboxUpload.js              reading an uploaded skybox folder: matching files
-                                to the 6 faces, explaining seams
-  stars.js                     the star field, turning with the skybox swirl
-  lighting.js                  ambient/directional lights, room↔space colour
-                                lerp, objects-only key light, volumetric beam
-  phaseMachine.js              room/space/dissolving/done and the scroll: owns
-                                uProgress, decides when the dissolve runs
-  dissolveTimeline.js          the object dissolve itself: 5 s timer, pause,
-                                scrub, shadows, re-forming on the way home
-  journey.js                   P / "Play Journey": the whole artwork plays by
-                                itself (room, into space, slow orbit, dissolve,
-                                back home); any scroll or drag stops it
+**Room.** $d = p$, noise at the **world** position (the pattern stays in place
+as the room dissolves), a black edge.
 
-src/objects/                   the table and the still life
-  tableSetup.js                sets up whichever table is picked: its shape
-                                (from the two files below or table.glb), then
-                                dissolve, particles, floor placement, swapping;
-                                loadScene (table first, then the objects on it)
-  builtinTable.js              the Box/Cylinder tables, built with three.js:
-                                colour, textures, floor contact shading
-  customTable.js               normalising an uploaded table (scale, centre,
-                                strip ground planes)
-  objectsSetup.js              the 5 still-life objects: loading, placement on
-                                the table, dissolve, particles
-  skeletonPose.js              posing a model by its skeleton (for now only the
-                                teddy): legs folded sitting on the table,
-                                hanging once it floats
-  objectSwap.js                swapping models: stone choice, the objects that
-                                change on each return, the mannequin's finish;
-                                the return models are loaded at startup and kept
-                                hidden, so a swap never loads mid-journey
-  modelCleanup.js              removing a model and freeing its GPU memory
+**Objects.** $d$ from the dissolve timer (or $p$ on the way home), noise at the
+**local** position, so the pattern rides with each object as it floats. The
+edge takes the object's own colour, darkened ($c_\text{edge} = 0.35\,c$): the
+models are hollow shells, and a fixed white edge outlined every hole. The
+brightness at the boundary comes from the particles instead. The table and
+all objects dissolve together.
 
-src/audio/
-  ambientSound.js              room/space beds, dissolve one-shot
+**Particles.** Each object gets 200–900 particles (by its size), drawn as
+points. Their start positions are sampled on the object's own triangles,
+weighted by triangle area so they cover the surface evenly: a triangle is
+picked with probability $A_i / \sum A$, then a random point inside it. Each
+particle evaluates the same noise and threshold as the surface, so it
+appears exactly where the surface breaks up. Its age is how far the edge has
+passed it, $a = \operatorname{clamp}\bigl((\theta - n)/\ell, 0, 1\bigr)$ with
+lifetime $\ell$, and it moves on the GPU without any per-frame update:
 
-src/ui/
-  loadingScreen.js             "Unstil Life" text, particle-dissolve intro
-  gui.js                       lil-gui debug panel: builds it from ui/gui/
-  gui/                         one file per panel section (playback buttons,
-                                Scene, Dissolve Look, Scene Contents + skybox,
-                                Room Textures, Sound, Objects/Camera) and
-                                controls.js, the shared building blocks
-  topHint.js                   the one line at the top: "press P to begin the
-                                journey" with "(auto play)" under it, or "click anywhere
-                                to turn on sound" if someone scrolls while the
-                                sound is off
-  screenHint.js                a fading line of text over the scene (for topHint)
-  perfHud.js                   fps readout
-```
+$$\mathbf x = \mathbf x_0 + a\,D\,(0.233\,\mathbf v + \mathbf s)$$
 
-## 4. Dissolve shader (room, table, still-life objects)
+$\mathbf x_0$ = its start point on the surface, $a$ = its age (above),
+$\mathbf v$ = its own random velocity, $\mathbf s$ = a shared stream up and
+back into the sky, $D$ = drift distance, plus a slow sideways sway. It fades
+out over its life, $\alpha = 1 - \operatorname{smoothstep}(0.25, 1, a)$. The
+particles are children of their object, so they follow its floating. The
+table's particles burst outward from its centre instead.
 
-One shared technique (`injectDissolve` in `dissolve.js`), injected via
-`onBeforeCompile` into the models' own materials: a 3D Simplex noise field is
-compared against a threshold that sweeps from -1.2 to 1.2 as the progress
-uniform goes 0→1; fragments below the threshold are discarded, with a thin
-edge band at the boundary (dark for the room, white for the objects). Room
-walls use *world*-space noise (dissolves in place) and read `uProgress`
-directly; the table and objects use *local*-space noise (the pattern rides
-with the object as it floats) and each has its own progress uniform. The
-dissolve timeline (`dissolveTimeline.js`) moves all of them together over
-`dissolveDuration` (5 s, GUI slider), can pause and scrub, and on the way home
-sets them from `p`, so the objects re-form in step with the room.
+**How a particle looks: shape, twinkle and glow.** The particles are
+`THREE.Points` with our
+own `ShaderMaterial`; the built-in `PointsMaterial` can't dissolve or move them
+individually. Three separate things make them look like starlight:
 
-The table and each object also get dissolve particles
-(`makeParticlePoints` in `dissolveParticles.js`), sampled from their own
-geometry and visible only in a narrow band around the current dissolve edge.
-The room has no particles (a deliberate choice).
+- **Shape** (one frame, inside the particle's own square). No texture: the
+  fragment shader computes each pixel's brightness from its distance $r$ to
+  the centre, a bright core plus four thin rays along $x$ and $y$, like a star
+  glint:
 
-## 5. The journey (auto play)
+  $$\text{shape} = e^{-24 r^2} + \kappa \cdot \text{rays}(x, y)$$
 
-`src/scene/journey.js`. Key P or the GUI button "▶ Play Journey" plays the
-whole cycle without input, as a list of steps:
+  with ray strength $\kappa = 0.7$. Each particle is tinted slightly warm or
+  cool at random, so they aren't all identical.
 
-| Step | Length | What it does |
-|---|---|---|
-| room | 4 s | glides the camera back to the start view if the viewer looked around |
-| to space | 6 s | moves the scroll target 0 → 1 |
-| look around | 8 s | the camera starts one slow swing around the scene |
-| dissolve | 5 s | presses Dissolve; the swing follows the dissolve's progress |
-| emptiness | 8 s | the swing turns back (rests only 3 frames, while the new models appear) |
-| home | 6 s | moves the scroll target 1 → 0, the swing ends at the start view |
-| arrive | until p ≈ 0 | holds the start view |
+- **Twinkle** (over time). Each particle pulses: its rays and brightness grow
+  briefly, then calm down. With a random number $\rho_i \in [0, 1)$ per
+  particle (hashed from its position), its own speed and starting moment are
 
-It drives the same controls a viewer would (`phaseMachine.setScrollTarget`,
-`triggerDissolve`), so every effect reacts exactly as it does to scrolling.
-Any scroll or drag stops it and hands control back.
+  $$\phi = \tfrac12 + \tfrac12 \sin\bigl(t\,(1.6 + 2.4\,\rho_i) + 31.4\,\rho_i\bigr),
+  \qquad \text{pulse} = \max(0,\ 2\phi^2 - 1)$$
 
-## 6. Lighting model
+  Squaring keeps the flashes short. The pulse scales the size by
+  $1 + 0.6\,\text{pulse}$ and the brightness by $1 + 0.3\,\text{pulse}$, so
+  the particles flash at different moments and never in sync.
 
-- **Room** (fixed): warm ambient fill (`0x3d2010`, intensity 0.4 — raised from
-  an earlier 0.15 after "too dark" feedback) + a single warm directional key
-  light (`0xffe8b0`, intensity 2.6) with shadows, matching a Rembrandt-style
-  raking-light photo reference. A fake volumetric light beam (additive-blended
-  cone) fades out in the first 40% of the room→space scroll.
-- **Space** (per-background preset, `LIGHTING_PRESETS` in `space.js`):
-  - `space_blue` / `space_red` / `sky`: ambient 0.7, tinted with the skybox's
-    measured colour (mixed with white by "Background Tint", 0.65), and a strong
-    white directional light (5.4): the sun does most of the work.
-  - `None (solid color)`: no ambient; the environment map (below) lights the
-    objects evenly with the background colour, so a dark colour gives dark
-    objects. Weak directional key (1.2). The colour is live (`voidColor`, white
-    by default, GUI swatch).
-  - Switching the "Skybox" GUI dropdown updates both together
-    (`selectBackground()` in `main.js`) and takes effect **immediately**
-    even if not currently mid-scroll.
-- **Environment map** (`scene.environment`, built in `main.js` with
-  `PMREMGenerator.fromScene` from the current skybox or flat colour, rebuilt
-  whenever the background changes): objects reflect their real surroundings,
-  sharply on glossy or metal parts and as soft light on matte ones. Its
-  strength (`environmentMap.strength`, GUI "Env Map Strength") fades in with
-  the sun (p = 0.45 → 0.9), so it is 0 in the room. (An earlier `RoomEnvironment` attempt was
-  reverted because it also lit the room; the fade-in avoids that.) It replaced
-  a Fresnel "rim tint" that mixed one average colour into object outlines.
-  Note: the table top and the vase are marked fully metallic in their GLB
-  files, so they show the strongest reflections.
+- **Glow** (around the particle). A soft halo of light around each particle,
+  like a lamp in fog. A particle can only colour its own small square, not the
+  pixels next to it, so the halo is made from a blurred copy of the particles,
+  laid over the picture. Every frame:
+  1. **Only the particles.** The particles are on their own three.js layer,
+     a label that lets the camera draw them alone. They are drawn onto black
+     into a hidden half-size image. Without the separate layer this image
+     would contain the whole scene, and every object, the stars and the sky
+     would get a halo too, making the picture hazy.
+  2. **Blur.** Each pixel of that image is mixed with its neighbours, so every
+     sharp dot spreads into a soft cloud of light. A neighbour at distance $x$
+     counts with weight $w(x) = e^{-x^2 / 2\sigma^2}$ (a gaussian): close
+     pixels count a lot, far ones little, which gives a round, soft falloff.
+  3. **Add it on top.** The normal scene is drawn, then the blurred image is
+     added over it, brightening the pixels around each particle.
 
-## 7. Background motion (beyond the description)
+  This step only runs while particles are on screen.
 
-A GUI toggle ("🌀 Animate Background") eases in (`uFlowStrength` in
-`skyboxFlow.js`) a curl-noise UV warp on the skybox texture — inspired by
-Petros Vrellis' animated *Starry Night* — plus a synced slow rotation of the
-star field (same eased strength, so both read as one swirling motion). Edge
-fade prevents seams at the skybox cube's face borders.
+Glow makes the particles read as light; twinkle makes them read as alive.
+Both can be adjusted in the debug panel (Particle Twinkle, Particle Bloom).
 
-## 8. Table system (beyond the description)
+- `src/effects/dissolve.js`: `injectDissolve`, `makeDissolveDepthMaterial`
+- `src/effects/noise.js`: `NOISE_GLSL` (Ashima Arts simplex noise)
+- `src/effects/dissolveParticles.js`: `buildParticlesFromGeometry`,
+  `makeParticleMaterial`, `makeParticlePoints`
+- `src/effects/particleBloom.js`: the glow
 
-A second GUI dropdown ("Table") lets the table be swapped live between the
-default GLB, a plain Box, a Cylinder, or a **user-uploaded custom `.glb`**
-file (via a hidden file input + `URL.createObjectURL`). Swapping keeps the
-existing still-life objects in place and just shifts them by the surface-height
-delta, rather than reloading everything (`setTable()` in `objects/tableSetup.js`).
+## 6. Floating
 
-## 9. Camera behavior
+$$P = P_\text{initial} + f \cdot \bigl(H + A \odot \sin(\omega\, t + \varphi)\bigr)$$
 
-- Room-mode: azimuth/polar clamped to keep the camera inside the room and
-  above the floor (derived from the room's geometry). Space-mode: free orbit.
-- During the room→space scroll, the camera automatically pulls back
-  (`ZOOM_OUT_EXTRA`) and raises its gaze with the objects (`GAZE_RISE`; the
-  camera and its target move up together, so the flat-on view of the table is
-  kept), starting exactly when objects begin floating (`FLOAT_START`), so they
-  stay in frame as they rise.
-  This is computed as a pure function of scroll progress `p` from a
-  camera-offset snapshot taken at startup — an earlier version re-derived the
-  offset from the previous frame's camera position, which fed back on itself
-  and made the camera run away into a bird's-eye view; this was fixed.
-- In space, zoom is enabled until the viewer zooms back in close to the
-  original room framing, at which point scroll switches back to
-  restoring the room.
+- $f$ — floating factor: 0 until $p = 0.2$, then a smoothstep to 1, so the
+  objects rest on the table and then ease off it:
+  $f = \operatorname{smoothstep}\bigl((p - 0.2)/0.8\bigr)$
+- $H$ — rise, **per object** (1.8 to 2.5)
+- $\varphi$ — oscillation offset, **per object**, so they don't move in synchrony
+  (the tulips share the vase's, so they never bob into it)
+- $A, \omega$ — per axis, shared: vertical bob 0.25 at 0.75 rad/s, sideways
+  sway 0.04 at 0.28 rad/s and 0.03 at 0.21 rad/s
 
-## 10. Known open items / tradeoffs worth flagging
+Rotation is a bounded back-and-forth of the same form (at most ±13°), not a
+spin. A vertical collision pass keeps the objects from sinking through the
+table: wherever an object's bottom is below the table top, it is pushed up by
+the overlap, faded in over $p \le 0.15$.
 
-- The debug GUI (lil-gui) is the only way to change the skybox, table,
-  background motion and the Dissolve button; there is no end-user UI for these.
-  Viewers without it still have scroll, drag and the journey (key P).
-- The perf HUD's `calls`/`tris` readout is wrong while shiny particles are on
-  (several render passes per frame); fps/ms stay correct.
-- `implementation_initial.md` is the original plan, kept as a record; this document
-  is the current state.
+- `src/effects/floating.js`: `updateFloating`
+
+## 7. Camera
+
+A `PerspectiveCamera` (35°) with `OrbitControls`. Our own logic on top:
+
+- **Room limits that open up.** In the room the orbit is limited to ±30°
+  around the front view and to above the floor; the limits ease open
+  with $t = \operatorname{smoothstep}(p;\ 0.6, 0.95)$, e.g. azimuth
+  $\operatorname{lerp}(\pi/6, \pi, t)$, instead of snapping.
+- **Pull-back with the rising objects.** With $f$ as in floating (from
+  $p = 0.2$), the camera moves back and its gaze rises with the objects, so
+  they stay in frame:
+  $\text{distance} = d_0 + 8f$, $\ \text{gaze height} = y_0 + 1.4f$, where
+  $d_0$ is the orbit distance when the objects start rising and $y_0$ the
+  gaze height in the room.
+  Camera and target move up together, so the flat-on view of the table is
+  kept.
+- **Zoom hand-off.** In space the wheel zooms. Once the viewer has zoomed out
+  and comes back closer than 5.5 units, the wheel returns to scrolling the
+  room home.
+
+- `src/setup/cameraControls.js`: `applyControlMode`, `updateAutoZoomOut`,
+  `updateZoom`
+
+## 8. Sound
+
+Web Audio, started by the first click or key (browsers refuse to play sound
+before one; a scroll does not count). The café ambience fades with the room,
+$g = v\,(1 - p)$ ($g$ = gain, $v$ = the volume setting), to silence in space. The dissolve sound follows the
+dissolve's own playback: it starts with it, pauses with it and jumps when the
+scrub bar jumps.
+
+- `src/audio/ambientSound.js`
+
+## 9. The journey
+
+Key P plays the whole cycle without input. It acts as a virtual viewer: it
+moves the scroll target $p^*$ and presses Dissolve, so every effect reacts
+exactly as it does to scrolling. The cycle is a list of steps:
+
+| Step | Lasts | Does | Swing $u$ (below) |
+|---|---|---|---|
+| room | 4 s | glides the camera to the start view | — |
+| to space | 6 s | $p^*: 0 \to 1$ | — |
+| look around | 8 s | the camera starts its swing | $0 \to 0.31$, by time |
+| dissolve | until the objects are gone (5 s by default) | presses Dissolve | $0.31 \to 0.5$, by the **dissolve's progress** |
+| emptiness | 8 s | the swing turns back | $0.5 \to 0.79$, by time |
+| home | 6 s | $p^*: 1 \to 0$ | $0.79 \to 1$, by time |
+
+Every step has a fixed length in seconds except the dissolve: it ends when the
+dissolve does, and moves the swing with the dissolve's progress instead of the
+clock.
+
+**The camera swing.** Over the journey the camera circles once to the left
+around the still life, 55° out and back, at the same height and distance,
+always facing the objects. Three steps make this happen every frame:
+
+1. **The angle.** The camera's position around its target is described by a
+   horizontal angle $\theta$ (around the vertical $y$ axis) and a tilt
+   $\varphi$. The journey computes the angle for this moment:
+
+   $$\theta = \theta_0 + \Theta \cdot \sin^2(\pi u)$$
+
+   - $\theta_0$ — the start angle: the view when the page opened
+   - $\Theta = -55^\circ$ — how far the swing goes (negative = to the left)
+   - $u$ — how far through the swing we are, from 0 (start) to 1 (back home)
+   - $\sin^2(\pi u)$ — goes $0 \to 1 \to 0$ as $u$ goes $0 \to 0.5 \to 1$:
+     out, then back. Its slope is zero at $u = 0$, $0.5$ and $1$, so the
+     camera starts gently, slows to a stop at the turning point and arrives
+     gently, without a jerk.
+
+   | $u$ | 0 | 0.25 | 0.5 | 0.75 | 1 |
+   |---|---|---|---|---|---|
+   | $\theta - \theta_0$ | 0° | −27.5° | −55° | −27.5° | 0° |
+
+2. **The position.** The angle is turned into a camera position on a circle
+   around the target (`THREE.Spherical`), keeping the distance $r$ and the
+   tilt $\varphi$:
+
+   $$\mathbf c = \mathbf t + r\,(\sin\varphi \sin\theta,\ \cos\varphi,\ \sin\varphi \cos\theta)$$
+
+   with $\mathbf t$ the target (the still life) and $\mathbf c$ the camera.
+
+3. **The rotation.** OrbitControls then turns the camera to face the target
+   (`lookAt`), so the objects stay in the centre of the picture.
+
+**How $u$ advances.** In most steps $u$ grows with the step's time. During the
+dissolve it is tied to the dissolve fraction $d$ (0 = intact, 1 = gone)
+instead:
+
+$$u = a + (0.5 - a)\,d, \qquad a = 0.5 \cdot \frac{8}{8 + 5} \approx 0.31$$
+
+$a$ is where the swing stands when the dissolve starts (after the 8 s look
+around, out of the 8 s + 5 s that lead to the turning point). So the further
+the objects have dissolved, the further the camera has turned, and it reaches
+the turning point $u = 0.5$ exactly when they are gone. That is when the
+models are swapped (see [Rebirth in section 1](#1-state-machine-and-the-parameter-p)): the new ones take their place, still fully dissolved
+and invisible, and form on the way home. At the turning point the camera stands
+still for the first few frames after the swap. If the dissolve runs slower or
+is paused, the camera slows down or stops with it.
+
+- `src/scene/journey.js`: `journeySteps`, `moveCamera`, `stepsFrom`
+- `main.js`: `warmUpShadersWhenReady`
+
